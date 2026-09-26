@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+POSITIONS = frozenset({"QB", "RB", "WR", "TE", "K", "DEF"})
+
 
 @dataclass(frozen=True)
 class Projection:
@@ -20,6 +22,7 @@ class ProjectionSource:
     name: str  # short key: sleeper, espn, fantasysharks, fantasypros, firstdown, fanduel
     website: str  # stored in projections.source_website
     supports_future_weeks: bool
+    positions: frozenset[str] = POSITIONS  # narrowed by sources that serve fewer, e.g. no DEF page
 
     def fetch(self, season: int, week: int) -> list[Projection]:
         raise NotImplementedError

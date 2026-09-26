@@ -26,7 +26,7 @@ def run_command(args: argparse.Namespace) -> int:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
     settings = load_settings(week=args.week, season=args.season)
-    options = {"sources": args.sources, "no_charts": args.no_charts}
+    options = {"sources": args.sources, "no_charts": args.no_charts, "dry_run": args.dry_run}
     outcome = run_steps(settings, steps, options)
     return 1 if outcome.status == "failed" else 0
 
@@ -115,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     selection.add_argument("--from", dest="from_step", metavar="STEP", help="this step and every default step after it")
     run.add_argument("--sources", type=source_list, help=f"comma-separated, from: {', '.join(SOURCE_NAMES)}")
     run.add_argument("--no-charts", action="store_true", help="skip rendering charts")
+    run.add_argument("--dry-run", action="store_true", help="publish: report what would be uploaded, write nothing")
     run.set_defaults(handler=run_command)
 
     status = commands.add_parser("status", help="latest status of every step for a week")

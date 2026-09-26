@@ -121,7 +121,7 @@ def test_run_passes_sources_and_chart_options_to_steps(monkeypatch):
 
     cli.main(["run", "--week", "4", "--steps", "scrape", "--sources", "espn,sleeper", "--no-charts"])
 
-    assert calls == [("scrape", {"sources": ["espn", "sleeper"], "no_charts": True})]
+    assert calls == [("scrape", {"sources": ["espn", "sleeper"], "no_charts": True, "dry_run": False})]
 
 
 def test_run_options_default_to_every_source_with_charts(monkeypatch):
@@ -129,7 +129,7 @@ def test_run_options_default_to_every_source_with_charts(monkeypatch):
 
     cli.main(["run", "--week", "4", "--steps", "scrape"])
 
-    assert calls == [("scrape", {"sources": None, "no_charts": False})]
+    assert calls == [("scrape", {"sources": None, "no_charts": False, "dry_run": False})]
 
 
 def test_run_from_a_step_runs_the_rest_without_publish(monkeypatch):

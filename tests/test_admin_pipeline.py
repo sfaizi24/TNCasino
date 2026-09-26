@@ -2,6 +2,7 @@ import pytest
 from sqlalchemy import text
 
 from app.routes.admin import PIPELINE_STEP_ORDER
+from pipeline.steps import STEP_ORDER
 
 FIRST_RUN = "2026w04-20260929T140000"
 RERUN = "2026w04-20260929T160000"
@@ -17,6 +18,10 @@ STEP_FIELDS = {
     "charts",
     "error",
 }
+
+
+def test_step_order_mirrors_the_pipeline_package():
+    assert PIPELINE_STEP_ORDER == STEP_ORDER
 
 
 def test_rerun_steps_come_from_the_newest_run(admin_client, pipeline_tables):
