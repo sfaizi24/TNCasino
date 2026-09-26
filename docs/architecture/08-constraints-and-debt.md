@@ -2,6 +2,14 @@
 
 This page lists facts a refactor has to work around, grouped by area. Nothing here is a plan. Each item says what is true today and where to find it. Severity: **H** = can produce wrong money or data, **M** = slows change or breaks easily, **L** = cleanup.
 
+## Open issues
+
+High-severity problems found while writing these docs (2026-09-26). Check them off and link the fixing commit when they're resolved.
+
+- [ ] **Client-supplied odds.** `highest_scorer`, `lowest_scorer`, `first_seed`, and `ammad_playoff` bets store the `odds` string sent by the browser without checking it against the odds tables, so a crafted request can set any payout. `app/routes/betting.py:255`
+- [ ] **Duplicate odds rows after re-running notebook 07.** The five `betting_odds_*` tables append by `run_id` and the app doesn't filter by it. Duplicates appear on the site, and since moneyline/O/U bets select by row position (`matchup_idx`, `team_idx`), they can shift which matchup a bet lands on. Negative indexes and unknown `choice` values also aren't rejected. `app/routes/odds.py:30`, `app/routes/betting.py:420–482`, notebook 07
+- [ ] **Balance race.** Balance updates are read-modify-write on the ORM object with no row lock, so concurrent place/remove/settle requests can overwrite each other. `app/routes/betting.py`, `app/routes/admin.py:118`
+
 ## Cross-cutting
 
 | | Item | Where |
