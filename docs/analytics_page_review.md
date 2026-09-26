@@ -1,5 +1,7 @@
 # Analytics Page Review
 
+> **Historical.** This review is resolved: analytics curves are now precomputed in notebook 07, published to Postgres, and served by the Flask routes (commits `6e4023c` onward). For current behavior see [architecture/05-web-app.md](architecture/05-web-app.md).
+
 Date: 2026-05-18
 
 Scope: review of the interactive analytics page changes on branch `interactive-team-charts`, with emphasis on bugs, production readiness, and performance.

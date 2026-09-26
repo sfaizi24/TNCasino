@@ -73,7 +73,6 @@ This page lists facts a refactor has to work around, grouped by area. Nothing he
 | M | Deploys are a manual `ssh … git pull` with no CI gate or rollback step; code, data, and charts are released independently. | `CLAUDE.md` |
 | M | No pinned dependency versions; `gunicorn` isn't in `requirements.txt`. | `requirements.txt` |
 | L | No health check, error tracking, or alerting. | — |
-| L | `.claude/launch.json` still runs the removed `app.py`. | `.claude/launch.json` |
 | L | No `.env.example`. | — |
 
 ## Test gaps

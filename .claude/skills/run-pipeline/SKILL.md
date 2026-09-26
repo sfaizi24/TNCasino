@@ -8,7 +8,9 @@ Run the TNCasino data pipeline interactively. Execute each notebook in order, va
 
 **Important**: Scrapers are fragile and break often. When a scraper fails, inspect the error, check if the source site changed, and adapt selectors or logic as needed. Do not skip a failed step — fix it first.
 
-Use `$ARGUMENTS` to control which steps to run (e.g., `/run-pipeline 01-04` or `/run-pipeline 07` for a single step). Default: run all 9 steps.
+Use `$ARGUMENTS` to control which steps to run (e.g., `/run-pipeline 01-04` or `/run-pipeline 07` for a single step). Default: run steps 1–9. Step 10 (prediction accuracy) is optional and only runs when requested.
+
+Prefer `python -m scripts.scrape --week N --validate` over notebook 02 for step 2: it deletes stale rows per source, isolates failures, and validates the result. Every notebook has its own hardcoded `CURRENT_WEEK`; confirm each one matches before running. See `docs/architecture/02-data-pipeline.md` for what each step reads and writes.
 
 ## Pipeline Steps
 
@@ -50,6 +52,10 @@ For each notebook, run it with `jupyter nbconvert --to notebook --execute backen
 ### Step 9: `09_playoff_odds`
 - **Does**: Computes playoff probabilities from simulation results
 - **Validate**: Probabilities should sum to reasonable values. Check that all teams have odds calculated.
+
+### Step 10 (optional): `10_prediction_accuracy`
+- **Does**: Compares past projections to actual scores (MAE/RMSE/bias by source and position)
+- **Validate**: Nothing is written; just report the headline accuracy numbers.
 
 ## After Pipeline
 

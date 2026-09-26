@@ -4,9 +4,11 @@
 
 ## TLDR
 
-TNCasino is a Fanduel but with fake money for betting on the outcomes of my fantasy league (named TNC). 
+TNCasino is FanDuel but with fake money, for betting on the outcomes of my fantasy league (named TNC).
 
-Data comes from 5 different fantasy football/betting projections sources. The data from those sources gets scraped, heavily cleaned, and used to create the distribution parameters for the simulations. Simulations get ran and the results of those simulations are used to create betting odds.
+Data comes from 5 different fantasy football/betting projection sources. The data from those sources gets scraped, heavily cleaned, and used to create the distribution parameters for the simulations. Simulations get run and the results of those simulations are used to create betting odds.
+
+For how the whole system works under the hood, see the [architecture docs](docs/architecture/README.md).
 
 **From Projections to Odds:**
 
@@ -30,7 +32,7 @@ Where:
 $$\text{var} = \sigma^2$$
 
 **4. Monte Carlo Simulation** (50,000 iterations):
-   - Sample team totals: $T_1 \sim \text{Lognormal}(\mu_1, \sigma_1)$, $T_2 \sim \text{Lognormal}(\mu_2, \sigma_2)$
+   - Sample every starter's score from a lognormal with that player's μ and σ, then sum them into team totals $T_1$ and $T_2$
 
 **5. Win Probability**:
    $$P_1 = \frac{\text{count}(T_1 > T_2)}{50,000}$$
@@ -59,18 +61,18 @@ Each bet allows you to see the players on the teams in question, allowing for no
 
 ![Team Analytics](docs/images/analytics.png)
 
-There a ton of cool charts I create every week, most of which don't make it to the site but I will change that next year
+The analytics page has interactive charts for any two teams: score distributions, win margin, lineup comparison, league standings, and position strength. There are a ton more charts I create every week that don't make it to the site yet.
 
 ## Leaderboard & Performance Tracking
 
 ![Leaderboard](docs/images/leaderboard.png)
 
-The leaderboard displays all-time and weekly top performers, even worst/bet bets.
+The leaderboard displays all-time and weekly top performers, even the best and worst bets.
 
 ## Lessons learned
 
-Not that I didn't know this, but data cleaning is very time-consuming! that's where most of the leg-work in this project went. 
-I typically make the odds on Tuesday or Wednesday to close at Thursday Night kickoff, but someone might not even pick up a replacement for their kicker whos on bye until Saturday. 
+Not that I didn't know this, but data cleaning is very time-consuming! That's where most of the leg-work in this project went.
+I typically make the odds on Tuesday or Wednesday to close at Thursday Night kickoff, but someone might not even pick up a replacement for their kicker who's on bye until Saturday.
 
 To fix this, I created the concept of a "replacement player", the x (x is configurable based on your league size) best player at that position. If a team's "best" lineup (based on projection mean) has a player that is projected to score less than the "replacement player", then the replacement player's stats are inserted in for that position. 
 
@@ -78,34 +80,42 @@ This works surprisingly well lol
 
 ## Technical Architecture
 
+Full details live in [docs/architecture](docs/architecture/README.md). The short version:
+
 ### Data Pipeline
 
 ```
 1. League Data Collection → Sleeper API integration
-2. Projection Scraping → Multi-source web scrapers (Selenium/Playwright)
+2. Projection Scraping → Multi-source web scrapers (requests/Selenium/Playwright)
 3. Data Standardization → Name matching, position normalization
 4. Statistical Analysis → Mean/variance calculations per player
-5. Lineup Optimization → Optimal roster construction
+5. Lineup Optimization → Best lineup per team, with replacement players
 6. Monte Carlo Simulation → 50,000 iterations per week
-7. Odds Generation → Probability-to-odds conversion
-8. Web Dashboard → Flask backend with interactive frontend
+7. Odds Generation → Probability-to-odds conversion, playoff odds
+8. Publish → Push the tables the site needs to production PostgreSQL
+9. Web App → Flask backend with interactive frontend
 ```
 
 ### Technology Stack
 
-- **Backend**: Python, Flask, SQLite
-- **Data Processing**: Pandas, NumPy, Jupyter Notebooks
+- **Backend**: Python, Flask, SQLAlchemy, Google OAuth
+- **Databases**: SQLite (local pipeline), PostgreSQL (production)
+- **Data Processing**: Pandas, NumPy, SciPy, Jupyter Notebooks
 - **Web Scraping**: Selenium, Playwright
 - **Statistical Modeling**: Custom Monte Carlo implementation
-- **Frontend**: HTML/CSS/JavaScript, responsive design
-- **Visualization**: Matplotlib, Plotly (for static images)
+- **Frontend**: HTML/CSS/JavaScript, Chart.js, responsive design
+- **Visualization**: Matplotlib/Seaborn (static images), Chart.js (site)
+- **Hosting**: DigitalOcean droplet, gunicorn + nginx, Cloudflare
 
-### Database Schema
+### Databases
 
-The platform uses multiple SQLite databases:
-- **Projections Database**: Multi-source player projections with timestamps
-- **League Database**: Teams, rosters, matchups, player stats
-- **User Database**: Authentication, betting history, balances
+The pipeline writes to four local SQLite databases:
+- **league.db**: Teams, rosters, matchups, NFL players, player stats (from Sleeper)
+- **projections.db**: Multi-source player projections, per-player stats, and lineups
+- **odds.db**: Betting odds and precomputed chart curves
+- **montecarlo.db**: Raw simulation results (stays local, it's huge)
+
+`scripts/publish.py` copies the tables the site needs into production PostgreSQL, which also holds users, bets, balances, and betting periods.
 
 ---
 
@@ -120,7 +130,10 @@ The platform uses multiple SQLite databases:
 │   │   ├── 04_match_projections_to_sleeper.ipynb # Player matching
 │   │   ├── 05_compute_player_week_stats.ipynb    # Statistical analysis
 │   │   ├── 06_team_lineup_optimizer.ipynb       # Lineup optimization
-│   │   └── 07_monte_carlo_simulations.ipynb     # 50K simulations
+│   │   ├── 07_monte_carlo_simulations.ipynb     # 50K simulations + odds
+│   │   ├── 08_database_validation.ipynb         # Sanity checks
+│   │   ├── 09_playoff_odds.ipynb                # First place / playoff odds
+│   │   └── 10_prediction_accuracy.ipynb         # How good were the projections?
 │   ├── scrapers/               # Web scraper modules
 │   │   ├── scraper_fanduel.py
 │   │   ├── scraper_sleeper.py
@@ -145,6 +158,8 @@ The platform uses multiple SQLite databases:
 │   ├── database.py             # SQLAlchemy instance
 │   ├── models.py               # Database models
 │   └── routes/                 # Blueprints (pages, betting, odds, admin, account)
+├── docs/architecture/          # How the system works today
+├── tests/                      # Pytest suite (in-memory SQLite)
 ├── scripts/                    # Standalone CLI tools
 │   ├── publish.py              # Push local SQLite to production PostgreSQL
 │   ├── scrape.py               # Orchestrate all scrapers
@@ -172,31 +187,59 @@ playwright install chromium
 
 ### Configuration
 
-Create a `.env` file with your Sleeper credentials:
+Create a `.env` file:
 
 ```
+# Pipeline
 SLEEPER_USERNAME=your_username
 LEAGUE_ID=your_league_id
+
+# Web app
+SECRET_KEY=any_random_string
+DATABASE_URL=postgresql://user:password@localhost:5432/tncasino
+GOOGLE_OAUTH_CLIENT_ID=your_client_id
+GOOGLE_OAUTH_CLIENT_SECRET=your_client_secret
+ADMIN_EMAILS=you@example.com
+
+# Local dev only (lets Google OAuth work over http://localhost)
+OAUTHLIB_INSECURE_TRANSPORT=1
+OAUTHLIB_RELAX_TOKEN_SCOPE=1
 ```
 
 ### Running the Pipeline
 
-The data processing pipeline runs through Jupyter notebooks in numbered sequence:
+Scrape projections with the CLI (it isolates each source and validates the result):
+
+```bash
+python -m scripts.scrape --week 17
+```
+
+Then run the Jupyter notebooks in numbered sequence (set `CURRENT_WEEK` at the top of each):
 
 1. **League Control**: Fetch Sleeper league data
-2. **Projections Control**: Scrape projections from all sources
+2. **Projections Control**: Scrape projections (same as the CLI above, skip if you used it)
 3. **Post-Scraping Processing**: Clean and standardize data
 4. **Match to Sleeper**: Link projections to Sleeper player IDs
 5. **Player Stats**: Calculate mean/variance for each player
 6. **Lineup Optimizer**: Generate optimal lineups
 7. **Monte Carlo**: Run 50,000 simulations and generate odds
+8. **Database Validation**: Sanity-check everything
+9. **Playoff Odds**: First place and make-the-playoffs odds
+10. **Prediction Accuracy**: Optional, compares projections to what actually happened
 
-That will create the db files. Push the ones you need, not the monte carlo one because it's too big.
+That creates the SQLite files. Publish what the site needs to PostgreSQL (the Monte Carlo db stays local because it's too big):
 
-then run
+```bash
+python -m scripts.publish
+```
+
+Then run the site:
+
 ```bash
 python -m app
 ```
+
+Tests run with `python -m pytest`.
 
 email me for more information if you do want to do this yourself
 
@@ -208,8 +251,7 @@ Potential improvements (if I continue developing):
 - Machine learning models for player projection refinement
 - Historical accuracy tracking of projections
 - Advanced betting strategies (parlays, teasers)
-- Real-time data updates after TNF so that we can bet until sunday
-- Actual production tables instead of uploading .db files
+- Real-time data updates after TNF so that we can bet until Sunday
 - API endpoints for programmatic access
 
 ---
