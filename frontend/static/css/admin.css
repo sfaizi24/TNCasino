@@ -251,6 +251,126 @@
         color: #ff4444;
     }
 
+    .pipeline-weeks {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 25px;
+    }
+
+    .pipeline-panels {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 25px;
+    }
+
+    .pipeline-scroll {
+        overflow-x: auto;
+    }
+
+    .pipeline-table td {
+        vertical-align: top;
+    }
+
+    .pipeline-name {
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .pipeline-not-run td {
+        color: var(--tnc-fg-muted);
+    }
+
+    .pipeline-status {
+        background: var(--tnc-border-soft);
+        color: var(--tnc-fg-muted);
+        white-space: nowrap;
+    }
+
+    .pipeline-status[data-status="ok"] {
+        background: var(--tnc-win-tint);
+        color: var(--tnc-win);
+    }
+
+    .pipeline-status[data-status="warn"] {
+        background: var(--tnc-pending-tint);
+        color: var(--tnc-pending);
+    }
+
+    .pipeline-status[data-status="failed"],
+    .pipeline-status[data-status="fail"],
+    .pipeline-status[data-status="reject"] {
+        background: var(--tnc-loss-tint);
+        color: var(--tnc-loss);
+    }
+
+    .pipeline-status[data-status="running"] {
+        background: var(--tnc-blue-tint);
+        color: var(--tnc-blue);
+    }
+
+    .pipeline-summary {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 4px 16px;
+        font-size: 13px;
+    }
+
+    .pipeline-summary dt {
+        color: var(--tnc-fg-muted);
+    }
+
+    .pipeline-mini {
+        width: auto;
+    }
+
+    .pipeline-mini th,
+    .pipeline-mini td {
+        padding: 4px 8px;
+        font-size: 12px;
+        text-transform: none;
+        vertical-align: top;
+    }
+
+    .pipeline-warnings {
+        color: var(--tnc-pending);
+        font-size: 13px;
+        padding-left: 18px;
+        margin-bottom: 8px;
+    }
+
+    .pipeline-error {
+        background: var(--tnc-loss-tint);
+        color: var(--tnc-loss-soft);
+        border-radius: 6px;
+        padding: 8px 10px;
+        margin: 6px 0;
+        font-family: var(--tnc-font-mono);
+        font-size: 12px;
+        white-space: pre-wrap;
+    }
+
+    .pipeline-chart {
+        color: var(--tnc-blue);
+        font-size: 13px;
+        margin-right: 12px;
+    }
+
+    .pipeline-muted {
+        color: var(--tnc-fg-muted);
+        font-size: 13px;
+    }
+
+    .pipeline-mono {
+        font-family: var(--tnc-font-mono);
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    .pipeline-time {
+        white-space: nowrap;
+    }
+
     @media (min-width: 768px) {
         .admin-grid {
             grid-template-columns: repeat(2, 1fr);

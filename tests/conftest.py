@@ -384,3 +384,130 @@ def seeded_analytics(analytics_tables, db_session):
         {"lx": left_x, "ly": left_y, "rx": right_x, "ry": right_y},
     )
     db_session.session.commit()
+
+
+@pytest.fixture
+def pipeline_tables(db_session):
+    """Create the pipeline run tables; week 4 has a run that failed at playoffs and a rerun of simulate and odds."""
+    db_session.session.execute(
+        text("""
+        CREATE TABLE pipeline_runs (
+            run_id TEXT PRIMARY KEY,
+            season INTEGER NOT NULL, week INTEGER NOT NULL,
+            started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL,
+            steps TEXT NOT NULL,
+            git_sha TEXT, error TEXT
+        )
+    """)
+    )
+    db_session.session.execute(
+        text("""
+        CREATE TABLE pipeline_steps (
+            run_id TEXT NOT NULL, step TEXT NOT NULL,
+            started_at TEXT NOT NULL, finished_at TEXT, duration_s REAL,
+            status TEXT NOT NULL,
+            summary TEXT, warnings TEXT, charts TEXT, error TEXT,
+            PRIMARY KEY (run_id, step)
+        )
+    """)
+    )
+    db_session.session.execute(
+        text("""
+        CREATE TABLE source_reviews (
+            season INTEGER NOT NULL, week INTEGER NOT NULL, source TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            note TEXT, reviewed_at TEXT NOT NULL,
+            PRIMARY KEY (season, week, source)
+        )
+    """)
+    )
+
+    first_run = "2026w04-20260929T140000"
+    rerun = "2026w04-20260929T160000"
+    db_session.session.execute(
+        text("""
+        INSERT INTO pipeline_runs (run_id, season, week, started_at, finished_at, status, steps, git_sha, error)
+        VALUES (:first, 2026, 4, '2026-09-29T14:00:00+00:00', '2026-09-29T14:06:10+00:00', 'failed',
+                :first_steps, 'abc1234', 'step playoffs failed'),
+               (:rerun, 2026, 4, '2026-09-29T16:00:00+00:00', '2026-09-29T16:00:40+00:00', 'ok',
+                :rerun_steps, 'abc1234', NULL)
+    """),
+        {
+            "first": first_run,
+            "rerun": rerun,
+            "first_steps": json.dumps(["league", "scrape", "calibrate", "simulate", "odds", "playoffs"]),
+            "rerun_steps": json.dumps(["simulate", "odds"]),
+        },
+    )
+
+    scrape_summary = {
+        "sources": [
+            {
+                "source": "sleeper.com",
+                "status": "ok",
+                "n_rows": 412,
+                "elapsed_s": 1.2,
+                "checks": [{"name": "position_counts", "status": "ok", "detail": "all positions in range"}],
+            },
+            {
+                "source": "espn.com",
+                "status": "fail",
+                "n_rows": 380,
+                "elapsed_s": 3.4,
+                "checks": [
+                    {"name": "position_agreement", "status": "fail", "detail": "3.1% of matched rows disagree"},
+                ],
+            },
+        ],
+        "dropped": ["espn.com"],
+    }
+    db_session.session.execute(
+        text("""
+        INSERT INTO pipeline_steps
+            (run_id, step, started_at, finished_at, duration_s, status, summary, warnings, charts, error)
+        VALUES
+            (:first, 'league', '2026-09-29T14:00:00+00:00', '2026-09-29T14:00:20+00:00', 20.0, 'ok',
+             :league, '[]', '[]', NULL),
+            (:first, 'scrape', '2026-09-29T14:00:20+00:00', '2026-09-29T14:03:10+00:00', 170.0, 'warn',
+             :scrape, :scrape_warnings, '[]', NULL),
+            (:first, 'calibrate', '2026-09-29T14:03:10+00:00', '2026-09-29T14:04:00+00:00', 50.0, 'ok',
+             :calibrate, '[]', :calibrate_charts, NULL),
+            (:first, 'simulate', '2026-09-29T14:04:00+00:00', '2026-09-29T14:05:30+00:00', 90.0, 'ok',
+             :first_simulate, '[]', '[]', NULL),
+            (:first, 'odds', '2026-09-29T14:05:30+00:00', '2026-09-29T14:05:40+00:00', 10.0, 'ok',
+             :odds, '[]', '[]', NULL),
+            (:first, 'playoffs', '2026-09-29T14:05:40+00:00', '2026-09-29T14:06:10+00:00', 30.0, 'failed',
+             NULL, NULL, NULL, :playoffs_error),
+            (:rerun, 'simulate', '2026-09-29T16:00:00+00:00', '2026-09-29T16:00:30+00:00', 30.0, 'ok',
+             :rerun_simulate, '[]', '[]', NULL),
+            (:rerun, 'odds', '2026-09-29T16:00:30+00:00', '2026-09-29T16:00:40+00:00', 10.0, 'ok',
+             :odds, '[]', '[]', NULL)
+    """),
+        {
+            "first": first_run,
+            "rerun": rerun,
+            "league": json.dumps({"n_users": 12, "n_rosters": 12, "byes_this_week": ["DET", "LV"]}),
+            "scrape": json.dumps(scrape_summary),
+            "scrape_warnings": json.dumps(["espn.com failed verification and was dropped"]),
+            "calibrate": json.dumps({"model_version": "v2", "team_coverage_80": 0.8125}),
+            "calibrate_charts": json.dumps(["calibration_week_4.png"]),
+            "first_simulate": json.dumps({"n_sims": 50000, "seed": 1738}),
+            "rerun_simulate": json.dumps({"n_sims": 50000, "seed": 1739}),
+            "odds": json.dumps({"n_matchups": 6}),
+            "playoffs_error": "Traceback (most recent call last):\n  ...\nKeyError: 'playoff_week_start'",
+        },
+    )
+    db_session.session.execute(
+        text("""
+        INSERT INTO source_reviews (season, week, source, verdict, note, reviewed_at)
+        VALUES (2026, 4, 'sleeper.com', 'ok', 'top 15 look right', '2026-09-29T14:10:00+00:00')
+    """)
+    )
+    db_session.session.commit()
+
+    yield
+
+    # db_session only drops ORM tables, and the in-memory database outlives each test.
+    for table in ("pipeline_runs", "pipeline_steps", "source_reviews"):
+        db_session.session.execute(text(f"DROP TABLE {table}"))
+    db_session.session.commit()

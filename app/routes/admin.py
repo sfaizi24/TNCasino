@@ -1,12 +1,31 @@
+import json
 from datetime import UTC, datetime, timedelta
 
 from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user
+from sqlalchemy import inspect
 
 from ..database import db
-from .helpers import admin_required, friendly_description
+from .helpers import admin_required, friendly_description, query_analytics
 
 admin_bp = Blueprint("admin", __name__)
+
+# Mirrors STEP_ORDER in the pipeline package, which the web app deliberately does not import.
+PIPELINE_STEP_ORDER = [
+    "league",
+    "scrape",
+    "clean",
+    "match",
+    "stats",
+    "calibrate",
+    "lineups",
+    "simulate",
+    "odds",
+    "playoffs",
+    "accuracy",
+    "validate",
+    "publish",
+]
 
 
 @admin_bp.route("/admin")
@@ -250,3 +269,102 @@ def unlock_period():
         traceback.print_exc()
         db.session.rollback()
         return jsonify({"success": False, "error": str(e)})
+
+
+@admin_bp.route("/admin/pipeline")
+@admin_required
+def admin_pipeline():
+    weeks = _pipeline_weeks()
+    if not weeks:
+        return render_template("admin_pipeline.html", weeks=weeks)
+
+    week = request.args.get("week", default=weeks[0], type=int)
+    latest_steps = _latest_steps(week)
+    return render_template(
+        "admin_pipeline.html",
+        weeks=weeks,
+        week=week,
+        steps=[(name, latest_steps.get(name)) for name in PIPELINE_STEP_ORDER],
+        sources=_source_reports(week, latest_steps.get("scrape")),
+        runs=_week_runs(week),
+    )
+
+
+@admin_bp.route("/api/admin/pipeline")
+@admin_required
+def get_pipeline_status():
+    weeks = _pipeline_weeks()
+    if not weeks:
+        return jsonify({"week": request.args.get("week", type=int), "steps": [], "sources": [], "runs": []})
+
+    week = request.args.get("week", default=weeks[0], type=int)
+    latest_steps = _latest_steps(week)
+    return jsonify(
+        {
+            "week": week,
+            "steps": list(latest_steps.values()),
+            "sources": _source_reports(week, latest_steps.get("scrape")),
+            "runs": _week_runs(week),
+        }
+    )
+
+
+def _pipeline_weeks():
+    if not inspect(db.engine).has_table("pipeline_steps"):
+        return []
+    rows = query_analytics(
+        "SELECT DISTINCT r.week FROM pipeline_runs r JOIN pipeline_steps s ON s.run_id = r.run_id ORDER BY r.week DESC"
+    )
+    return [row["week"] for row in rows]
+
+
+def _latest_steps(week):
+    rows = query_analytics(
+        """
+        SELECT s.run_id, s.step, s.started_at, s.finished_at, s.duration_s, s.status,
+               s.summary, s.warnings, s.charts, s.error
+        FROM pipeline_steps s
+        JOIN pipeline_runs r ON r.run_id = s.run_id
+        WHERE r.week = :week
+        ORDER BY s.started_at, s.run_id
+        """,
+        {"week": week},
+    )
+    # Rows come oldest first, so a rerun's row replaces the earlier row for the same step.
+    latest = {row["step"]: row for row in rows}
+    for step in latest.values():
+        step["summary"] = _parse_json(step["summary"], {})
+        step["warnings"] = _parse_json(step["warnings"], [])
+        step["charts"] = _parse_json(step["charts"], [])
+    return {name: latest[name] for name in PIPELINE_STEP_ORDER if name in latest}
+
+
+def _source_reports(week, scrape):
+    if scrape is None:
+        return []
+    reviews = query_analytics(
+        "SELECT source, verdict, note FROM source_reviews WHERE week = :week",
+        {"week": week},
+    )
+    reviews_by_source = {review["source"]: review for review in reviews}
+
+    reports = []
+    for report in scrape["summary"].get("sources", []):
+        review = reviews_by_source.get(report["source"], {})
+        reports.append({**report, "verdict": review.get("verdict"), "note": review.get("note")})
+    return reports
+
+
+def _week_runs(week):
+    runs = query_analytics(
+        "SELECT run_id, status, steps, started_at, finished_at, git_sha, error "
+        "FROM pipeline_runs WHERE week = :week ORDER BY started_at DESC",
+        {"week": week},
+    )
+    for run in runs:
+        run["steps"] = json.loads(run["steps"])
+    return runs
+
+
+def _parse_json(value, default):
+    return json.loads(value) if value else default
