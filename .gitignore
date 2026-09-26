@@ -1,6 +1,7 @@
-# Database files
+# Database files and simulation draws
 *.db
 *.db-journal
+backend/data/sims/
 
 # Python
 __pycache__/
