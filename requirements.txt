@@ -16,11 +16,15 @@ scipy
 matplotlib
 seaborn
 jupyter
+numpy
+pyarrow
 
 # Web scraping
 selenium
 webdriver-manager
 playwright
+beautifulsoup4
+lxml
 
 # Utilities
 requests
