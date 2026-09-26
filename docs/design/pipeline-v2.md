@@ -201,12 +201,17 @@ Raw simulation draws go to Parquet, not SQLite:
 `backend/data/sims/{season}/wk{week:02d}/{run_id}.parquet` with columns `sim_id int32`,
 `roster_id int16`, `total_points float32` (50k × 12 rows). `montecarlo.db` is retired.
 
-Typing rules for every table the pipeline writes: `season INTEGER` and `week INTEGER` columns,
-never `"Week 4"` strings. WP3 ships a one-off `python -m pipeline migrate-legacy` that backs up the
+Typing rules for every table the pipeline creates: `season INTEGER` and `week INTEGER` columns,
+never `"Week 4"` strings. The Sleeper mirror tables in `league.db` (`leagues`, `users`, `rosters`,
+`matchups`, `nfl_players`, `transactions`, `player_stats`) keep their legacy DDL so the 2025 rows
+already in the file stay readable; SQLite's TEXT affinity makes `season = 2026` match either way. WP3 ships a one-off `python -m pipeline migrate-legacy` that backs up the
 three legacy files to `backend/data/databases/backup-2025/`, converts `"Week N"` to `N`, and adds
 `season = 2025` where missing, so history is uniform for calibration.
 
 Canonical position codes: `QB, RB, WR, TE, K, DEF` (sources say DST; convert on ingest).
+Notebook 03 rewrote `DEF` to `DST` in every legacy table, so `migrate-legacy` converts `DST` back
+to `DEF` wherever it finds it (`nfl_players`, `projections`, `projections_with_sleeper`,
+`player_week_stats`, `team_lineups`, `projections_rosters`).
 Canonical team codes: Sleeper's (`pipeline/sources/teams.py` maps JAC→JAX, WSH→WAS, LA→LAR,
 GBP→GB, SFO→SF, KCC→KC, NEP→NE, NOS→NO, TBB→TB, LVR→LV, etc.).
 Team identity is `roster_id` within a `league_id`; never key history by owner name (one owner
@@ -391,8 +396,10 @@ Replaces notebook 06. Trust owners; fill only real holes from the waiver wire.
   starters at that position across the league; sigma/var from the free agent's own row.
 - Writes `team_lineups` (frozen columns + `season`, `sleeper_player_id`, `is_replacement`) and
   `team_projections_summary` (total_mu, combined_sigma, total_var, waiver_pickups) and
-  `projections_rosters` (every rostered player with mu/var and `starting_status` in
-  {starter, bench, replacement, out, bye, unprojected}) exactly as Flask reads them.
+  `projections_rosters` (every rostered player with mu/var) exactly as Flask reads them.
+  Flask treats any truthy `starting_status` as a starter (`odds.py::get_team_players`), so it stays
+  an integer flag: 1 for players in the optimal lineup, 0 otherwise. The richer classification
+  goes in a new `roster_status` column: `starter`, `bench`, `out`, `bye`, `unprojected`.
 - summary: `teams: [{owner, total_mu, holes: [{slot, replacement, mu}]}], n_replacements, pool_sizes: {position: n}, cap_by_position: {...}, unresolved: [...]`.
 - Acceptance: unit tests with a synthetic 3-team league: healthy players never replaced; Out
   player creates a hole; two teams needing WR get 1st and 2nd best FA in FAAB order; cap binds on
