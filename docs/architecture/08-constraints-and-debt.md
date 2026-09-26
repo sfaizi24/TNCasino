@@ -4,11 +4,16 @@ This page lists facts a refactor has to work around, grouped by area. Nothing he
 
 ## Open issues
 
-High-severity problems found while writing these docs (2026-09-26). Check them off and link the fixing commit when they're resolved.
+Problems and follow-ups found while writing these docs (2026-09-26). Check them off and link the fixing commit when they're resolved.
 
 - [ ] **Client-supplied odds.** `highest_scorer`, `lowest_scorer`, `first_seed`, and `ammad_playoff` bets store the `odds` string sent by the browser without checking it against the odds tables, so a crafted request can set any payout. `app/routes/betting.py:255`
 - [ ] **Duplicate odds rows after re-running notebook 07.** The five `betting_odds_*` tables append by `run_id` and the app doesn't filter by it. Duplicates appear on the site, and since moneyline/O/U bets select by row position (`matchup_idx`, `team_idx`), they can shift which matchup a bet lands on. Negative indexes and unknown `choice` values also aren't rejected. `app/routes/odds.py:30`, `app/routes/betting.py:420–482`, notebook 07
 - [ ] **Balance race.** Balance updates are read-modify-write on the ORM object with no row lock, so concurrent place/remove/settle requests can overwrite each other. `app/routes/betting.py`, `app/routes/admin.py:118`
+- [ ] **Sleeper scraper uses the legacy host.** `scraper_sleeper.py` calls `api.sleeper.app/v1/projections/nfl/regular/{season}/{week}`. It still returns data (9,422 entries for 2026 week 3), but the Sleeper app itself now reads `api.sleeper.com/projections/nfl/{season}/{week}?season_type=regular&position[]=…`, which returns a list instead of a dict, nests stats under `stats`, and adds `pts_ppr`/`pts_half_ppr`/`pts_std` and a `company` field (`rotowire`). Migrate before the old host goes empty. `backend/scrapers/scraper_sleeper.py:93`
+- [ ] **Add more projection sources.** Verified 2026-09-26 as free, no login, server-rendered HTML tables (plain `requests` + BeautifulSoup, same shape as the FantasyPros scraper). Sleeper is RotoWire data, so these would be the first independent additions since FirstDown.
+  - CBS Sports: `https://www.cbssports.com/fantasy/football/stats/{POS}/{season}/{week}/projections/ppr/`, one page per position, fantasy points plus full stat line.
+  - FFToday: `https://www.fftoday.com/rankings/playerwkproj.php?Season={season}&GameWeek={week}&PosID={id}&LeagueID=1`, one page per position (`PosID` 10=QB, 20=RB, 30=WR, 40=TE, 80=K, 99=DST), `FPts` column, `LeagueID` selects the scoring system.
+  - FantasySharks: `https://www.fantasysharks.com/apps/bert/forecasts/projections.php?League=-1&Position={n}&scoring=1&Segment={n}`, most detailed stat breakdown, but the week is an opaque `Segment` number that has to be mapped each season.
 
 ## Cross-cutting
 

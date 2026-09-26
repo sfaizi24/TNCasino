@@ -30,7 +30,7 @@ TNCasino — fantasy football analytics & fake-money betting platform. Flask web
 Ten Jupyter notebooks in `backend/notebooks/`, run sequentially. See `docs/architecture/` for how the whole system works (pipeline, modeling, data model, web app, betting, deployment, known debt); update the relevant page when behavior changes.
 
 1. `01_league_control` — fetch Sleeper league data
-2. `02_projections_control` — scrape projections (FanDuel, FantasyPros, ESPN, FirstDown)
+2. `02_projections_control` — scrape projections (Sleeper, FanDuel, FantasyPros, ESPN, FirstDown)
 3. `03_post_scraping_processing` — clean & standardize
 4. `04_match_projections_to_sleeper` — link players to Sleeper IDs
 5. `05_compute_player_week_stats` — calculate mean/variance per player
