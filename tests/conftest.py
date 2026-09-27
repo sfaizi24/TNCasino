@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -21,6 +22,12 @@ TEST_CONFIG = {
     "GOOGLE_OAUTH_CLIENT_ID": "",
     "GOOGLE_OAUTH_CLIENT_SECRET": "",
 }
+
+
+@pytest.fixture(scope="session", autouse=True)
+def no_production_database():
+    """Importing app loads .env, so anything reading DATABASE_URL would otherwise reach production."""
+    os.environ["DATABASE_URL"] = "sqlite://"
 
 
 @pytest.fixture(scope="session")

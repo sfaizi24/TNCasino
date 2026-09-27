@@ -114,7 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
     selection.add_argument("--steps", help=f"comma-separated, from: {', '.join(STEP_ORDER)}")
     selection.add_argument("--from", dest="from_step", metavar="STEP", help="this step and every default step after it")
     run.add_argument("--sources", type=source_list, help=f"comma-separated, from: {', '.join(SOURCE_NAMES)}")
-    run.add_argument("--no-charts", action="store_true", help="skip rendering charts")
+    run.add_argument("--no-charts", action="store_true", help="skip rendering charts and, in publish, uploading them")
     run.add_argument("--dry-run", action="store_true", help="publish: report what would be uploaded, write nothing")
     run.set_defaults(handler=run_command)
 
