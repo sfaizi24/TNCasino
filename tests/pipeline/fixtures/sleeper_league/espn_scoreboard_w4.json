@@ -1,0 +1,795 @@
+{
+ "season": {
+  "type": 2,
+  "year": 2026
+ },
+ "week": {
+  "number": 4
+ },
+ "events": [
+  {
+   "id": "401872964",
+   "date": "2026-10-02T00:15Z",
+   "name": "Pittsburgh Steelers at Cleveland Browns",
+   "shortName": "PIT @ CLE",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872964",
+     "date": "2026-10-02T00:15Z",
+     "competitors": [
+      {
+       "id": "5",
+       "homeAway": "home",
+       "team": {
+        "id": "5",
+        "abbreviation": "CLE",
+        "displayName": "Cleveland Browns",
+        "location": "Cleveland"
+       }
+      },
+      {
+       "id": "23",
+       "homeAway": "away",
+       "team": {
+        "id": "23",
+        "abbreviation": "PIT",
+        "displayName": "Pittsburgh Steelers",
+        "location": "Pittsburgh"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872965",
+   "date": "2026-10-04T13:30Z",
+   "name": "Indianapolis Colts at Washington Commanders",
+   "shortName": "IND VS WSH",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872965",
+     "date": "2026-10-04T13:30Z",
+     "competitors": [
+      {
+       "id": "28",
+       "homeAway": "home",
+       "team": {
+        "id": "28",
+        "abbreviation": "WSH",
+        "displayName": "Washington Commanders",
+        "location": "Washington"
+       }
+      },
+      {
+       "id": "11",
+       "homeAway": "away",
+       "team": {
+        "id": "11",
+        "abbreviation": "IND",
+        "displayName": "Indianapolis Colts",
+        "location": "Indianapolis"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872971",
+   "date": "2026-10-04T17:00Z",
+   "name": "New England Patriots at Buffalo Bills",
+   "shortName": "NE @ BUF",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872971",
+     "date": "2026-10-04T17:00Z",
+     "competitors": [
+      {
+       "id": "2",
+       "homeAway": "home",
+       "team": {
+        "id": "2",
+        "abbreviation": "BUF",
+        "displayName": "Buffalo Bills",
+        "location": "Buffalo"
+       }
+      },
+      {
+       "id": "17",
+       "homeAway": "away",
+       "team": {
+        "id": "17",
+        "abbreviation": "NE",
+        "displayName": "New England Patriots",
+        "location": "New England"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872972",
+   "date": "2026-10-04T17:00Z",
+   "name": "New York Jets at Chicago Bears",
+   "shortName": "NYJ @ CHI",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872972",
+     "date": "2026-10-04T17:00Z",
+     "competitors": [
+      {
+       "id": "3",
+       "homeAway": "home",
+       "team": {
+        "id": "3",
+        "abbreviation": "CHI",
+        "displayName": "Chicago Bears",
+        "location": "Chicago"
+       }
+      },
+      {
+       "id": "20",
+       "homeAway": "away",
+       "team": {
+        "id": "20",
+        "abbreviation": "NYJ",
+        "displayName": "New York Jets",
+        "location": "New York"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872969",
+   "date": "2026-10-04T17:00Z",
+   "name": "Jacksonville Jaguars at Cincinnati Bengals",
+   "shortName": "JAX @ CIN",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872969",
+     "date": "2026-10-04T17:00Z",
+     "competitors": [
+      {
+       "id": "4",
+       "homeAway": "home",
+       "team": {
+        "id": "4",
+        "abbreviation": "CIN",
+        "displayName": "Cincinnati Bengals",
+        "location": "Cincinnati"
+       }
+      },
+      {
+       "id": "30",
+       "homeAway": "away",
+       "team": {
+        "id": "30",
+        "abbreviation": "JAX",
+        "displayName": "Jacksonville Jaguars",
+        "location": "Jacksonville"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872966",
+   "date": "2026-10-04T17:00Z",
+   "name": "Arizona Cardinals at New York Giants",
+   "shortName": "ARI @ NYG",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872966",
+     "date": "2026-10-04T17:00Z",
+     "competitors": [
+      {
+       "id": "19",
+       "homeAway": "home",
+       "team": {
+        "id": "19",
+        "abbreviation": "NYG",
+        "displayName": "New York Giants",
+        "location": "New York"
+       }
+      },
+      {
+       "id": "22",
+       "homeAway": "away",
+       "team": {
+        "id": "22",
+        "abbreviation": "ARI",
+        "displayName": "Arizona Cardinals",
+        "location": "Arizona"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872970",
+   "date": "2026-10-04T17:00Z",
+   "name": "Los Angeles Rams at Philadelphia Eagles",
+   "shortName": "LAR @ PHI",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872970",
+     "date": "2026-10-04T17:00Z",
+     "competitors": [
+      {
+       "id": "21",
+       "homeAway": "home",
+       "team": {
+        "id": "21",
+        "abbreviation": "PHI",
+        "displayName": "Philadelphia Eagles",
+        "location": "Philadelphia"
+       }
+      },
+      {
+       "id": "14",
+       "homeAway": "away",
+       "team": {
+        "id": "14",
+        "abbreviation": "LAR",
+        "displayName": "Los Angeles Rams",
+        "location": "Los Angeles"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872968",
+   "date": "2026-10-04T17:00Z",
+   "name": "Green Bay Packers at Tampa Bay Buccaneers",
+   "shortName": "GB @ TB",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872968",
+     "date": "2026-10-04T17:00Z",
+     "competitors": [
+      {
+       "id": "27",
+       "homeAway": "home",
+       "team": {
+        "id": "27",
+        "abbreviation": "TB",
+        "displayName": "Tampa Bay Buccaneers",
+        "location": "Tampa Bay"
+       }
+      },
+      {
+       "id": "9",
+       "homeAway": "away",
+       "team": {
+        "id": "9",
+        "abbreviation": "GB",
+        "displayName": "Green Bay Packers",
+        "location": "Green Bay"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872973",
+   "date": "2026-10-04T17:00Z",
+   "name": "Tennessee Titans at Baltimore Ravens",
+   "shortName": "TEN @ BAL",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872973",
+     "date": "2026-10-04T17:00Z",
+     "competitors": [
+      {
+       "id": "33",
+       "homeAway": "home",
+       "team": {
+        "id": "33",
+        "abbreviation": "BAL",
+        "displayName": "Baltimore Ravens",
+        "location": "Baltimore"
+       }
+      },
+      {
+       "id": "10",
+       "homeAway": "away",
+       "team": {
+        "id": "10",
+        "abbreviation": "TEN",
+        "displayName": "Tennessee Titans",
+        "location": "Tennessee"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872967",
+   "date": "2026-10-04T17:00Z",
+   "name": "Dallas Cowboys at Houston Texans",
+   "shortName": "DAL @ HOU",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872967",
+     "date": "2026-10-04T17:00Z",
+     "competitors": [
+      {
+       "id": "34",
+       "homeAway": "home",
+       "team": {
+        "id": "34",
+        "abbreviation": "HOU",
+        "displayName": "Houston Texans",
+        "location": "Houston"
+       }
+      },
+      {
+       "id": "6",
+       "homeAway": "away",
+       "team": {
+        "id": "6",
+        "abbreviation": "DAL",
+        "displayName": "Dallas Cowboys",
+        "location": "Dallas"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872974",
+   "date": "2026-10-04T20:05Z",
+   "name": "Miami Dolphins at Minnesota Vikings",
+   "shortName": "MIA @ MIN",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872974",
+     "date": "2026-10-04T20:05Z",
+     "competitors": [
+      {
+       "id": "16",
+       "homeAway": "home",
+       "team": {
+        "id": "16",
+        "abbreviation": "MIN",
+        "displayName": "Minnesota Vikings",
+        "location": "Minnesota"
+       }
+      },
+      {
+       "id": "15",
+       "homeAway": "away",
+       "team": {
+        "id": "15",
+        "abbreviation": "MIA",
+        "displayName": "Miami Dolphins",
+        "location": "Miami"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872976",
+   "date": "2026-10-04T20:25Z",
+   "name": "Kansas City Chiefs at Las Vegas Raiders",
+   "shortName": "KC @ LV",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872976",
+     "date": "2026-10-04T20:25Z",
+     "competitors": [
+      {
+       "id": "13",
+       "homeAway": "home",
+       "team": {
+        "id": "13",
+        "abbreviation": "LV",
+        "displayName": "Las Vegas Raiders",
+        "location": "Las Vegas"
+       }
+      },
+      {
+       "id": "12",
+       "homeAway": "away",
+       "team": {
+        "id": "12",
+        "abbreviation": "KC",
+        "displayName": "Kansas City Chiefs",
+        "location": "Kansas City"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872975",
+   "date": "2026-10-04T20:25Z",
+   "name": "Denver Broncos at San Francisco 49ers",
+   "shortName": "DEN @ SF",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872975",
+     "date": "2026-10-04T20:25Z",
+     "competitors": [
+      {
+       "id": "25",
+       "homeAway": "home",
+       "team": {
+        "id": "25",
+        "abbreviation": "SF",
+        "displayName": "San Francisco 49ers",
+        "location": "San Francisco"
+       }
+      },
+      {
+       "id": "7",
+       "homeAway": "away",
+       "team": {
+        "id": "7",
+        "abbreviation": "DEN",
+        "displayName": "Denver Broncos",
+        "location": "Denver"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872977",
+   "date": "2026-10-04T20:25Z",
+   "name": "Los Angeles Chargers at Seattle Seahawks",
+   "shortName": "LAC @ SEA",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872977",
+     "date": "2026-10-04T20:25Z",
+     "competitors": [
+      {
+       "id": "26",
+       "homeAway": "home",
+       "team": {
+        "id": "26",
+        "abbreviation": "SEA",
+        "displayName": "Seattle Seahawks",
+        "location": "Seattle"
+       }
+      },
+      {
+       "id": "24",
+       "homeAway": "away",
+       "team": {
+        "id": "24",
+        "abbreviation": "LAC",
+        "displayName": "Los Angeles Chargers",
+        "location": "Los Angeles"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872978",
+   "date": "2026-10-05T00:20Z",
+   "name": "Detroit Lions at Carolina Panthers",
+   "shortName": "DET @ CAR",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872978",
+     "date": "2026-10-05T00:20Z",
+     "competitors": [
+      {
+       "id": "29",
+       "homeAway": "home",
+       "team": {
+        "id": "29",
+        "abbreviation": "CAR",
+        "displayName": "Carolina Panthers",
+        "location": "Carolina"
+       }
+      },
+      {
+       "id": "8",
+       "homeAway": "away",
+       "team": {
+        "id": "8",
+        "abbreviation": "DET",
+        "displayName": "Detroit Lions",
+        "location": "Detroit"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "401872979",
+   "date": "2026-10-06T00:15Z",
+   "name": "Atlanta Falcons at New Orleans Saints",
+   "shortName": "ATL @ NO",
+   "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+   },
+   "week": {
+    "number": 4
+   },
+   "status": {
+    "type": {
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false
+    }
+   },
+   "competitions": [
+    {
+     "id": "401872979",
+     "date": "2026-10-06T00:15Z",
+     "competitors": [
+      {
+       "id": "18",
+       "homeAway": "home",
+       "team": {
+        "id": "18",
+        "abbreviation": "NO",
+        "displayName": "New Orleans Saints",
+        "location": "New Orleans"
+       }
+      },
+      {
+       "id": "1",
+       "homeAway": "away",
+       "team": {
+        "id": "1",
+        "abbreviation": "ATL",
+        "displayName": "Atlanta Falcons",
+        "location": "Atlanta"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
