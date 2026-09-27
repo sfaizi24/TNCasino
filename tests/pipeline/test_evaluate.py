@@ -26,7 +26,6 @@ from pipeline.model.sampling import player_points
 from pipeline.settings import Settings
 from pipeline.steps.league import MIRROR_TABLES
 from pipeline.steps.lineups import LINEUP_TABLES
-from pipeline.steps.stats import PLAYER_WEEK_STATS_DDL
 
 DUD = {"threshold_ratio": 0.25, "by_position": {"RB": {"c": -1.0, "d": -0.10}, "WR": {"c": -0.5, "d": -0.12}}}
 LEAGUE_ID = "L2025"
@@ -232,10 +231,10 @@ def insert(settings: Settings, database: str, table: str, rows: pd.DataFrame) ->
 
 @pytest.fixture
 def settings(tmp_path):
-    """Week 10's lineups, one starter named but without an id and one in a retired slot, week 11's, a week with
-    lineups but no results and a week with results but no lineups."""
+    """Week 10's lineups, with a waiver pickup, who has no id, and a starter in a retired slot, week 11's, a week
+    with lineups but no results and a week with results but no lineups."""
     settings = Settings(season=2025, week=17, league_id=LEAGUE_ID, data_dir=tmp_path)
-    for database, ddl in {"league": MIRROR_TABLES, "projections": PLAYER_WEEK_STATS_DDL + LINEUP_TABLES}.items():
+    for database, ddl in {"league": MIRROR_TABLES, "projections": LINEUP_TABLES}.items():
         with closing(connect(settings, database)) as conn:
             conn.executescript(ddl)
 
@@ -243,7 +242,7 @@ def settings(tmp_path):
         [
             (11, 1, "QB", "4046", "Patrick Mahomes", "QB", 20.0),
             (10, 2, "WR1", "6794", "Justin Jefferson", "WR", 17.0),
-            (10, 1, "RB1", None, "Bijan Robinson", "RB", 18.0),
+            (10, 1, "RB1", None, "Waiver Pickup", "RB", 18.0),
             (10, 1, "QB", "4046", "Patrick Mahomes", "QB", 21.0),
             (10, 1, "RB", "4035", "Alvin Kamara", "RB", 9.0),
             (10, 2, "QB", "7000", "Practice Squad", "QB", 15.0),
@@ -263,21 +262,7 @@ def settings(tmp_path):
     )
     insert(settings, "projections", "team_lineups", lineups)
 
-    # The same name in week 11 is somebody else, and must not be picked up for week 10.
-    described = pd.DataFrame({"week": [10, 11], "sleeper_player_id": ["9509", "1111"]}).assign(
-        season=2025,
-        player_name="Bijan Robinson",
-        position="RB",
-        mu=18.0,
-        sigma=7.0,
-        var=49.0,
-        n_sources=4,
-        model_version="v1",
-        computed_at=CREATED_AT,
-    )
-    insert(settings, "projections", "player_week_stats", described)
-
-    teams = [("4046", "KC"), ("9509", "ATL"), ("6794", "MIN"), ("4035", "NO")]
+    teams = [("4046", "KC"), ("6794", "MIN"), ("4035", "NO")]
     insert(settings, "league", "nfl_players", pd.DataFrame(teams, columns=["player_id", "team"]))
     matchups = pd.DataFrame(
         [
@@ -294,13 +279,13 @@ def settings(tmp_path):
     return settings
 
 
-def test_team_weeks_resolve_starters_to_sleeper_ids_and_teams_in_roster_and_slot_order(settings):
+def test_team_weeks_carry_each_starters_sleeper_id_and_team_in_roster_and_slot_order(settings):
     lineups, matchups = load_team_weeks(settings, 2025, [10, 11])
 
     columns = ["week", "roster_id", "slot", "sleeper_player_id", "nfl_team", "legacy_mu"]
-    assert lineups[columns].fillna({"nfl_team": "-"}).values.tolist() == [
+    assert lineups[columns].fillna({"sleeper_player_id": "-", "nfl_team": "-"}).values.tolist() == [
         [10, 1, "QB", "4046", "KC", 21.0],
-        [10, 1, "RB1", "9509", "ATL", 18.0],
+        [10, 1, "RB1", "-", "-", 18.0],
         [10, 2, "QB", "7000", "-", 15.0],
         [10, 2, "WR1", "6794", "MIN", 17.0],
         [11, 1, "QB", "4046", "KC", 20.0],

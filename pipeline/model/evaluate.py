@@ -34,16 +34,10 @@ TEAM_SIMS = 20_000
 
 ACTUALS = "SELECT player_id AS sleeper_player_id, week, pts_ppr AS actual FROM player_stats WHERE season = ?"
 
-# Lineups migrated from 2025 carry no Sleeper ids, so a starter is found by name and position among the players
-# the stats step described that week.
 LINEUPS = """
-SELECT l.season, l.week, l.roster_id, l.slot, l.position, l.mu AS legacy_mu,
-       COALESCE(l.sleeper_player_id, s.sleeper_player_id) AS sleeper_player_id
-FROM team_lineups l
-LEFT JOIN player_week_stats s
-  ON l.sleeper_player_id IS NULL AND s.season = l.season AND s.week = l.week
- AND s.player_name = l.player_name AND s.position = l.position
-WHERE l.season = ?
+SELECT season, week, roster_id, slot, position, mu AS legacy_mu, sleeper_player_id
+FROM team_lineups
+WHERE season = ?
 """
 
 MATCHUPS = "SELECT week, roster_id, matchup_id_number, points FROM matchups WHERE league_id = ?"
