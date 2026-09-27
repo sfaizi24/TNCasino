@@ -74,8 +74,8 @@ pipeline/
     teams.py           NFL team code normalisation (all sources -> Sleeper codes)
   steps/
     __init__.py        STEP_ORDER, DEFAULT_STEPS, load_step(name) (lazy import)
-    league.py scrape.py clean.py match.py stats.py calibrate.py lineups.py
-    simulate.py odds.py playoffs.py accuracy.py validate.py publish.py
+    league.py scrape.py clean.py match.py stats.py accuracy.py calibrate.py lineups.py
+    simulate.py odds.py playoffs.py validate.py publish.py
   model/
     __init__.py
     params.py          load_params(version) -> dict; path helpers
@@ -147,8 +147,8 @@ A step is a module in `pipeline/steps/` with `NAME: str` and `run(ctx: StepConte
 It raises (any exception) to fail. Status is `ok` when it returns with no warnings, `warn` when
 warnings are non-empty, `failed` when it raises.
 
-`STEP_ORDER = ["league", "scrape", "clean", "match", "stats", "calibrate", "lineups", "simulate",
-"odds", "playoffs", "accuracy", "validate", "publish"]`. `DEFAULT_STEPS` is everything except
+`STEP_ORDER = ["league", "scrape", "clean", "match", "stats", "accuracy", "calibrate", "lineups",
+"simulate", "odds", "playoffs", "validate", "publish"]`. `DEFAULT_STEPS` is everything except
 `publish`. Steps are idempotent for a (season, week): rerunning replaces that week's rows.
 
 Summaries are small. Keys are snake_case; values are numbers, strings, short lists, or lists of
@@ -375,6 +375,19 @@ Port of notebook 05 with model params.
 - Acceptance: regression on 2025 week 16 legacy data with `v1` params reproduces the notebook's
   mu exactly and sigma within 1e-6 for every player.
 
+### accuracy (WP7)
+Replaces notebook 10 and feeds calibration. Computes for `week - 1` (skips with a warning when
+actuals are missing). Runs right after `stats` and before `calibrate`, so it needs only last week's
+tables plus this run's `league` step, and the same run's calibration sees last week's rows.
+- Player level: per source and consensus, by position: n, MAE, bias, Pearson r vs `player_stats.pts_ppr`.
+- Team level: projected total (lineup mu) vs actual `matchups.points`, plus p10/p90 coverage from
+  `team_distribution_curves`, moneyline outcome vs `betting_odds_matchup_ml` probabilities.
+- Writes `prediction_accuracy(season, week, source, position, n, mae, bias, corr)` and
+  `team_accuracy(season, week, roster_id, projected, actual, p10, p90, covered, win_prob, won)`.
+- Bar charts only (the user finds scatter plots unreadable): MAE by source per position; team
+  projected vs actual grouped bars.
+- summary: `week_evaluated, consensus_mae_by_position, best_source_by_position, team_mae, coverage_80, brier_ml, charts`.
+
 ### calibrate (WP6)
 Reads `prediction_accuracy`/`team_accuracy` history and the current params; reports calibration
 for the dashboard: per-position PIT coverage at 50/80/95%, team-level coverage, moneyline Brier,
@@ -447,18 +460,6 @@ Replaces notebook 09 with a rest-of-season simulation.
 - summary: `weeks_simulated, sources_used, first_place: [{owner, prob}], make_playoffs: [{owner, prob}], elapsed_s`.
 - Acceptance: first-place probabilities sum to 1 ± 0.01; make-playoff probabilities sum to
   `playoff_teams` ± 0.05; runtime < 3 min at 20k sims per future week (n_sims for futures is a param, default 20_000).
-
-### accuracy (WP7)
-Replaces notebook 10 and feeds calibration. Computes for `week - 1` (skips with a warning when
-actuals are missing).
-- Player level: per source and consensus, by position: n, MAE, bias, Pearson r vs `player_stats.pts_ppr`.
-- Team level: projected total (lineup mu) vs actual `matchups.points`, plus p10/p90 coverage from
-  `team_distribution_curves`, moneyline outcome vs `betting_odds_matchup_ml` probabilities.
-- Writes `prediction_accuracy(season, week, source, position, n, mae, bias, corr)` and
-  `team_accuracy(season, week, roster_id, projected, actual, p10, p90, covered, win_prob, won)`.
-- Bar charts only (the user finds scatter plots unreadable): MAE by source per position; team
-  projected vs actual grouped bars.
-- summary: `week_evaluated, consensus_mae_by_position, best_source_by_position, team_mae, coverage_80, brier_ml, charts`.
 
 ### validate (WP3)
 Port of notebook 08 as assertions over the week's tables: every roster has a lineup with all

@@ -66,7 +66,7 @@ def test_page_lists_every_step_and_marks_the_ones_not_run(admin_client, pipeline
     steps = captured_templates[0][1]["steps"]
     assert [name for name, _ in steps] == PIPELINE_STEP_ORDER
     not_run = [name for name, step in steps if step is None]
-    assert not_run == ["clean", "match", "stats", "lineups", "accuracy", "validate", "publish"]
+    assert not_run == ["clean", "match", "stats", "accuracy", "lineups", "validate", "publish"]
     assert "not run" in html
 
 

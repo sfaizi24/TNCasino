@@ -17,12 +17,12 @@ PIPELINE_STEP_ORDER = [
     "clean",
     "match",
     "stats",
+    "accuracy",
     "calibrate",
     "lineups",
     "simulate",
     "odds",
     "playoffs",
-    "accuracy",
     "validate",
     "publish",
 ]

@@ -133,10 +133,10 @@ def test_run_options_default_to_every_source_with_charts(monkeypatch):
 
 
 def test_run_from_a_step_runs_the_rest_without_publish(monkeypatch):
-    calls = install_steps(monkeypatch, {"accuracy": ok_step, "validate": ok_step})
+    calls = install_steps(monkeypatch, {"playoffs": ok_step, "validate": ok_step})
 
-    assert cli.main(["run", "--week", "4", "--from", "accuracy"]) == 0
-    assert [name for name, _ in calls] == ["accuracy", "validate"]
+    assert cli.main(["run", "--week", "4", "--from", "playoffs"]) == 0
+    assert [name for name, _ in calls] == ["playoffs", "validate"]
 
 
 def test_run_uses_the_requested_week_and_season(monkeypatch, settings):
@@ -176,7 +176,7 @@ def test_resolve_steps_uses_the_canonical_order():
 
 
 def test_resolve_steps_from_runs_the_remaining_default_steps():
-    assert resolve_steps(None, "odds") == ["odds", "playoffs", "accuracy", "validate"]
+    assert resolve_steps(None, "odds") == ["odds", "playoffs", "validate"]
 
 
 def test_resolve_steps_defaults_to_everything_but_publish():
