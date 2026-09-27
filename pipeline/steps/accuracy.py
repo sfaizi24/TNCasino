@@ -358,7 +358,7 @@ def summarize(week: int, accuracy: list[dict], teams: list[dict]) -> dict:
     }
 
 
-def best_sources(accuracy: list[dict]) -> dict[str, dict]:
+def best_sources(accuracy: list[dict]) -> dict[str, str]:
     """The lowest-MAE source at each position, among those that projected MIN_PLAYERS_FOR_BEST players there."""
     best = {}
     for position in POSITION_ORDER:
@@ -368,8 +368,7 @@ def best_sources(accuracy: list[dict]) -> dict[str, dict]:
             if row["position"] == position and row["source"] != CONSENSUS and row["n"] >= MIN_PLAYERS_FOR_BEST
         ]
         if candidates:
-            winner = min(candidates, key=lambda row: row["mae"])
-            best[position] = {"source": winner["source"], "mae": round(winner["mae"], 2)}
+            best[position] = min(candidates, key=lambda row: row["mae"])["source"]
     return best
 
 

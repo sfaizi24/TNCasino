@@ -298,10 +298,7 @@ def test_the_best_source_at_a_position_projected_at_least_twenty_players_there(s
     result = run_accuracy(settings)
 
     assert player_accuracy(settings)[("fantasypros.com", "TE")]["mae"] == 0.0
-    assert result.summary["best_source_by_position"] == {
-        "TE": {"source": "sleeper.com", "mae": 3.0},
-        "ALL": {"source": "sleeper.com", "mae": 3.04},
-    }
+    assert result.summary["best_source_by_position"] == {"TE": "sleeper.com", "ALL": "sleeper.com"}
 
 
 def test_without_a_summary_a_team_is_projected_the_sum_of_its_lineup(settings):
