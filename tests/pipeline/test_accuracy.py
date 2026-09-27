@@ -28,6 +28,8 @@ TEAMS = {1: (115.0, 1, 120.0), 2: (105.0, 1, 100.0), 3: (100.0, 2, 110.0), 4: (1
 # The latest odds run's 10th and 90th percentiles by owner, and its moneylines; owner4 has no curve, roster 5 no line.
 RANGES = {"owner1": (95.0, 135.0), "owner2": (105.0, 140.0), "owner3": (80.0, 120.0), "owner5": (70.0, 110.0)}
 MONEYLINES = [(1, 0.6, 2, 0.4), (3, 0.45, 4, 0.55)]
+# The week's NFL games as (home, away), all final.
+GAMES = [("KC", "DEN"), ("BUF", "MIA")]
 EARLIER_RUN = ("2026w10-20261109T140000", "2026-11-09T14:00:00")
 LATEST_RUN = ("2026w10-20261110T140000", "2026-11-10T14:00:00")
 MEASURES = ["n", "mae", "bias", "corr"]
@@ -40,7 +42,7 @@ def settings(tmp_path):
 
 @pytest.fixture(autouse=True)
 def played_week(settings):
-    """Week 10 as the pipeline leaves it: stat lines and scores, projections and lineups, and two odds runs."""
+    """Week 10 as the pipeline leaves it: final games, stat lines, scores, projections, lineups and two odds runs."""
     write_league(settings)
     write_projections(settings)
     write_odds(settings)
@@ -48,7 +50,9 @@ def played_week(settings):
 
 def write_league(settings: Settings) -> None:
     conn = connect(settings, "league")
-    conn.executescript(league.MIRROR_TABLES)
+    conn.executescript(league.MIRROR_TABLES + league.SCHEDULE_TABLE)
+    for home, away in GAMES:
+        add_game(conn, home, away)
     for player_id, (_, _, actual) in PLAYERS.items():
         if actual is not None:
             add_stat_line(conn, player_id, EVALUATED, actual)
@@ -61,6 +65,15 @@ def write_league(settings: Settings) -> None:
         )
     conn.commit()
     conn.close()
+
+
+def add_game(conn, home: str, away: str) -> None:
+    for team, opponent, is_home in [(home, away, 1), (away, home, 0)]:
+        conn.execute(
+            "INSERT INTO nfl_schedules (season, week, team, opponent, is_home, is_bye, game_date, status, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 0, '2026-11-15T18:00:00', 'STATUS_FINAL', '2026-11-17T12:00:00')",
+            (SEASON, EVALUATED, team, opponent, is_home),
+        )
 
 
 def add_stat_line(conn, player_id: str, week: int, points: float) -> None:
@@ -368,6 +381,29 @@ def test_nothing_is_scored_before_the_week_has_stat_lines(settings):
 
     assert result == StepResult({}, warnings=["no actuals for week 10 yet"])
     assert read_rows(settings, "SELECT name FROM sqlite_master WHERE name LIKE '%accuracy'") == []
+
+
+def test_nothing_is_scored_while_games_of_the_week_are_still_to_finish(settings):
+    conn = connect(settings, "league")
+    conn.execute("UPDATE nfl_schedules SET status = 'STATUS_SCHEDULED' WHERE team IN ('BUF', 'MIA')")
+    conn.commit()
+    conn.close()
+
+    result = run_accuracy(settings)
+
+    assert result == StepResult({}, warnings=["week 10 is not over: 1 of 2 games not final"])
+    assert read_rows(settings, "SELECT name FROM sqlite_master WHERE name LIKE '%accuracy'") == []
+
+
+def test_games_without_a_status_count_as_played(settings):
+    conn = connect(settings, "league")
+    conn.execute("UPDATE nfl_schedules SET status = NULL")
+    conn.commit()
+    conn.close()
+
+    run_accuracy(settings)
+
+    assert player_accuracy(settings)[("consensus", "ALL")]["n"] == 5
 
 
 @pytest.mark.parametrize("table", ["projections_with_sleeper", "player_week_stats"])

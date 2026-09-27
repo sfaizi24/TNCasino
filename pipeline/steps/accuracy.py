@@ -75,6 +75,14 @@ FROM player_stats
 WHERE season = :season AND week = :week
 """
 
+# Each game counted once, from its home side. The league step refreshes ESPN's status along with the stat lines;
+# schedules migrated from 2025 carry no status, and their games count as played.
+GAMES_NOT_FINAL = """
+SELECT COUNT(*) FILTER (WHERE status != 'STATUS_FINAL') AS not_final, COUNT(*) AS games
+FROM nfl_schedules
+WHERE season = :season AND week = :week AND is_home = 1 AND status IS NOT NULL
+"""
+
 TEAM_PROJECTIONS = """
 SELECT roster_id, owner, total_mu AS projected
 FROM team_projections_summary
@@ -123,9 +131,14 @@ def run(ctx: StepContext) -> StepResult:
     settings = ctx.settings
     week = settings.week - 1
     params = {"season": settings.season, "week": week, "league_id": settings.league_id}
-    actuals = pd.read_sql_query(ACTUAL_POINTS, ctx.db("league"), params=params)
+    league_conn = ctx.db("league")
+    actuals = pd.read_sql_query(ACTUAL_POINTS, league_conn, params=params)
     if actuals.empty:
         return StepResult({}, warnings=[f"no actuals for week {week} yet"])
+    # A player whose game is still to come has no stat line yet and would be scored as if he did not play.
+    not_final, games = league_conn.execute(GAMES_NOT_FINAL, params).fetchone()
+    if not_final:
+        return StepResult({}, warnings=[f"week {week} is not over: {not_final} of {games} games not final"])
     projections_conn = ctx.db("projections")
     sources = pd.read_sql_query(SOURCE_PROJECTIONS, projections_conn, params=params)
     consensus = pd.read_sql_query(CONSENSUS_PROJECTIONS, projections_conn, params=params)
