@@ -3,7 +3,8 @@
 The notebooks kept weeks as "Week N" strings, seasons as text or not at all, defenses as DST and
 Sleeper's nested fields as Python reprs. migrate() copies league.db, projections.db and odds.db to
 backup-2025/ and then rewrites them in place, so 2025 reads like any pipeline season. A table
-already in the new form (an INTEGER season column) is skipped, so a second run changes nothing.
+already in the new form (an INTEGER season column) is skipped, and the closing back-fill of NFL
+teams and lineup player ids only fills NULLs, so a second run changes nothing.
 montecarlo.db is left alone; the pipeline no longer reads it.
 """
 
@@ -20,12 +21,25 @@ from pipeline.runner import print_table, timestamp, utc_now
 from pipeline.settings import Settings
 from pipeline.steps.clean import PROJECTIONS_DDL
 from pipeline.steps.match import PROJECTIONS_WITH_SLEEPER_DDL
+from pipeline.steps.odds import ODDS_DDL
 from pipeline.steps.stats import PLAYER_WEEK_STATS_DDL
 
 LEGACY_SEASON = 2025
 LEGACY_MODEL_VERSION = "v1"
 LEGACY_DATABASES = ["league", "projections", "odds"]
 BACKUP_DIR_NAME = "backup-2025"
+WAIVER_PICKUP = "Waiver Pickup"
+
+# Notebook 07's markets, rebuilt so season sits where ODDS_DDL puts it.
+WEEKLY_ODDS_TABLES = [
+    "betting_odds_team_ou",
+    "betting_odds_matchup_ou",
+    "betting_odds_matchup_ml",
+    "betting_odds_highest_scorer",
+    "betting_odds_lowest_scorer",
+]
+# Notebook 09's tables keep their legacy shape, autoincrement id and all, and gain a trailing season.
+STANDINGS_TABLES = ["betting_odds_first_place", "betting_odds_make_playoffs", "standings_probability_matrix"]
 
 # league.db columns the notebooks wrote with str(); the league step writes them with json.dumps.
 REPR_COLUMNS = {
@@ -121,44 +135,6 @@ CREATE TABLE IF NOT EXISTS nfl_schedules (
 );
 """
 
-TEAM_DISTRIBUTION_CURVES_DDL = """
-CREATE TABLE IF NOT EXISTS team_distribution_curves (
-  run_id TEXT NOT NULL,
-  week INTEGER NOT NULL,
-  season INTEGER NOT NULL,
-  owner TEXT NOT NULL,
-  x_values TEXT NOT NULL,
-  density_values TEXT NOT NULL,
-  cdf_values TEXT NOT NULL,
-  mean REAL NOT NULL,
-  p10 REAL NOT NULL,
-  p50 REAL NOT NULL,
-  p90 REAL NOT NULL,
-  n_sims INTEGER NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (run_id, week, owner)
-);
-"""
-
-TEAM_MATCHUP_MARGIN_CURVES_DDL = """
-CREATE TABLE IF NOT EXISTS team_matchup_margin_curves (
-  run_id TEXT NOT NULL,
-  week INTEGER NOT NULL,
-  season INTEGER NOT NULL,
-  team_owner TEXT NOT NULL,
-  opponent_owner TEXT NOT NULL,
-  team_win_prob REAL NOT NULL,
-  opponent_win_prob REAL NOT NULL,
-  tie_prob REAL NOT NULL,
-  left_x_values TEXT NOT NULL,
-  left_y_values TEXT NOT NULL,
-  right_x_values TEXT NOT NULL,
-  right_y_values TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (run_id, week, team_owner, opponent_owner)
-);
-"""
-
 # Each COPY_* statement fills the rebuilt table from the old rows, renamed to {table}_legacy.
 COPY_PROJECTIONS = """
 INSERT INTO projections (id, source_website, season, week, player_first_name, player_last_name, position, team,
@@ -236,6 +212,55 @@ SELECT (SELECT MAX(run_id) FROM betting_odds_team_ou AS team_ou WHERE team_ou.we
 FROM team_matchup_margin_curves_legacy AS curves
 """
 
+CURVE_COPIES = {
+    "team_distribution_curves": COPY_TEAM_DISTRIBUTION_CURVES,
+    "team_matchup_margin_curves": COPY_TEAM_MATCHUP_MARGIN_CURVES,
+}
+
+# The notebooks stored neither NFL teams nor lineup player ids, so the FILL_* statements back-fill 2025's NULLs.
+# league.db's nfl_players is a snapshot taken in week 16, after the trade deadline: a player traded mid-season
+# carries his new team in every week.
+FILL_STATS_TEAMS = """
+UPDATE player_week_stats SET team = players.team
+FROM league.nfl_players AS players
+WHERE player_week_stats.season = :season AND player_week_stats.team IS NULL
+  AND players.player_id = player_week_stats.sleeper_player_id AND players.team IS NOT NULL
+"""
+
+# A lineup names its players; the id comes from the one stats row of that week with the same name and position.
+FILL_LINEUP_IDS = """
+UPDATE team_lineups SET sleeper_player_id = matches.sleeper_player_id
+FROM (
+  SELECT season, week, player_name, position, MIN(sleeper_player_id) AS sleeper_player_id
+  FROM player_week_stats
+  WHERE season = :season
+  GROUP BY season, week, player_name, position
+  HAVING COUNT(*) = 1
+) AS matches
+WHERE team_lineups.sleeper_player_id IS NULL AND matches.season = team_lineups.season
+  AND matches.week = team_lineups.week AND matches.player_name = team_lineups.player_name
+  AND matches.position = team_lineups.position
+"""
+
+FILL_LINEUP_TEAMS = """
+UPDATE team_lineups SET nfl_team = players.team
+FROM league.nfl_players AS players
+WHERE team_lineups.season = :season AND team_lineups.nfl_team IS NULL
+  AND players.player_id = team_lineups.sleeper_player_id AND players.team IS NOT NULL
+"""
+
+COUNT_STATS_FILLS = """
+SELECT COUNT(*) AS n_rows, COUNT(team) AS n_teams FROM player_week_stats WHERE season = :season
+"""
+
+COUNT_LINEUP_FILLS = """
+SELECT COUNT(*) AS n_rows, COUNT(sleeper_player_id) AS n_ids, COUNT(nfl_team) AS n_teams,
+       SUM(player_name IS :waiver_pickup) AS n_waiver,
+       SUM(sleeper_player_id IS NULL AND player_name IS NOT :waiver_pickup) AS n_unresolved
+FROM team_lineups
+WHERE season = :season
+"""
+
 
 def migrate(settings: Settings) -> dict:
     db_dir = settings.db_paths["league"].parent
@@ -249,6 +274,7 @@ def migrate(settings: Settings) -> dict:
         "projections.db": migrate_projections_db(settings),
         "league.db": migrate_league_db(settings),
         "odds.db": migrate_odds_db(settings),
+        "backfill": backfill_players(settings),
     }
     after = count_rows(settings)
     print_report(db_dir, actions, before, after)
@@ -296,20 +322,48 @@ def migrate_league_db(settings: Settings) -> list[str]:
 
 
 def migrate_odds_db(settings: Settings) -> list[str]:
+    odds_ddl = odds_ddl_by_table()
     with closing(connect(settings, "odds")) as conn:
-        odds_tables = [
-            table
-            for table in table_names(conn)
-            if table.startswith("betting_odds_") or table == "standings_probability_matrix"
+        actions = [
+            rebuild(conn, table, odds_ddl[table], copy_adding_season(conn, table)) for table in WEEKLY_ODDS_TABLES
         ]
-        actions = [add_season(conn, table) for table in odds_tables]
-        actions.append(
-            rebuild(conn, "team_distribution_curves", TEAM_DISTRIBUTION_CURVES_DDL, COPY_TEAM_DISTRIBUTION_CURVES)
-        )
-        actions.append(
-            rebuild(conn, "team_matchup_margin_curves", TEAM_MATCHUP_MARGIN_CURVES_DDL, COPY_TEAM_MATCHUP_MARGIN_CURVES)
-        )
+        actions += [rebuild(conn, table, odds_ddl[table], copy_sql) for table, copy_sql in CURVE_COPIES.items()]
+        actions += [add_season(conn, table) for table in STANDINGS_TABLES]
     return actions
+
+
+def odds_ddl_by_table() -> dict[str, str]:
+    """ODDS_DDL as one CREATE TABLE statement per table, since rebuild() runs a single statement."""
+    with closing(sqlite3.connect(":memory:")) as scratch:
+        scratch.executescript(ODDS_DDL)
+        return dict(scratch.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'"))
+
+
+def copy_adding_season(conn: sqlite3.Connection, table: str) -> str:
+    """The copy for a table whose legacy columns carry over unchanged, read before rebuild() renames it."""
+    columns = ", ".join(row["name"] for row in conn.execute(f"PRAGMA table_info({table})"))
+    return f"INSERT INTO {table} ({columns}, season) SELECT {columns}, :season FROM {table}_legacy"
+
+
+def backfill_players(settings: Settings) -> list[str]:
+    params = {"season": LEGACY_SEASON, "waiver_pickup": WAIVER_PICKUP}
+    with closing(connect(settings, "projections")) as conn:
+        conn.execute("ATTACH DATABASE ? AS league", (str(settings.db_paths["league"]),))
+        with conn:
+            n_stats_teams = conn.execute(FILL_STATS_TEAMS, params).rowcount
+            n_lineup_ids = conn.execute(FILL_LINEUP_IDS, params).rowcount
+            n_lineup_teams = conn.execute(FILL_LINEUP_TEAMS, params).rowcount
+        stats = conn.execute(COUNT_STATS_FILLS, params).fetchone()
+        lineups = conn.execute(COUNT_LINEUP_FILLS, params).fetchone()
+    return [
+        f"player_week_stats {LEGACY_SEASON}: filled team on {n_stats_teams} rows, "
+        f"now set on {stats['n_teams']} of {stats['n_rows']}",
+        f"team_lineups {LEGACY_SEASON}: filled sleeper_player_id on {n_lineup_ids} rows, "
+        f"now set on {lineups['n_ids']} of {lineups['n_rows']}; "
+        f"waiver pickups {lineups['n_waiver']}, unresolved names {lineups['n_unresolved']}",
+        f"team_lineups {LEGACY_SEASON}: filled nfl_team on {n_lineup_teams} rows, "
+        f"now set on {lineups['n_teams']} of {lineups['n_rows']}",
+    ]
 
 
 def rebuild(conn: sqlite3.Connection, table: str, ddl: str, copy_sql: str) -> str:

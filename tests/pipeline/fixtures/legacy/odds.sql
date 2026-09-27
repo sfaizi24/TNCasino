@@ -49,6 +49,66 @@ VALUES
   ('seed_1738_20250918_100000', 3, 'Team Alice vs Team Bob', 1, 'Team Alice', 0.55, '-122', 2, 'Team Bob', 0.44,
    '+127', 500, '2025-09-18 10:04:00');
 
+CREATE TABLE betting_odds_matchup_ou (
+  run_id TEXT NOT NULL,
+  week INTEGER NOT NULL,
+  matchup TEXT,
+  team1_id INTEGER,
+  team1_name TEXT,
+  team2_id INTEGER,
+  team2_name TEXT,
+  line REAL,
+  over_prob REAL,
+  over_odds TEXT,
+  under_prob REAL,
+  under_odds TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (run_id, week, team1_id, team2_id)
+);
+
+INSERT INTO betting_odds_matchup_ou
+  (run_id, week, matchup, team1_id, team1_name, team2_id, team2_name, line, over_prob, over_odds, under_prob,
+   under_odds, created_at)
+VALUES
+  ('seed_1738_20250918_100000', 3, 'Team Alice vs Team Bob', 1, 'Team Alice', 2, 'Team Bob', 210.5, 0.5, '-100', 0.5,
+   '-100', '2025-09-18 10:04:00');
+
+CREATE TABLE betting_odds_highest_scorer (
+  run_id TEXT NOT NULL,
+  week INTEGER NOT NULL,
+  team_id INTEGER NOT NULL,
+  team_name TEXT,
+  owner TEXT,
+  count INTEGER,
+  probability REAL,
+  odds TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (run_id, week, team_id)
+);
+
+INSERT INTO betting_odds_highest_scorer
+  (run_id, week, team_id, team_name, owner, count, probability, odds, created_at)
+VALUES
+  ('seed_1738_20250918_100000', 3, 1, 'Team Alice', 'alice', 27500, 0.55, '-122', '2025-09-18 10:04:00');
+
+CREATE TABLE betting_odds_lowest_scorer (
+  run_id TEXT NOT NULL,
+  week INTEGER NOT NULL,
+  team_id INTEGER NOT NULL,
+  team_name TEXT,
+  owner TEXT,
+  count INTEGER,
+  probability REAL,
+  odds TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (run_id, week, team_id)
+);
+
+INSERT INTO betting_odds_lowest_scorer
+  (run_id, week, team_id, team_name, owner, count, probability, odds, created_at)
+VALUES
+  ('seed_1738_20250918_100000', 3, 2, 'Team Bob', 'bob', 27500, 0.55, '-122', '2025-09-18 10:04:00');
+
 CREATE TABLE betting_odds_first_place (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id TEXT NOT NULL,
@@ -66,6 +126,24 @@ INSERT INTO betting_odds_first_place
   (id, run_id, week, team_id, team_name, owner, probability, american_odds, created_at)
 VALUES
   (1, 'standings_3_20250918_100500', 3, 1, 'Team Alice', 'alice', 0.6, '-150', '2025-09-18 10:05:00');
+
+CREATE TABLE betting_odds_make_playoffs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  week INTEGER NOT NULL,
+  team_id INTEGER NOT NULL,
+  team_name TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  probability REAL NOT NULL,
+  american_odds TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(run_id, week, team_id)
+);
+
+INSERT INTO betting_odds_make_playoffs
+  (id, run_id, week, team_id, team_name, owner, probability, american_odds, created_at)
+VALUES
+  (1, 'standings_3_20250918_100500', 3, 1, 'Team Alice', 'alice', 0.9, '-900', '2025-09-18 10:05:00');
 
 CREATE TABLE standings_probability_matrix (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

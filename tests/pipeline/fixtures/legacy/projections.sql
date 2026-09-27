@@ -68,12 +68,16 @@ CREATE TABLE player_week_stats (
   PRIMARY KEY (sleeper_player_id, week)
 );
 
+-- Two receivers share the name Mike Williams, so a lineup that names him cannot say which one it means.
 INSERT INTO player_week_stats
   (sleeper_player_id, player_name, position, week, mu, sigma, var, n_sources, alpha, beta, pos_sigma, computed_at)
 VALUES
   ('7547', 'Amon-Ra St. Brown', 'WR', 3, 18.0, 11.661903789690601, 136.0, 3, 2.0, 1.0, 10.0,
    '2025-09-17T10:02:00.000000+00:00'),
-  ('SEA', 'SEA Defense', 'DST', 3, 8.2, 7.0, 49.0, 1, 2.0, 1.0, 7.0, '2025-09-17T10:02:00.000000+00:00');
+  ('SEA', 'SEA Defense', 'DST', 3, 8.2, 7.0, 49.0, 1, 2.0, 1.0, 7.0, '2025-09-17T10:02:00.000000+00:00'),
+  ('4984', 'Josh Allen', 'QB', 3, 21.0, 7.0, 49.0, 1, 2.0, 1.0, 7.0, '2025-09-17T10:02:00.000000+00:00'),
+  ('5001', 'Mike Williams', 'WR', 3, 9.0, 10.0, 100.0, 1, 2.0, 1.0, 10.0, '2025-09-17T10:02:00.000000+00:00'),
+  ('5002', 'Mike Williams', 'WR', 3, 4.0, 10.0, 100.0, 1, 2.0, 1.0, 10.0, '2025-09-17T10:02:00.000000+00:00');
 
 CREATE TABLE team_lineups (
   roster_id INTEGER,
@@ -94,13 +98,22 @@ CREATE TABLE team_lineups (
   PRIMARY KEY (team_name, week, slot)
 );
 
+-- Alice's empty QB slot went to a waiver pickup; nobody in week 3's stats is called BUF Defense.
 INSERT INTO team_lineups
   (roster_id, team_name, owner, record, slot, player_name, position, mu, sigma, var, n_sources, is_replacement, week,
    season, timestamp)
 VALUES
+  (1, 'Team Alice', 'alice', '2-0', 'QB', 'Waiver Pickup', 'QB', 15.0, 8.0, 64.0, 3, 1, 3, '2025',
+   '2025-09-17T10:03:00.000000'),
   (1, 'Team Alice', 'alice', '2-0', 'WR1', 'Amon-Ra St. Brown', 'WR', 18.0, 11.661903789690601, 136.0, 3, 0, 3,
    '2025', '2025-09-17T10:03:00.000000'),
   (1, 'Team Alice', 'alice', '2-0', 'DEF', 'SEA Defense', 'DST', 8.2, 7.0, 49.0, 1, 0, 3, '2025',
+   '2025-09-17T10:03:00.000000'),
+  (2, 'Team Bob', 'bob', '0-2', 'QB', 'Josh Allen', 'QB', 21.0, 7.0, 49.0, 1, 0, 3, '2025',
+   '2025-09-17T10:03:00.000000'),
+  (2, 'Team Bob', 'bob', '0-2', 'WR1', 'Mike Williams', 'WR', 9.0, 10.0, 100.0, 1, 0, 3, '2025',
+   '2025-09-17T10:03:00.000000'),
+  (2, 'Team Bob', 'bob', '0-2', 'DEF', 'BUF Defense', 'DST', 6.0, 7.0, 49.0, 1, 0, 3, '2025',
    '2025-09-17T10:03:00.000000');
 
 CREATE TABLE team_projections_summary (
@@ -121,7 +134,7 @@ CREATE TABLE team_projections_summary (
 INSERT INTO team_projections_summary
   (roster_id, team_name, owner, record, total_mu, combined_sigma, total_var, waiver_pickups, week, season, timestamp)
 VALUES
-  (1, 'Team Alice', 'alice', '2-0', 26.2, 13.57, 185.0, 0, 3, '2025', '2025-09-17T10:03:00.000000');
+  (1, 'Team Alice', 'alice', '2-0', 41.2, 15.78, 249.0, 1, 3, '2025', '2025-09-17T10:03:00.000000');
 
 -- Stray tables the pipeline never reads: a stale copy of an odds table and an empty player_stats.
 CREATE TABLE betting_odds_team_ou (

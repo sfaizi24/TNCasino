@@ -11,12 +11,53 @@ import pytest
 from pipeline import legacy
 from pipeline.db import connect
 from pipeline.settings import DATA_DIR, Settings
+from pipeline.steps.odds import ODDS_DDL
 
 FIXTURES = Path(__file__).parent / "fixtures" / "legacy"
 REAL_DB_DIR = DATA_DIR / "databases"
 
 LATER_WEEK_3_RUN = "seed_1738_20250918_100000"
 WEEK_4_RUN = "seed_1738_20250924_100000"
+
+ODDS_STEP_TABLES = [
+    "betting_odds_team_ou",
+    "betting_odds_matchup_ou",
+    "betting_odds_matchup_ml",
+    "betting_odds_highest_scorer",
+    "betting_odds_lowest_scorer",
+    "team_distribution_curves",
+    "team_matchup_margin_curves",
+]
+# (name, type, notnull, pk) of notebook 09's tables, which keep their autoincrement id and gain a trailing season.
+STANDINGS_TEAM_COLUMNS = [
+    ("id", "INTEGER", 0, 1),
+    ("run_id", "TEXT", 1, 0),
+    ("week", "INTEGER", 1, 0),
+    ("team_id", "INTEGER", 1, 0),
+    ("team_name", "TEXT", 1, 0),
+    ("owner", "TEXT", 1, 0),
+]
+CREATED_AT_AND_SEASON = [("created_at", "TIMESTAMP", 0, 0), ("season", "INTEGER", 1, 0)]
+TEAM_PROBABILITY_COLUMNS = [
+    *STANDINGS_TEAM_COLUMNS,
+    ("probability", "REAL", 1, 0),
+    ("american_odds", "TEXT", 1, 0),
+    *CREATED_AT_AND_SEASON,
+]
+LEGACY_STANDINGS_SHAPES = {
+    "betting_odds_first_place": (TEAM_PROBABILITY_COLUMNS, ["run_id", "week", "team_id"]),
+    "betting_odds_make_playoffs": (TEAM_PROBABILITY_COLUMNS, ["run_id", "week", "team_id"]),
+    "standings_probability_matrix": (
+        [
+            *STANDINGS_TEAM_COLUMNS,
+            ("position", "INTEGER", 1, 0),
+            ("probability", "REAL", 1, 0),
+            ("count", "INTEGER", 1, 0),
+            *CREATED_AT_AND_SEASON,
+        ],
+        ["run_id", "week", "team_id", "position"],
+    ),
+}
 
 REBUILT_TABLES = [
     ("projections", "projections"),
@@ -63,6 +104,15 @@ def fetch(settings, name, sql):
 def primary_key(settings, table):
     columns = fetch(settings, "odds", f"PRAGMA table_info({table})")
     return [column["name"] for column in sorted(columns, key=lambda column: column["pk"]) if column["pk"]]
+
+
+def unique_constraints(settings, table):
+    indexes = fetch(settings, "odds", f"PRAGMA index_list({table})")
+    return [
+        [column["name"] for column in fetch(settings, "odds", f"PRAGMA index_info({index['name']})")]
+        for index in indexes
+        if index["origin"] == "u"
+    ]
 
 
 def file_hashes(settings):
@@ -118,22 +168,81 @@ def test_player_week_stats_recover_the_spread_behind_sigma(settings):
     assert rows["7547"]["spread"] == pytest.approx(3.0)
     assert (rows["7547"]["mu"], rows["7547"]["sigma"]) == (18.0, 11.661903789690601)
     assert (rows["SEA"]["spread"], rows["SEA"]["position"]) == (0.0, "DEF")
-    assert {(row["season"], row["week"], row["team"], row["model_version"]) for row in rows.values()} == {
-        (2025, 3, None, "v1")
-    }
+    assert {(row["season"], row["week"], row["model_version"]) for row in rows.values()} == {(2025, 3, "v1")}
 
 
 def test_lineups_and_summaries_get_an_integer_season(settings):
     legacy.migrate(settings)
 
-    lineups = fetch(settings, "projections", "SELECT * FROM team_lineups ORDER BY slot")
+    lineups = fetch(settings, "projections", "SELECT * FROM team_lineups ORDER BY roster_id, slot")
     assert [(row["season"], row["week"], row["roster_id"], row["slot"], row["position"]) for row in lineups] == [
         (2025, 3, 1, "DEF", "DEF"),
+        (2025, 3, 1, "QB", "QB"),
         (2025, 3, 1, "WR1", "WR"),
+        (2025, 3, 2, "DEF", "DEF"),
+        (2025, 3, 2, "QB", "QB"),
+        (2025, 3, 2, "WR1", "WR"),
     ]
-    assert {(row["sleeper_player_id"], row["nfl_team"]) for row in lineups} == {(None, None)}
     summaries = fetch(settings, "projections", "SELECT season, week, roster_id, owner FROM team_projections_summary")
     assert summaries == [{"season": 2025, "week": 3, "roster_id": 1, "owner": "alice"}]
+
+
+def test_stats_get_the_nfl_team_of_their_player(settings):
+    legacy.migrate(settings)
+
+    rows = fetch(settings, "projections", "SELECT sleeper_player_id, team FROM player_week_stats")
+    assert {row["sleeper_player_id"]: row["team"] for row in rows} == {
+        "7547": "DET",
+        "SEA": "SEA",
+        "4984": "BUF",
+        "5001": None,
+        "5002": None,
+    }
+
+
+def test_lineups_find_their_player_through_a_unique_name_in_the_weeks_stats(settings):
+    result = legacy.migrate(settings)
+
+    lineups = fetch(
+        settings,
+        "projections",
+        "SELECT roster_id, slot, player_name, sleeper_player_id, nfl_team FROM team_lineups ORDER BY roster_id, slot",
+    )
+    assert [tuple(row.values()) for row in lineups] == [
+        (1, "DEF", "SEA Defense", "SEA", "SEA"),
+        (1, "QB", "Waiver Pickup", None, None),
+        (1, "WR1", "Amon-Ra St. Brown", "7547", "DET"),
+        (2, "DEF", "BUF Defense", None, None),
+        (2, "QB", "Josh Allen", "4984", "BUF"),
+        (2, "WR1", "Mike Williams", None, None),
+    ]
+    assert result["actions"]["backfill"] == [
+        "player_week_stats 2025: filled team on 3 rows, now set on 3 of 5",
+        "team_lineups 2025: filled sleeper_player_id on 3 rows, now set on 3 of 6; waiver pickups 1, unresolved names 2",
+        "team_lineups 2025: filled nfl_team on 3 rows, now set on 3 of 6",
+    ]
+
+
+def test_the_backfill_only_fills_2025_nulls(settings):
+    legacy.migrate(settings)
+    with closing(connect(settings, "projections")) as conn:
+        with conn:
+            conn.execute("UPDATE player_week_stats SET team = 'DAL' WHERE sleeper_player_id = '7547'")
+            conn.execute(
+                "INSERT INTO player_week_stats (season, week, sleeper_player_id, player_name, position, mu, sigma, "
+                "var, n_sources, spread, model_version, computed_at) VALUES (2026, 1, '4984', 'Josh Allen', 'QB', "
+                "22.0, 7.0, 49.0, 1, 0.0, 'v1', '2026-09-09T10:00:00+00:00')"
+            )
+
+    legacy.migrate(settings)
+
+    rows = fetch(
+        settings,
+        "projections",
+        "SELECT season, sleeper_player_id, team FROM player_week_stats WHERE sleeper_player_id IN ('4984', '7547') "
+        "ORDER BY season, sleeper_player_id",
+    )
+    assert [tuple(row.values()) for row in rows] == [(2025, "4984", "BUF"), (2025, "7547", "DAL"), (2026, "4984", None)]
 
 
 def test_projections_rosters_get_a_roster_status(settings):
@@ -167,7 +276,12 @@ def test_defenses_become_def_in_nfl_players(settings):
     legacy.migrate(settings)
 
     rows = fetch(settings, "league", "SELECT player_id, position FROM nfl_players ORDER BY player_id")
-    assert [(row["player_id"], row["position"]) for row in rows] == [("7547", "WR"), ("9999", "RB"), ("SEA", "DEF")]
+    assert [(row["player_id"], row["position"]) for row in rows] == [
+        ("4984", "QB"),
+        ("7547", "WR"),
+        ("9999", "RB"),
+        ("SEA", "DEF"),
+    ]
 
 
 def test_sleeper_reprs_become_json(settings):
@@ -195,12 +309,7 @@ def test_sleeper_reprs_become_json(settings):
 def test_odds_tables_get_a_season_and_curves_the_run_of_their_week(settings):
     legacy.migrate(settings)
 
-    for table in [
-        "betting_odds_team_ou",
-        "betting_odds_matchup_ml",
-        "betting_odds_first_place",
-        "standings_probability_matrix",
-    ]:
+    for table in [*ODDS_STEP_TABLES, *LEGACY_STANDINGS_SHAPES]:
         assert fetch(settings, "odds", f"SELECT DISTINCT season FROM {table}") == [{"season": 2025}], table
     assert fetch(
         settings, "odds", "SELECT run_id, week, season, owner FROM team_distribution_curves ORDER BY week"
@@ -216,6 +325,43 @@ def test_odds_tables_get_a_season_and_curves_the_run_of_their_week(settings):
     assert primary_key(settings, "team_matchup_margin_curves") == ["run_id", "week", "team_owner", "opponent_owner"]
 
 
+def test_weekly_odds_tables_take_the_odds_step_shape(settings):
+    legacy.migrate(settings)
+
+    with closing(sqlite3.connect(":memory:")) as scratch:
+        scratch.row_factory = sqlite3.Row
+        scratch.executescript(ODDS_DDL)
+        for table in ODDS_STEP_TABLES:
+            expected = [dict(row) for row in scratch.execute(f"PRAGMA table_info({table})")]
+            assert fetch(settings, "odds", f"PRAGMA table_info({table})") == expected, table
+    assert fetch(settings, "odds", "SELECT * FROM betting_odds_highest_scorer") == [
+        {
+            "run_id": LATER_WEEK_3_RUN,
+            "week": 3,
+            "season": 2025,
+            "team_id": 1,
+            "team_name": "Team Alice",
+            "owner": "alice",
+            "count": 27500,
+            "probability": 0.55,
+            "odds": "-122",
+            "created_at": "2025-09-18 10:04:00",
+        }
+    ]
+
+
+def test_standings_tables_keep_their_legacy_shape_and_gain_a_season(settings):
+    legacy.migrate(settings)
+
+    for table, (columns, unique) in LEGACY_STANDINGS_SHAPES.items():
+        info = fetch(settings, "odds", f"PRAGMA table_info({table})")
+        assert [(column["name"], column["type"], column["notnull"], column["pk"]) for column in info] == columns, table
+        assert unique_constraints(settings, table) == [unique], table
+    assert fetch(settings, "odds", "SELECT id, run_id, probability, season FROM betting_odds_make_playoffs") == [
+        {"id": 1, "run_id": "standings_3_20250918_100500", "probability": 0.9, "season": 2025}
+    ]
+
+
 def test_originals_are_backed_up_and_stray_tables_dropped(settings):
     result = legacy.migrate(settings)
 
@@ -228,10 +374,10 @@ def test_originals_are_backed_up_and_stray_tables_dropped(settings):
         ]
     before, after = result["row_counts"]["before"], result["row_counts"]["after"]
     kept = {
-        "player_week_stats": 2,
+        "player_week_stats": 5,
         "projections": 5,
         "projections_with_sleeper": 5,
-        "team_lineups": 2,
+        "team_lineups": 6,
         "team_projections_summary": 1,
     }
     assert before["projections.db"] == {**kept, "betting_odds_team_ou": 1, "player_stats": 0}
@@ -254,6 +400,11 @@ def test_a_second_run_changes_nothing(settings):
         "team_lineups: already migrated",
         "team_projections_summary: already migrated",
         "no stray tables",
+    ]
+    assert second["actions"]["backfill"] == [
+        "player_week_stats 2025: filled team on 0 rows, now set on 3 of 5",
+        "team_lineups 2025: filled sleeper_player_id on 0 rows, now set on 3 of 6; waiver pickups 1, unresolved names 2",
+        "team_lineups 2025: filled nfl_team on 0 rows, now set on 3 of 6",
     ]
 
 
@@ -286,6 +437,12 @@ def test_the_real_2025_databases_migrate_without_losing_a_row(tmp_path):
         for column in columns:
             invalid = fetch(settings, "league", f"SELECT {column} FROM {table} WHERE NOT json_valid({column})")
             assert invalid == [], f"{table}.{column}"
+    unresolved = fetch(
+        settings,
+        "projections",
+        "SELECT week, player_name FROM team_lineups WHERE sleeper_player_id IS NULL AND player_name != 'Waiver Pickup'",
+    )
+    assert unresolved == []
 
     migrated = file_hashes(settings)
     legacy.migrate(settings)
