@@ -58,7 +58,7 @@ Replacement players model the reality that an owner with a bad or empty slot wil
 
 ## 3. Simulation
 
-The `simulate` step (`pipeline/steps/simulate.py`, sampler in `pipeline/model/sampling.py`) replaces notebook 07's draws: seed `1738`, 50,000 simulations, each starter's μ and σ from `team_lineups`, and the dud and correlation blocks of the run's model version ([§1](#1-player-distributions)).
+The `simulate` step (`pipeline/steps/simulate.py`, sampler in `pipeline/model/sampling.py`) replaces notebook 07's draws: seed `1738`, 50,000 simulations, each starter's μ and σ from `team_lineups`, and the dud, floor and correlation blocks of the run's model version ([§1](#1-player-distributions)).
 
 **Lognormal parameterization** (per player, from a mean m and σ):
 
@@ -66,11 +66,11 @@ The `simulate` step (`pipeline/steps/simulate.py`, sampler in `pipeline/model/sa
 - μ_ln = ln(m² / φ)
 - σ_ln = √(ln((φ/m)²))
 
-This keeps the simulated mean and standard deviation equal to m and σ while preventing negative scores and giving a right skew. Edge cases: σ ≈ 0 gives a near-degenerate draw at m; m ≤ 0 is clamped to 1e-6.
+This keeps the simulated mean and standard deviation equal to m and σ while giving a right skew and no draw under 0, or under the position's floor below. Edge cases: σ ≈ 0 gives a near-degenerate draw at m; m ≤ 0 is clamped to 1e-6.
 
 **Draws.** One standard normal z per starter and simulation, from `np.random.default_rng(seed)` in roster then slot order, so the same lineups and seed reproduce the same totals and reordering the starters changes them. Each z becomes points:
 
-- *No dud chance* (every player under v1, DEF under v2): exp(μ_ln + σ_ln·z) with m = μ.
+- *No dud chance* (every player under v1, DEF under v2): f + exp(μ_ln + σ_ln·z) with m = μ − f, where f ≤ 0 is the position's floor in the version's `floor` block, 0 where the block does not list the position. The draws keep mean μ and standard deviation σ but reach down to f instead of 0.
 - *Dud chance p*: with u = Φ(z), a draw with u < p is a dud scoring (u/p)·0.25·μ, uniform on [0, 0.25·μ]; any other draw takes the lognormal's quantile at (u − p)/(1 − p). The lognormal's mean is raised to m = (μ − p·0.25·μ/2)/(1 − p) so the mixture still averages μ, and σ is the standard deviation of the non-dud games.
 
 A team's score for simulation *i* is the sum of its starters' *i*-th points. The totals go to `sims/<season>/wkNN/<run_id>.parquet` for the odds step.
@@ -112,14 +112,15 @@ A model version is a JSON file in `pipeline/model/params/`. `v1` holds notebook 
 1. **Sources.** For each source and position with rows in at least 3 weeks, bias = mean(projected − actual) over those rows; a position with fewer weeks is left out of the source's `bias` and counts as 0. A source with rows in at least 3 weeks gets weight = 1 / its mean squared error once those biases are taken out, scaled so the weights average 1 and clipped to [0.25, 4]; a source with fewer weeks gets weight 1 and no bias. The bias is per position because a source can project one position too high and another too low, and one number per source then corrects one of them the wrong way.
 2. **μ** per player-week with those weights and biases, by the stats step's own formula.
 3. **Dud.** Per position, on player-weeks with at least 2 sources, a dud is an actual under 0.25·μ, and c, d are the maximum-likelihood logistic fit of the dud chance on μ. A position with fewer than 50 player-weeks or 5 duds gets no dud.
-4. **σ.** Per position, on the non-dud player-weeks: residuals from the lognormal part's mean ([§3](#3-simulation)), grouped by μ into bins of about 50; a and b are the least-squares line through the bins' residual standard deviations, weighted by bin size. A position with fewer than 100 player-weeks gets its overall residual standard deviation and b = 0.
-5. **Correlation.** For each pair type, Pearson's r of the standardized residuals (actual − μ)/σ over every pair of teammates at the two positions in the same week, clipped to [−0.1, 0.4], and 0 with fewer than 100 pairs. Teammates share `nfl_players.team`, the team when the league data was fetched, so a player traded mid-season counts with his new team throughout. The four values are then scaled down together, if needed, until the matrix the sampler builds for the largest likely group of teammates (QB, 3 RB, 5 WR, 2 TE) has no eigenvalue under 0.05, because the sampler's Cholesky factorization fails on a matrix that is not positive definite. The 2025 values needed no scaling.
+4. **Floor.** A position without a dud gets the floor f = min(0, ⌊lowest actual⌋ − 1) over its player-weeks, and its lognormal part is drawn above f instead of above 0 ([§3](#3-simulation)); a position with a dud keeps f = 0, because its scores of 0 or less belong to the dud. A lognormal cannot go under 0, yet a defense that allows many points does, so without a floor every negative defense score fell outside its distribution. The floor sits a point under the lowest score so that score, too, lies inside the distribution.
+5. **σ.** Per position, on the non-dud player-weeks: residuals from the lognormal part's mean ([§3](#3-simulation)), grouped by μ into bins of about 50; a and b are the least-squares line through the bins' residual standard deviations, weighted by bin size. A position with fewer than 100 player-weeks gets its overall residual standard deviation and b = 0. The floor moves where the lognormal part starts but not its mean or standard deviation, so σ is fitted the same way with or without one.
+6. **Correlation.** For each pair type, Pearson's r of the standardized residuals (actual − μ)/σ over every pair of teammates at the two positions in the same week, clipped to [−0.1, 0.4], and 0 with fewer than 100 pairs. Teammates share `nfl_players.team`, the team when the league data was fetched, so a player traded mid-season counts with his new team throughout. The four values are then scaled down together, if needed, until the matrix the sampler builds for the largest likely group of teammates (QB, 3 RB, 5 WR, 2 TE) has no eigenvalue under 0.05, because the sampler's Cholesky factorization fails on a matrix that is not positive definite. The 2025 values needed no scaling.
 
 `--out v1` is refused, and an excluded source with no projections in the window is an error, to catch typos.
 
 **Gate** (`pipeline/model/evaluate.py`). Each training week is held out in turn and scored under parameters fitted on the other weeks; v1 is scored on the same rows.
 
-- *Players.* The PIT u = F(actual) under the player's distribution, F(x) = p·min(x/(0.25·μ), 1) + (1 − p)·F_lognormal(x). A calibrated model puts 80% of the u's inside [0.10, 0.90], and likewise for the central 50% and 95%. An actual of 0 or less, usually a player who did not play, is a dud whose size the model does not resolve, so its PIT is the whole interval [0, p] rather than a point, and it covers a band by the share of that interval inside it (the non-randomized PIT of Czado, Gneiting and Held, 2009). Without a dud, in v1 and at DEF, the interval is [0, 0] and misses every band. The share of actuals at 0 or less is reported beside the coverage.
+- *Players.* The PIT u = F(actual) under the player's distribution, F(x) = p·clip(x/(0.25·μ), 0, 1) + (1 − p)·F_lognormal(x − f), with f the position's floor. A calibrated model puts 80% of the u's inside [0.10, 0.90], and likewise for the central 50% and 95%. An actual at or under the floor counts as the floor. At a floor of 0, an actual of 0 or less, usually a player who did not play, is a dud whose size the model does not resolve, so its PIT is the whole interval [0, p] rather than a point, and it covers a band by the share of that interval inside it (the non-randomized PIT of Czado, Gneiting and Held, 2009). Without a dud the interval is [0, 0] and misses every band: in v1, and at DEF in v2, which has no floor. The share of actuals at 0 or less is reported beside the coverage.
 - *Teams.* Each week's `team_lineups` starters, re-projected with the held-out parameters and simulated 20,000 times: how often the actual score lands inside [p10, p90], the MAE of the simulated mean, and the moneyline Brier score, the mean of (P(team 1 wins) − result)² over the week's games. A tie has no result and is left out, as in the accuracy step.
 - *Pass* when 80% coverage is within [0.70, 0.90] at each of QB, RB, WR and TE, team coverage within [0.72, 0.88], and the moneyline is not significantly worse than v1's. For each game, d is the fitted version's squared error minus v1's; the fit fails the moneyline only when the mean of d is more than two standard errors (sd(d)/√n) above 0, or above 0 at all with fewer than 2 games.
 
@@ -137,7 +138,7 @@ v2 passes the gate. Its player coverage rose with the zero rule: when every 0 co
 
 **Calibration** (the `calibrate` step, `pipeline/steps/calibrate.py`) checks the model as it actually ran, season to date, without refitting. It runs right after the accuracy step ([§7](#7-prediction-accuracy)) and scores every earlier week of the season that step has graded, which it does only once every game of the week is final:
 
-- *Players* with μ ≥ 2: PIT coverage of the central 50%, 80% and 95% by position and overall, scored as in the gate from the stored μ and σ and the dud block of the version that stored each row, with the share of actuals at 0 or less beside it.
+- *Players* with μ ≥ 2: PIT coverage of the central 50%, 80% and 95% by position and overall, scored as in the gate from the stored μ and σ and the dud and floor blocks of the version that stored each row, with the share of actuals at 0 or less beside it.
 - *Teams:* the share of `team_accuracy` rows whose score fell inside the week's latest [p10, p90]. A team without a curve is left out, and a week whose teams all lack one is listed.
 - *Moneylines:* the Brier score of the win chances the accuracy step recorded in `team_accuracy` against the results. A tie has no result and is left out.
 

@@ -28,19 +28,29 @@ from pipeline.steps.league import MIRROR_TABLES
 from pipeline.steps.lineups import LINEUP_TABLES
 
 DUD = {"threshold_ratio": 0.25, "by_position": {"RB": {"c": -1.0, "d": -0.10}, "WR": {"c": -0.5, "d": -0.12}}}
+NO_FLOOR = {"by_position": {}}
+LOGNORMAL = {"dud": None, "floor": NO_FLOOR}
+WITH_DUDS = {"dud": DUD, "floor": NO_FLOOR}
 LEAGUE_ID = "L2025"
 CREATED_AT = "2026-01-06T12:00:00+00:00"
 
 
-@pytest.mark.parametrize("dud", [None, DUD], ids=["lognormal", "with duds"])
-def test_a_correctly_specified_model_covers_each_band_at_its_nominal_rate(dud):
+@pytest.mark.parametrize(
+    "params",
+    [
+        pytest.param(LOGNORMAL, id="lognormal"),
+        pytest.param(WITH_DUDS, id="with duds"),
+        pytest.param({"dud": DUD, "floor": {"by_position": {"QB": -5.0}}}, id="with duds and a floor"),
+    ],
+)
+def test_a_correctly_specified_model_covers_each_band_at_its_nominal_rate(params):
     rng = np.random.default_rng(5)
     n_players = 50_000
     players = pd.DataFrame({"position": rng.choice(["QB", "RB", "WR"], n_players), "mu": rng.uniform(4, 20, n_players)})
     players["sigma"] = 1 + 0.35 * players["mu"]
-    players["actual"] = player_points(rng.standard_normal((1, n_players)), players, dud)[0]
+    players["actual"] = player_points(rng.standard_normal((1, n_players)), players, params)[0]
 
-    u_low, u_high = pit(players, dud)
+    u_low, u_high = pit(players, params)
     coverage = player_coverage(players.assign(u_low=u_low, u_high=u_high))["ALL"]
 
     for level in COVERAGE_BANDS:
@@ -52,13 +62,26 @@ def test_a_score_of_zero_or_less_is_the_whole_dud_component_of_the_distribution(
     coefficients = DUD["by_position"]["WR"]
     p_dud = expit(coefficients["c"] + coefficients["d"] * 10.0)
 
-    u_low, u_high = pit(players, DUD)
+    u_low, u_high = pit(players, WITH_DUDS)
 
     assert u_low.tolist() == [0.0, 0.0, 0.0]
-    # A defense has no dud coefficients, so its zero is a point at the bottom of the distribution.
+    # A defense has no dud coefficients or floor, so its zero is a point at the bottom of the distribution.
     assert u_high.tolist() == pytest.approx([p_dud, p_dud, 0.0])
-    for bound in pit(players, None):
+    for bound in pit(players, LOGNORMAL):
         assert bound.tolist() == [0.0, 0.0, 0.0]
+
+
+def test_above_a_floor_the_pit_is_the_cdf_of_the_shifted_lognormal_and_at_or_under_it_a_point_at_0():
+    actual = np.array([-6.0, -5.0, -4.0, 0.0, 12.0])
+    players = pd.DataFrame({"position": "DEF", "mu": 7.0, "sigma": 5.0, "actual": actual})
+    # Above the floor of -5 lies a lognormal with mean 7 + 5 and the same standard deviation.
+    shape = np.sqrt(np.log(1 + (5.0 / 12.0) ** 2))
+    lognormal = stats.lognorm(shape, scale=12.0 * np.exp(-(shape**2) / 2))
+
+    u_low, u_high = pit(players, {"dud": None, "floor": {"by_position": {"DEF": -5.0}}})
+
+    np.testing.assert_allclose(u_low, [0.0, 0.0, *lognormal.cdf([1.0, 5.0, 17.0])])
+    np.testing.assert_array_equal(u_high, u_low)
 
 
 def test_pit_is_the_cdf_of_the_dud_and_lognormal_mixture():
@@ -73,7 +96,7 @@ def test_pit_is_the_cdf_of_the_dud_and_lognormal_mixture():
 
     expected = p_dud * np.minimum(actual / (threshold * mu), 1) + (1 - p_dud) * lognormal.cdf(actual)
 
-    u_low, u_high = pit(players, DUD)
+    u_low, u_high = pit(players, WITH_DUDS)
     np.testing.assert_allclose(u_low, expected)
     np.testing.assert_array_equal(u_high, u_low)
 
@@ -316,7 +339,7 @@ def test_a_simulated_week_scores_each_team_and_game_beside_what_happened():
     )
     matchups = pd.DataFrame({"roster_id": [2, 1], "matchup_id_number": 1, "points": [25.0, 40.0]})
 
-    teams, games = simulate_week(starters, matchups, {"dud": None, "correlation": None}, seed=0)
+    teams, games = simulate_week(starters, matchups, {**LOGNORMAL, "correlation": None}, seed=0)
 
     assert teams["roster_id"].tolist() == [1, 2]
     assert teams["mean"].tolist() == pytest.approx([5.0, 30.0], rel=0.02)

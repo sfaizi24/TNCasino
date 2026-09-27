@@ -18,7 +18,7 @@ from scipy.special import ndtr
 
 from pipeline.db import connect
 from pipeline.model.params import load_params
-from pipeline.model.sampling import dud_probabilities, lognormal_means, lognormal_params, simulate_teams
+from pipeline.model.sampling import dud_probabilities, lognormal_means, lognormal_params, player_floors, simulate_teams
 from pipeline.model.sigma import sigma
 from pipeline.settings import Settings
 from pipeline.steps.simulate import SLOT_RANK
@@ -94,29 +94,32 @@ def player_sigmas(players: pd.DataFrame, params: dict) -> list[float]:
     return [sigma(mu, position, spread, params) for mu, position, spread in columns]
 
 
-def pit(players: pd.DataFrame, dud: dict | None) -> tuple[np.ndarray, np.ndarray]:
-    """Each actual's quantile under the player's score distribution, the lognormal mixed with a uniform dud on
-    [0, t * mu] when `dud` is set: u = p * min(x / (t * mu), 1) + (1 - p) * F_lognormal(x), returned as the interval
-    (u_low, u_high), a single point for a score above 0.
+def pit(players: pd.DataFrame, params: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Each actual's quantile under the player's score distribution, the lognormal above the position's floor f
+    mixed with a uniform dud on [0, t * mu] when the params have a dud block:
+    u = p * clip(x / (t * mu), 0, 1) + (1 - p) * F_lognormal(x - f), returned as the interval (u_low, u_high), a
+    single point for a score above the floor.
 
-    A score of 0 or less counts as a dud, whose PIT is uniform on [0, p], so its interval is the whole dud component
-    [0, p]: the non-randomized PIT of a point mass (Czado, Gneiting and Held 2009, "Predictive model assessment for
-    count data"). Without a dud chance, under v1 or for a defense, that is [0, 0].
+    A score at or under the floor counts as the floor. At a floor of 0 that is a dud, whose PIT is uniform on [0, p],
+    so its interval is the whole dud component [0, p]: the non-randomized PIT of a point mass (Czado, Gneiting and
+    Held 2009, "Predictive model assessment for count data"). Without a dud chance the interval is [0, 0].
     """
+    dud = params["dud"]
     mu = players["mu"].to_numpy(dtype=float)
-    actual = players["actual"].to_numpy(dtype=float).clip(min=0.0)
+    floor = player_floors(players, params["floor"])
+    actual = np.maximum(players["actual"].to_numpy(dtype=float), floor)
     p_dud = dud_probabilities(players, dud)
     threshold = dud["threshold_ratio"] if dud else 0.0
     lognormal_mu = lognormal_means(mu, p_dud, threshold)
-    columns = zip(lognormal_mu, players["sigma"], strict=True)
+    columns = zip(lognormal_mu - floor, players["sigma"], strict=True)
     mu_ln, sigma_ln = np.array([lognormal_params(mean, sd) for mean, sd in columns]).T
     with np.errstate(divide="ignore"):
-        u = ndtr((np.log(actual) - mu_ln) / sigma_ln)
+        u = ndtr((np.log(actual - floor) - mu_ln) / sigma_ln)
     if dud is not None:
-        dud_cdf = np.minimum(actual / (threshold * mu), 1.0)
+        dud_cdf = np.clip(actual / (threshold * mu), 0.0, 1.0)
         u = p_dud * dud_cdf + (1 - p_dud) * u
-    scored_nothing = actual == 0
-    return np.where(scored_nothing, 0.0, u), np.where(scored_nothing, p_dud, u)
+    at_floor = actual == floor
+    return np.where(at_floor, 0.0, u), np.where(at_floor, p_dud, u)
 
 
 def player_coverage(players: pd.DataFrame) -> dict[str, dict]:
@@ -239,7 +242,7 @@ def held_out_metrics(
 
 def score_players(players: pd.DataFrame, params: dict) -> pd.DataFrame:
     players = players.assign(sigma=player_sigmas(players, params))
-    u_low, u_high = pit(players, params["dud"])
+    u_low, u_high = pit(players, params)
     return players.assign(u_low=u_low, u_high=u_high)
 
 

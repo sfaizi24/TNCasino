@@ -1,4 +1,4 @@
-"""Joint sampling of starters' fantasy points: lognormal scores, an optional dud mixture, and a
+"""Joint sampling of starters' fantasy points: lognormal scores above a floor, an optional dud mixture, and a
 Gaussian copula that correlates starters who play for the same NFL team."""
 
 from itertools import combinations
@@ -37,7 +37,7 @@ def simulate_teams(
     normals = np.random.default_rng(seed).standard_normal((n_sims, len(starters)))
     if params["correlation"] is not None:
         correlate_teammates(normals, starters, params["correlation"]["same_nfl_team"])
-    points = player_points(normals, starters, params["dud"])
+    points = player_points(normals, starters, params)
 
     locked_points = locked_points or {}
     for column, player_id in enumerate(starters["sleeper_player_id"]):
@@ -70,23 +70,33 @@ def teammate_matrix(positions: list[str], pair_correlations: dict[str, float]) -
     return matrix
 
 
-def player_points(normals: np.ndarray, starters: pd.DataFrame, dud: dict | None) -> np.ndarray:
-    """Map each starter's normals to fantasy points whose mean is the starter's mu."""
+def player_points(normals: np.ndarray, starters: pd.DataFrame, params: dict) -> np.ndarray:
+    """Map each starter's normals to fantasy points whose mean is the starter's mu. The lognormal part starts at
+    the position's floor rather than at 0, with the same mean and standard deviation, so a floor under 0 lets a
+    position without a dud chance score under 0."""
+    dud = params["dud"]
     mu = starters["mu"].to_numpy(dtype=float)
     sigma = starters["sigma"].to_numpy(dtype=float)
+    floor = player_floors(starters, params["floor"])
     p_dud = dud_probabilities(starters, dud)
     threshold = dud["threshold_ratio"] if dud else 0.0
     lognormal_mu = lognormal_means(mu, p_dud, threshold)
-    mu_ln, sigma_ln = np.array([lognormal_params(m, s) for m, s in zip(lognormal_mu, sigma, strict=True)]).T
+    columns = zip(lognormal_mu - floor, sigma, strict=True)
+    mu_ln, sigma_ln = np.array([lognormal_params(mean, sd) for mean, sd in columns]).T
 
-    points = np.exp(mu_ln + sigma_ln * normals)
+    points = floor + np.exp(mu_ln + sigma_ln * normals)
     mixed = p_dud > 0
     if mixed.any():
         u = ndtr(normals[:, mixed])
         p = p_dud[mixed]
-        lognormal = np.exp(mu_ln[mixed] + sigma_ln[mixed] * ndtri((u - p) / (1 - p)))
+        lognormal = floor[mixed] + np.exp(mu_ln[mixed] + sigma_ln[mixed] * ndtri((u - p) / (1 - p)))
         points[:, mixed] = np.where(u < p, u / p * threshold * mu[mixed], lognormal)
     return points
+
+
+def player_floors(players: pd.DataFrame, floor: dict) -> np.ndarray:
+    """Where each player's lognormal part starts: his position's floor, or 0 when the floor block does not list it."""
+    return players["position"].map(floor["by_position"]).fillna(0.0).to_numpy(dtype=float)
 
 
 def lognormal_means(mu: np.ndarray, p_dud: np.ndarray, threshold: float) -> np.ndarray:

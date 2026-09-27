@@ -490,6 +490,7 @@ Parameters are JSON files under `pipeline/model/params/`, committed to git, load
   "sigma": {"formula": "v1", "alpha": 2.0, "beta": 1.0,
             "pos_sigma": {"QB": 7, "RB": 9, "WR": 10, "TE": 8, "K": 4, "DEF": 7}, "default_pos_sigma": 8.0},
   "dud": null,
+  "floor": {"by_position": {}},
   "correlation": null
 }
 ```
@@ -504,6 +505,12 @@ Amended 2026-09-27 (v2.1). The bias is per source and position, `"bias": {"QB": 
 fitted where the source has ≥ 3 weeks at that position and 0 where a position is absent; the
 weight stays per source, from the error left after those biases. Why: one number per source
 averaged opposite misses, so ESPN's +0.61 lowered the DEF μ it already projected too low.
+A `"floor": {"by_position": {"DEF": -5.0}}` block moves where a position's lognormal part
+starts: it is drawn as floor + a lognormal with mean μ_L − floor and sd σ, so the mean and sd
+are unchanged. The fit gives each position without a dud the floor min(0, ⌊lowest actual⌋ − 1)
+and leaves a position with a dud at 0; a position the block leaves out has floor 0. Why: a
+defense scores under 0 when it allows many points, a lognormal cannot, and DEF has no dud to
+cover those weeks.
 
 `fit-model` fits on 2025 weeks 10–16 plus any 2026 weeks with actuals (from
 `projections_with_sleeper` + `player_stats`). Acceptance gate before `model_version` defaults to

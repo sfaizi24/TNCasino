@@ -219,7 +219,8 @@ def test_each_distribution_is_scored_under_the_version_that_stored_it(settings, 
     params_dir.mkdir()
     dud = {"threshold_ratio": 0.25, "by_position": {"WR": {"c": 5.0, "d": 0.0}}}
     for version, version_dud in [("va", None), ("vb", dud)]:
-        (params_dir / f"{version}.json").write_text(json.dumps({"version": version, "dud": version_dud}))
+        params = {"version": version, "dud": version_dud, "floor": {"by_position": {}}}
+        (params_dir / f"{version}.json").write_text(json.dumps(params))
     monkeypatch.setattr(model_params, "PARAMS_DIR", params_dir)
     write_players(settings, [(1, "wr_a", "WR", 10.0, 3.0)], model_version="va")
     write_players(settings, [(1, "wr_b", "WR", 10.0, 3.0)], model_version="vb")

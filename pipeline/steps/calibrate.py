@@ -90,7 +90,7 @@ def completed_weeks(ctx: StepContext) -> list[int]:
 
 def score_players(ctx: StepContext, weeks: list[int]) -> pd.DataFrame:
     """The eligible stored distributions of `weeks` beside the actual points, with each row's PIT interval taken
-    under the dud block of the model version that stored it."""
+    under the dud and floor blocks of the model version that stored it."""
     settings = ctx.settings
     stored = pd.read_sql_query(STORED_PLAYERS, ctx.db("projections"), params=(settings.season, settings.week, MIN_MU))
     stored = stored[stored["week"].isin(weeks) & stored["position"].isin(POSITION_ORDER)]
@@ -101,7 +101,7 @@ def score_players(ctx: StepContext, weeks: list[int]) -> pd.DataFrame:
 
     scored = []
     for version, group in players.groupby("model_version"):
-        u_low, u_high = pit(group, load_params(version)["dud"])
+        u_low, u_high = pit(group, load_params(version))
         scored.append(group.assign(u_low=u_low, u_high=u_high))
     return pd.concat(scored, ignore_index=True)
 

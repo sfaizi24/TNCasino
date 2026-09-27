@@ -14,6 +14,7 @@ from pipeline.model.fit import (
     MIN_EIGENVALUE,
     clip_correlations,
     fit_and_write,
+    fit_floor,
     fit_params,
     fit_sigma,
     fit_sources,
@@ -78,7 +79,7 @@ def synthetic_players(n_weeks: int, n_teams: int, seed: int) -> pd.DataFrame:
     )
     cholesky = np.linalg.cholesky(teammate_matrix(TEAM, CORRELATION))
     normals = rng.standard_normal((n_groups, len(TEAM))) @ cholesky.T
-    players["actual"] = player_points(normals.reshape(1, -1), players, DUD)[0]
+    players["actual"] = player_points(normals.reshape(1, -1), players, {"dud": DUD, "floor": {"by_position": {}}})[0]
     return players
 
 
@@ -128,6 +129,24 @@ def test_fit_recovers_the_dud_probability_only_where_players_dud(recovered):
         np.testing.assert_allclose(
             expit(fitted["c"] + fitted["d"] * mus), expit(drawn["c"] + drawn["d"] * mus), atol=0.03
         )
+
+
+def test_only_the_positions_left_without_a_dud_get_a_floor(recovered):
+    assert set(recovered["floor"]["by_position"]) == set(SIGMA) - set(DUD["by_position"])
+
+
+def test_a_floor_sits_a_point_under_the_lowest_score_and_never_above_0():
+    players = pd.DataFrame(
+        {
+            "position": ["RB", "RB", "K", "K", "DEF", "DEF", "DEF"],
+            "actual": [-2.0, 10.0, 3.5, 9.0, -3.5, 0.0, 12.0],
+        }
+    )
+
+    floor = fit_floor(players, {"threshold_ratio": 0.25, "by_position": {"RB": {"c": -1.0, "d": -0.1}}})
+
+    # The RB's score under 0 belongs to his dud, so RB keeps the floor of 0; QB, WR and TE have no rows.
+    assert floor == {"by_position": {"K": 0.0, "DEF": -5.0}}
 
 
 def test_fit_recovers_teammate_correlations(recovered):

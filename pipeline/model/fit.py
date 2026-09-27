@@ -1,12 +1,14 @@
 """Fit model parameters from a past season's projections and the points the players actually scored.
 
 The fit runs in stages, each built on the one before: source weights and biases make the consensus mu, the
-consensus sets the dud probability, the dud probability sets the lognormal mean that sigma is measured around,
-and sigma standardises the residuals whose teammate correlations finish the fit. fit_and_write then scores the
-fit with each week held out in turn, beside v1, and writes it where load_params finds it.
+consensus sets the dud probability, a position without a dud gets a floor under its lowest score, the dud
+probability sets the lognormal mean that sigma is measured around, and sigma standardises the residuals whose
+teammate correlations finish the fit. fit_and_write then scores the fit with each week held out in turn, beside
+v1, and writes it where load_params finds it.
 """
 
 import json
+import math
 from contextlib import closing
 
 import numpy as np
@@ -113,6 +115,7 @@ def fit_params(rows: pd.DataFrame, excluded_sources: list[str], version: str) ->
     sources = fit_sources(rows)
     players = player_weeks(rows, sources)
     dud = fit_dud(players)
+    floor = fit_floor(players, dud)
     sigma = fit_sigma(players, dud)
     measured = teammate_correlations(players, {"sigma": sigma})
     correlation, _ = shrink_to_positive_definite(clip_correlations(measured))
@@ -121,6 +124,7 @@ def fit_params(rows: pd.DataFrame, excluded_sources: list[str], version: str) ->
         "sources": sources,
         "sigma": sigma,
         "dud": dud,
+        "floor": floor,
         "correlation": {"same_nfl_team": correlation},
     }
 
@@ -200,6 +204,19 @@ def fit_logistic(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
     start = np.array([logit(y.mean()), 0.0])
     c, d = minimize(negative_log_likelihood, start, jac=gradient, method="BFGS").x
     return float(c), float(d)
+
+
+def fit_floor(players: pd.DataFrame, dud: dict) -> dict:
+    """Where the lognormal part starts for each position without a fitted dud: a point under the position's lowest
+    score and never above 0, so every score it had lies above the floor. A position with a dud keeps the floor of 0,
+    as its scores of 0 or less belong to the dud part."""
+    lowest = players.groupby("position")["actual"].min()
+    by_position = {}
+    for position in POSITION_ORDER:
+        if position in dud["by_position"] or position not in lowest.index:
+            continue
+        by_position[position] = min(0.0, math.floor(lowest[position]) - 1.0)
+    return {"by_position": by_position}
 
 
 def sigma_residuals(players: pd.DataFrame, dud: dict) -> pd.DataFrame:
@@ -283,6 +300,7 @@ def print_fit(eligible: pd.DataFrame, players: pd.DataFrame, params: dict) -> No
     """The fitted parameters beside the numbers they were fitted from."""
     print_sources(eligible, params["sources"])
     print_dud(players, params["dud"])
+    print_floor(players, params["floor"])
     print_sigma(players, params)
     print_correlation(players, params)
 
@@ -319,6 +337,16 @@ def print_dud(players: pd.DataFrame, dud: dict) -> None:
         counts = [str((players["position"] == position).sum()), str(len(group)), str(group["dud"].sum())]
         table.append([position, *counts, f"{group['dud'].mean():.3f}", *coefficients])
     print_table(["position", "player-weeks", "2+ sources", "duds", "dud rate", "c", "d"], table)
+
+
+def print_floor(players: pd.DataFrame, floor: dict) -> None:
+    table = []
+    for position in POSITION_ORDER:
+        group = players[players["position"] == position]
+        written = floor["by_position"].get(position)
+        cells = [str(len(group)), f"{group['actual'].min():.2f}", "-" if written is None else f"{written:.1f}"]
+        table.append([position, *cells])
+    print_table(["position", "rows", "min actual", "floor"], table)
 
 
 def print_sigma(players: pd.DataFrame, params: dict) -> None:
