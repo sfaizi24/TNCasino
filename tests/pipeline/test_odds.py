@@ -184,13 +184,13 @@ def rows_per_run(settings: Settings) -> dict[str, dict[str, int]]:
         (0.5, "-100"),
         (0.75, "-300"),
         (0.2, "+400"),
-        (1.0, "-∞"),
-        (0.0, "+∞"),
+        (1.0, "-99900"),
+        (0.0, "+99900"),
         (0.50004, "-100"),
         (0.49996, "+100"),
     ],
 )
-def test_american_odds_are_spelled_as_notebook_07_stored_them(probability, american_odds):
+def test_american_odds_are_fair_and_stay_numeric_at_the_extremes(probability, american_odds):
     assert odds.probability_to_american_odds(probability) == american_odds
 
 
@@ -254,14 +254,14 @@ def test_every_team_sharing_the_top_or_bottom_score_counts_the_sim(settings):
         (1, 500, 0.5, "-100"),
         (2, 500, 0.5, "-100"),
         (3, 500, 0.5, "-100"),
-        (4, 0, 0.0, "+∞"),
+        (4, 0, 0.0, "+99900"),
     ]
     lowest = read_rows(settings, "betting_odds_lowest_scorer", "team_id")
     assert pick(lowest, "team_id", "count", "probability", "odds") == [
-        (1, 0, 0.0, "+∞"),
+        (1, 0, 0.0, "+99900"),
         (2, 500, 0.5, "-100"),
-        (3, 0, 0.0, "+∞"),
-        (4, 1000, 1.0, "-∞"),
+        (3, 0, 0.0, "+99900"),
+        (4, 1000, 1.0, "-99900"),
     ]
 
 

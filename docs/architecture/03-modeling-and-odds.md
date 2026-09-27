@@ -67,7 +67,7 @@ All prices are **fair odds with no vig**, rounded to whole numbers and stored as
 | p ≥ 0.5 | −100 · p / (1 − p) |
 | p < 0.5 | +100 · (1 − p) / p |
 
-Notebook 07 returns `"-∞"`/`"+∞"` at p = 1/0; notebook 09 returns `"N/A"`. The two functions are copy-pasted, not shared.
+The pipeline clamps p to [0.001, 0.999] before converting, so a team that never wins in the simulation is priced `+99900` rather than the `"-∞"`/`"+∞"` strings notebook 07 stored (Flask parses the string with `int()`, so it must stay numeric). Every market shares the one converter in `pipeline/steps/odds.py`.
 
 | Market | Table | Derived from |
 |---|---|---|
