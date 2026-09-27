@@ -27,9 +27,11 @@ WEEKLY_ODDS_TABLES = [
     "team_distribution_curves",
     "team_matchup_margin_curves",
 ]
-# The playoffs step's futures, which end when the playoffs start.
+# The playoffs step's futures, which end when the playoffs start. A market is empty when every team is priced
+# outside its 1-99% band, so the standings matrix, written on every run, is what shows the step has run.
 FUTURES_TABLES = ["betting_odds_first_place", "betting_odds_make_playoffs"]
-RUN_TABLES = [*WEEKLY_ODDS_TABLES, *FUTURES_TABLES, "standings_probability_matrix"]
+STANDINGS_TABLE = "standings_probability_matrix"
+RUN_TABLES = [*WEEKLY_ODDS_TABLES, *FUTURES_TABLES, STANDINGS_TABLE]
 SCORER_TABLES = ["betting_odds_highest_scorer", "betting_odds_lowest_scorer"]
 
 # The tables Flask reads for the week, which must have its rows.
@@ -311,10 +313,10 @@ def frozen_tables(week: Week) -> tuple[str, str]:
         return "fail", f"no rows for week {week.number} in {listing(empty)}"
     if week.is_playoffs:
         return "ok", f"{len(REQUIRED_TABLES)} tables have rows for week {week.number}; futures end at the playoffs"
-    no_futures = [table for table in FUTURES_TABLES if not week.rows[table]]
-    if no_futures:
-        return "warn", f"no futures for week {week.number} in {', '.join(no_futures)}; has the playoffs step run?"
-    return "ok", f"{len(REQUIRED_TABLES) + len(FUTURES_TABLES)} tables have rows for week {week.number}"
+    if not week.rows[STANDINGS_TABLE]:
+        return "warn", f"no standings for week {week.number} in {STANDINGS_TABLE}; has the playoffs step run?"
+    markets = sum(1 for table in FUTURES_TABLES if week.rows[table])
+    return "ok", f"{len(REQUIRED_TABLES)} tables have rows for week {week.number}; {markets} futures markets offered"
 
 
 def owners(week: Week) -> tuple[str, str]:

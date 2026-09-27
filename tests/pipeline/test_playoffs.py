@@ -12,7 +12,7 @@ from pipeline.settings import Settings
 from pipeline.sources import SOURCE_NAMES
 from pipeline.sources.base import POSITIONS, Projection
 from pipeline.sources.verify import Check, SourceReport
-from pipeline.steps import clean, league, match, odds, playoffs, scrape, simulate, stats
+from pipeline.steps import clean, league, lineups, match, odds, playoffs, scrape, simulate, stats
 
 LEAGUE_ID = "L2026"
 WEEK = 11  # the playoffs start in week 14, so the step projects, picks and simulates weeks 12 and 13 itself
@@ -186,6 +186,20 @@ def run_playoffs(
         return playoffs.run(ctx)
 
 
+def write_lineup(settings: Settings) -> None:
+    """One team_lineups row for the week, as only the lineups step of a weekly run leaves behind."""
+    conn = connect(settings, "projections")
+    conn.executescript(lineups.LINEUP_TABLES)
+    conn.execute(
+        "INSERT INTO team_lineups (season, week, roster_id, team_name, owner, record, slot, sleeper_player_id, "
+        "player_name, position, mu, sigma, var, n_sources, timestamp) "
+        "VALUES (?, ?, 1, 'Team 1', 'owner1', '5-5', 'QB', '1qb', 'Player 1qb', 'QB', 20.0, 5.0, 25.0, 1, '')",
+        (settings.season, settings.week),
+    )
+    conn.commit()
+    conn.close()
+
+
 def set_record(league_db, roster_id: int, wins: int, losses: int) -> None:
     league_db.execute("UPDATE rosters SET wins = ?, losses = ? WHERE roster_id = ?", (wins, losses, roster_id))
     league_db.commit()
@@ -341,6 +355,20 @@ def test_a_run_that_fails_on_a_later_week_clears_the_weeks_before_it(settings, f
     after = shared_rows(settings)
     assert weeks_held(after) == {table: [WEEK] for table in playoffs.SHARED_TABLES}
     assert after == current_week
+
+
+def test_a_week_the_weekly_steps_have_moved_past_is_refused(settings):
+    """Its cleanup would delete the later week's projections along with the run's own scratch rows."""
+    later = replace(settings, week=12)
+    run_weekly_steps(later)
+    write_lineup(later)
+    before = shared_rows(settings)
+
+    with pytest.raises(RuntimeError, match="week 12 has already been run"):
+        run_playoffs(settings)
+
+    assert shared_rows(settings) == before
+    assert "betting_odds_first_place" not in odds_tables(settings)
 
 
 def test_a_source_failing_its_checks_is_dropped_for_the_week(settings, failing):

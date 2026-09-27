@@ -114,11 +114,13 @@ def run(ctx: StepContext) -> StepResult:
     if divisions > 0:
         raise RuntimeError(f"the league has {divisions} divisions, but these standings rank one table")
 
+    future_weeks = list(range(settings.week + 1, league.playoff_week_start))
+    refuse_weeks_already_run(ctx.db("projections"), settings.season, future_weeks)
+
     teams = lineups.load_teams(league_conn, settings.league_id, league.waiver_budget)
     columns = {team.roster_id: column for column, team in enumerate(teams)}
     current_week = simulated_current_week(ctx, columns)
     n_sims = len(current_week.scores)
-    future_weeks = list(range(settings.week + 1, league.playoff_week_start))
     try:
         future, projections, warnings = simulate_future_weeks(ctx, future_weeks, league.slots, teams, columns, n_sims)
     finally:
@@ -272,15 +274,32 @@ def project_week(
     return ProjectedWeek(websites, failures, week_stats.summary["n_players"], warnings + week_stats.warnings)
 
 
+def refuse_weeks_already_run(conn: sqlite3.Connection, season: int, weeks: list[int]) -> None:
+    """Only a weekly run writes team_lineups, so rows for a later week mean the season has moved past this one, and
+    clearing that week's projections afterwards would wipe the run that made them."""
+    if not weeks or "team_lineups" not in table_names(conn):
+        return
+    placeholders = ", ".join("?" * len(weeks))
+    query = f"SELECT DISTINCT week FROM team_lineups WHERE season = ? AND week IN ({placeholders}) ORDER BY week"
+    already_run = [week for (week,) in conn.execute(query, (season, *weeks))]
+    if already_run:
+        listed = ", ".join(map(str, already_run))
+        raise RuntimeError(f"week {listed} has already been run; pricing an earlier week would clear its projections")
+
+
 def clear_future_weeks(conn: sqlite3.Connection, season: int, weeks: list[int]) -> None:
     """Delete the later weeks' rows from the weekly steps' tables: they were made for this run's simulation, and left
     in place they would pass for the week's own projections. A table not created yet has nothing to delete."""
-    existing = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    existing = table_names(conn)
     week_keys = [(season, week) for week in weeks]
     with conn:
         for table in SHARED_TABLES:
             if table in existing:
                 conn.executemany(f"DELETE FROM {table} WHERE season = ? AND week = ?", week_keys)
+
+
+def table_names(conn: sqlite3.Connection) -> set[str]:
+    return {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
 
 def pick_starters(

@@ -93,7 +93,7 @@ The `validate` step runs after `odds` and `playoffs` and before `publish`, and w
 | `curves` | a team in play has no distribution curve (or a team without a game has one), or an ordered pair of teams in play has no margin curve |
 | `simulation_draws` | the week has no simulation run, or its Parquet file is missing or does not hold `n_sims × n_teams` rows |
 | `odds_run` | the odds were priced from an older simulation than the week's latest |
-| `frozen_tables` | a table Flask reads for the week has no rows; missing futures only warn, and only before `playoff_week_start` |
+| `frozen_tables` | a table Flask reads for the week has no rows; a missing standings matrix (the playoffs step has not run) only warns, and only before `playoff_week_start`; an empty futures market is fine |
 | `owners` | an owner name in the lineups, odds or curves is not a league user's display name or username |
 | `unique_orderings` | a team O/U owner or a moneyline matchup repeats, which breaks Flask's pairing of rows by position |
 

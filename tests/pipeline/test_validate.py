@@ -10,7 +10,7 @@ import pytest
 
 from pipeline.runner import StepContext, StepFailed, StepResult
 from pipeline.settings import Settings
-from pipeline.steps import odds, simulate, validate
+from pipeline.steps import odds, playoffs, simulate, validate
 from pipeline.steps.league import MIRROR_TABLES, insert_rows
 from pipeline.steps.lineups import LINEUP_TABLES, ROSTER_TABLE
 
@@ -27,20 +27,6 @@ USERS = [
 ]
 OWNERS = {1: "alice", 2: "bob", 3: "carol", 4: "dave"}
 GAMES = {1: 1, 2: 1, 3: 2, 4: 2}  # roster_id -> matchup_id_number
-
-# The playoffs step's tables, in notebook 09's shape with season appended.
-FUTURES_DDL = """
-CREATE TABLE betting_odds_first_place (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, week INTEGER NOT NULL, team_id INTEGER NOT NULL,
-  team_name TEXT NOT NULL, owner TEXT NOT NULL, probability REAL NOT NULL, american_odds TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, season INTEGER NOT NULL, UNIQUE (run_id, week, team_id)
-);
-CREATE TABLE betting_odds_make_playoffs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, week INTEGER NOT NULL, team_id INTEGER NOT NULL,
-  team_name TEXT NOT NULL, owner TEXT NOT NULL, probability REAL NOT NULL, american_odds TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, season INTEGER NOT NULL, UNIQUE (run_id, week, team_id)
-);
-"""
 
 BREAKS = [
     ("lineup_slots", "projections", "DELETE FROM team_lineups WHERE roster_id = 3 AND slot = 'WR'", "(3, WR)"),
@@ -208,13 +194,13 @@ def write_lineups(conn: sqlite3.Connection, settings: Settings) -> None:
 
 
 def write_futures(conn: sqlite3.Connection, settings: Settings) -> None:
-    conn.executescript(FUTURES_DDL)
+    """The playoffs step's tables: both markets priced for every roster, and each roster's finishing positions."""
+    conn.executescript(playoffs.FUTURES_DDL)
+    stamp = {"run_id": SIMULATION_RUN_ID, "week": settings.week, "season": settings.season}
     for table, probability in [("betting_odds_first_place", 0.25), ("betting_odds_make_playoffs", 0.5)]:
         rows = [
-            {
-                "run_id": SIMULATION_RUN_ID,
-                "week": settings.week,
-                "season": settings.season,
+            stamp
+            | {
                 "team_id": roster_id,
                 "team_name": f"Team {roster_id}",
                 "owner": owner,
@@ -224,6 +210,20 @@ def write_futures(conn: sqlite3.Connection, settings: Settings) -> None:
             for roster_id, owner in OWNERS.items()
         ]
         insert_rows(conn, table, rows)
+    matrix = [
+        stamp
+        | {
+            "team_id": roster_id,
+            "team_name": f"Team {roster_id}",
+            "owner": owner,
+            "position": position,
+            "probability": 0.25,
+            "count": N_SIMS // 4,
+        }
+        for roster_id, owner in OWNERS.items()
+        for position in range(1, len(OWNERS) + 1)
+    ]
+    insert_rows(conn, "standings_probability_matrix", matrix)
     conn.commit()
 
 
@@ -296,9 +296,22 @@ def test_futures_missing_in_the_regular_season_are_a_warning(tmp_path):
     assert statuses(result)["frozen_tables"] == "warn"
     assert (result.summary["n_ok"], result.summary["n_warn"], result.summary["n_fail"]) == (11, 1, 0)
     assert result.warnings == [
-        "frozen_tables: no futures for week 4 in betting_odds_first_place, betting_odds_make_playoffs; "
-        "has the playoffs step run?"
+        "frozen_tables: no standings for week 4 in standings_probability_matrix; has the playoffs step run?"
     ]
+
+
+def test_empty_futures_markets_are_fine_once_the_standings_are_written(tmp_path):
+    """Every team outside the 1-99% band leaves a market empty; the standings matrix shows the step ran."""
+    settings = week_settings(tmp_path)
+    build_week(settings)
+    for table in validate.FUTURES_TABLES:
+        execute(settings, "odds", f"DELETE FROM {table}")
+
+    result = run_validate(settings)
+
+    assert statuses(result)["frozen_tables"] == "ok"
+    details = {check["name"]: check["detail"] for check in result.summary["checks"]}
+    assert details["frozen_tables"] == "9 tables have rows for week 4; 0 futures markets offered"
 
 
 def test_a_playoff_week_expects_odds_only_for_the_teams_with_a_game(tmp_path):
