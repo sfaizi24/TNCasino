@@ -27,7 +27,7 @@ from pipeline.steps.stats import DEFAULT_SOURCE, POSITION_ORDER
 PLAYER_WEEK = ["season", "week", "sleeper_player_id"]
 MIN_MU = 2.0
 COVERAGE_BANDS = {50: (0.25, 0.75), 80: (0.10, 0.90), 95: (0.025, 0.975)}
-GATED_POSITIONS = ["QB", "RB", "WR", "TE"]
+GATED_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DEF"]
 PLAYER_GATE = (0.70, 0.90)
 TEAM_GATE = (0.72, 0.88)
 TEAM_SIMS = 20_000

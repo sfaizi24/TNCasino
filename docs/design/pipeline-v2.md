@@ -534,6 +534,10 @@ rows joined to `team_lineups`. The pass rule stays on the eligible rows. Why: th
 from the starters alone, so a miss there matters more than one among bench players, but 64 DEF
 starters resolve coverage only to ±0.10, too coarse to decide the gate.
 
+Amended 2026-09-27 (v2.1). The player bounds apply at all six positions, K and DEF included.
+Why: each is one of the nine starters in every lineup, and v2's DEF coverage of 0.617 went
+unflagged because the gate did not check DEF.
+
 Known v1 findings to fix: player sigma too wide at low mu and too narrow at high mu; source
 disagreement not predictive (so `alpha` carries little information); left tail too thin.
 

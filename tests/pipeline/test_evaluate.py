@@ -212,7 +212,7 @@ def test_the_brier_difference_pairs_each_decided_game_with_the_baseline_forecast
     assert se == pytest.approx(differences.std(ddof=1) / np.sqrt(3))
 
 
-CALIBRATED = {"QB": 0.8, "RB": 0.8, "WR": 0.8, "TE": 0.8}
+CALIBRATED = {"QB": 0.8, "RB": 0.8, "WR": 0.8, "TE": 0.8, "K": 0.8, "DEF": 0.8}
 
 
 def gate_metrics(
@@ -227,8 +227,8 @@ def gate_metrics(
     }
 
 
-def test_the_gate_bounds_are_inclusive_and_kickers_and_defenses_are_not_gated():
-    coverage = {"QB": 0.70, "RB": 0.90, "WR": 0.8, "TE": 0.8, "K": 0.2, "DEF": 0.2}
+def test_the_gate_bounds_are_inclusive():
+    coverage = {"QB": 0.70, "RB": 0.90, "WR": 0.8, "TE": 0.8, "K": 0.70, "DEF": 0.90}
 
     assert gate_failures(gate_metrics(coverage, 0.72, 0.2365), gate_metrics({}, 0.8, 0.2365)) == []
 
@@ -256,7 +256,7 @@ def test_a_single_game_has_no_standard_error_so_any_worse_moneyline_fails():
 
 
 def test_every_way_of_missing_the_gate_is_named():
-    coverage = {"QB": 0.75, "RB": 0.695, "WR": 0.6129, "TE": 0.95}
+    coverage = {"QB": 0.75, "RB": 0.695, "WR": 0.6129, "TE": 0.95, "K": 0.91, "DEF": 0.6172}
 
     fitted = gate_metrics(coverage, 0.89, 0.2400, delta=0.0035, se=0.0017)
     failures = gate_failures(fitted, gate_metrics({}, 0.8, 0.2365))
@@ -265,6 +265,8 @@ def test_every_way_of_missing_the_gate_is_named():
         "RB 80% coverage 0.695 is outside [0.70, 0.90]",
         "WR 80% coverage 0.613 is outside [0.70, 0.90]",
         "TE 80% coverage 0.950 is outside [0.70, 0.90]",
+        "K 80% coverage 0.910 is outside [0.70, 0.90]",
+        "DEF 80% coverage 0.617 is outside [0.70, 0.90]",
         "team 80% coverage 0.890 is outside [0.72, 0.88]",
         "moneyline Brier 0.2400 is above v1's 0.2365 by more than two standard errors (+0.0035, se 0.0017)",
     ]
