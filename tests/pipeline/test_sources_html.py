@@ -143,6 +143,13 @@ def test_firstdown_rejects_a_page_without_a_snapshot():
         firstdown.parse("<html><body><table></table></body></html>", SEASON, WEEK)
 
 
+def test_firstdown_skips_players_projected_for_nothing(firstdown_html):
+    html = firstdown_html.replace("24.56727045366198", "0")  # Jahmyr Gibbs's PPR points in the snapshot
+    rows = firstdown.parse(html, SEASON, WEEK)
+    assert len(rows) == 196
+    assert ("Jahmyr", "Gibbs") not in {(row.first_name, row.last_name) for row in rows}
+
+
 def test_firstdown_serves_no_defenses():
     assert firstdown.SOURCE.positions == {"QB", "RB", "WR", "TE", "K"}
 
