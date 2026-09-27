@@ -15,19 +15,35 @@ flowchart LR
 
 ## 1. Player distributions
 
-Notebook 05, per `(sleeper_player_id, week)` using every matched source projection:
+The `stats` step (`pipeline/steps/stats.py`) replaces notebook 05. For each `(sleeper_player_id, week)` it combines every matched source projection under the parameters of the run's model version, a JSON file in `pipeline/model/params/` chosen by `PIPELINE_MODEL_VERSION` (default `v1`):
 
-- **μ** = mean of the source projections
-- **s** = sample standard deviation across sources (`ddof=1`); `0` when only one source
-- **σ** = √((α·s)² + (β·σ_pos)²)
+- **μ** = mean of each source's projection minus that source's `bias`, weighted by its `weight`. A source the file does not list counts at weight 1, bias 0.
+- **s** = sample standard deviation of those bias-corrected projections (`ddof=1`); `0` with one source.
+- **σ** = the version's formula below.
 
-| Parameter | Value |
-|---|---|
-| α (source-disagreement weight) | 2.0 |
-| β (baseline weight) | 1.0 |
-| σ_pos | QB 7, RB 9, WR 10, TE 8, K 4, DST 7; default 8 |
+Each `player_week_stats` row records the `model_version` that produced it.
 
-Players whose projections disagree get wider distributions; a player every source agrees on keeps roughly the positional baseline.
+| | v1: notebook 05's formulas, frozen | v2: fitted on 2025 weeks 10–16 |
+|---|---|---|
+| Sources (weight, bias) | 1, 0 for every source | ESPN 0.99, +0.61; FanDuel 1.09, +0.35; FirstDown 0.83, −0.72; Sleeper 1.09, +0.92 |
+| σ | √((2s)² + σ_pos²); σ_pos QB 7, RB 9, WR 10, TE 8, K 4, DEF 7, default 8 | max(1, a + b·μ) per position; s is not used |
+| Dud game | None | Chance 1 / (1 + e^−(c + d·μ)) per position; a dud scores uniformly on [0, 0.25·μ] |
+| Teammates | Independent | Correlated when they play for the same NFL team ([§3](#3-simulation)) |
+
+A positive bias means the source projects too high, so v2 lowers a typical μ by 0.2–0.3 points. FantasyPros is not in v2 because its 2025 numbers were rank-implied rather than projections, and FantasySharks has no 2025 data; both count at weight 1, bias 0.
+
+Under v1, sources that disagree widen a player's distribution, and a player every source agrees on keeps the positional baseline. Under v2 the width grows with the projection instead: in 2025 the size of a player's miss tracked his μ (correlation 0.07–0.37 by position) but not the sources' disagreement (within ±0.05). A low projection also carries a real chance of a near-zero game:
+
+| Position | a | b | c | d | σ at μ = 10 | Dud chance at μ = 10 |
+|---|---|---|---|---|---|---|
+| QB | 5.71 | 0.094 | 2.68 | −0.297 | 6.6 | 0.43 |
+| RB | 3.33 | 0.323 | −0.31 | −0.186 | 6.6 | 0.10 |
+| WR | 3.61 | 0.297 | 0.28 | −0.189 | 6.6 | 0.17 |
+| TE | 1.54 | 0.544 | −0.29 | −0.173 | 7.0 | 0.12 |
+| K | −0.11 | 0.595 | −1.32 | −0.102 | 5.8 | 0.09 |
+| DEF | 2.73 | 0.599 | – | – | 8.7 | 0 |
+
+A QB projected for 10 is usually a backup who may not play, hence the high dud chance; at μ = 20 it is 0.04. DEF has no dud because only ESPN projects defenses and the dud fit needs two sources per player-week. How the values were fitted and how v2 compares with v1 is in [Model fitting and calibration](#model-fitting-and-calibration).
 
 ## 2. Lineups and replacement players
 
@@ -42,19 +58,26 @@ Replacement players model the reality that an owner with a bad or empty slot wil
 
 ## 3. Simulation
 
-Notebook 07, seed `1738`, `N_SIMULATIONS = 50,000`.
+The `simulate` step (`pipeline/steps/simulate.py`, sampler in `pipeline/model/sampling.py`) replaces notebook 07's draws: seed `1738`, 50,000 simulations, each starter's μ and σ from `team_lineups`, and the dud and correlation blocks of the run's model version ([§1](#1-player-distributions)).
 
-**Lognormal parameterization** (per player, from μ and σ):
+**Lognormal parameterization** (per player, from a mean m and σ):
 
-- φ = √(σ² + μ²)
-- μ_ln = ln(μ² / φ)
-- σ_ln = √(ln((φ/μ)²))
+- φ = √(σ² + m²)
+- μ_ln = ln(m² / φ)
+- σ_ln = √(ln((φ/m)²))
 
-This keeps the simulated mean and standard deviation equal to μ and σ while preventing negative scores and giving a right skew. Edge cases: σ ≈ 0 gives a near-degenerate draw at μ; μ ≤ 0 is clamped to 1e-6.
+This keeps the simulated mean and standard deviation equal to m and σ while preventing negative scores and giving a right skew. Edge cases: σ ≈ 0 gives a near-degenerate draw at m; m ≤ 0 is clamped to 1e-6.
 
-**Draws.** Each lineup player gets an independent `np.random.lognormal(μ_ln, σ_ln, 50000)` array; a team's score for simulation *i* is the sum of its players' *i*-th draws. There is **no correlation** between players (e.g. QB–WR stacks) or between opposing teams. Because the seed is reset once and draws are consumed in team/lineup order, results change if the order of teams or players changes.
+**Draws.** One standard normal z per starter and simulation, from `np.random.default_rng(seed)` in roster then slot order, so the same lineups and seed reproduce the same totals and reordering the starters changes them. Each z becomes points:
 
-**Matchups.** Regular season: pairs from `league.db.matchups` for the week. Playoffs (`PLAYOFFS = True`): the live Sleeper `winners_bracket` API is walked to find the teams still alive, and only those are simulated.
+- *No dud chance* (every player under v1, DEF under v2): exp(μ_ln + σ_ln·z) with m = μ.
+- *Dud chance p*: with u = Φ(z), a draw with u < p is a dud scoring (u/p)·0.25·μ, uniform on [0, 0.25·μ]; any other draw takes the lognormal's quantile at (u − p)/(1 − p). The lognormal's mean is raised to m = (μ − p·0.25·μ/2)/(1 − p) so the mixture still averages μ, and σ is the standard deviation of the non-dud games.
+
+A team's score for simulation *i* is the sum of its starters' *i*-th points. The totals go to `sims/<season>/wkNN/<run_id>.parquet` for the odds step.
+
+**Teammate correlation.** When the version has a `correlation` block (v2), the z's of starters who play for the same NFL team, on any fantasy roster, are correlated before they become points: each group's normals are multiplied by the Cholesky factor of the matrix of pair correlations (QB–WR 0.22, QB–TE 0.21, QB–RB 0.07, RB–WR −0.05; any other pair 0). This Gaussian copula keeps every player's own distribution while making a QB's big game raise his receivers' odds of one. Players on different NFL teams stay independent, opponents in the same game included; v1 draws every starter independently.
+
+**Matchups.** The week's pairs from `league.db.matchups`. From `playoff_week_start` on, only the rosters Sleeper gives a matchup that week, the teams still playing, are simulated.
 
 ## 4. Markets
 
@@ -79,6 +102,46 @@ The pipeline clamps p to [0.001, 0.999] before converting, so a team that never 
 | **Make playoffs** | `betting_odds_make_playoffs` | Notebook 09: P(rank ≤ 8). Offered in the app as the `ammad_playoff` bet type |
 
 Notebook 09 ranking: +1 win for the higher simulated score (an exact tie counts as a loss for both), then sort by wins, then total points for. Only rows with 0.01 ≤ p ≤ 0.99 are stored.
+
+## Model fitting and calibration
+
+A model version is a JSON file in `pipeline/model/params/`. `v1` holds notebook 05's formulas, frozen as the baseline; later versions are fitted on a season's projections and actual points, and switching between them is a setting (`PIPELINE_MODEL_VERSION`), not a code change.
+
+**Fitting** (`pipeline/model/fit.py`), for example `python -m pipeline fit-model --season 2025 --weeks 10-16 --out v2 --exclude-sources fantasypros.com`. The training rows are the matched projections of the non-excluded sources for players at QB, RB, WR, TE, K or DEF whose plain mean projection is at least 2 points, each joined to the player's PPR points in `league.db.player_stats` (no stat line means he did not play and scored 0). Each stage uses the one before it:
+
+1. **Sources.** For a source with rows in at least 3 weeks, bias = mean(projected − actual) and weight = 1 / the mean squared bias-corrected error, scaled so the weights average 1 and clipped to [0.25, 4]. A source with fewer weeks gets weight 1, bias 0.
+2. **μ** per player-week with those weights and biases, by the stats step's own formula.
+3. **Dud.** Per position, on player-weeks with at least 2 sources, a dud is an actual under 0.25·μ, and c, d are the maximum-likelihood logistic fit of the dud chance on μ. A position with fewer than 50 player-weeks or 5 duds gets no dud.
+4. **σ.** Per position, on the non-dud player-weeks: residuals from the lognormal part's mean ([§3](#3-simulation)), grouped by μ into bins of about 50; a and b are the least-squares line through the bins' residual standard deviations, weighted by bin size. A position with fewer than 100 player-weeks gets its overall residual standard deviation and b = 0.
+5. **Correlation.** For each pair type, Pearson's r of the standardized residuals (actual − μ)/σ over every pair of teammates at the two positions in the same week, clipped to [−0.1, 0.4], and 0 with fewer than 100 pairs. Teammates share `nfl_players.team`, the team when the league data was fetched, so a player traded mid-season counts with his new team throughout. The four values are then scaled down together, if needed, until the matrix the sampler builds for the largest likely group of teammates (QB, 3 RB, 5 WR, 2 TE) has no eigenvalue under 0.05, because the sampler's Cholesky factorization fails on a matrix that is not positive definite. The 2025 values needed no scaling.
+
+`--out v1` is refused, and an excluded source with no projections in the window is an error, to catch typos.
+
+**Gate** (`pipeline/model/evaluate.py`). Each training week is held out in turn and scored under parameters fitted on the other weeks; v1 is scored on the same rows.
+
+- *Players.* The PIT u = F(actual) under the player's distribution, F(x) = p·min(x/(0.25·μ), 1) + (1 − p)·F_lognormal(x), with u = 0 for an actual of 0 or less. A calibrated model puts 80% of the u's inside [0.10, 0.90], and likewise for the central 50% and 95%.
+- *Teams.* Each week's `team_lineups` starters, re-projected with the held-out parameters and simulated 20,000 times: how often the actual score lands inside [p10, p90], the MAE of the simulated mean, and the moneyline Brier score, the mean of (P(team 1 wins) − result)² over the week's games, a tie counting as half a win.
+- *Pass* when 80% coverage is within [0.70, 0.90] at each of QB, RB, WR and TE, team coverage within [0.72, 0.88], and the Brier score no higher than v1's.
+
+The result is stored in the version's `gate` block. A version that fails can still be adopted, but only as a deliberate choice.
+
+**v2 on 2025 weeks 10–16** (2,311 player-weeks, 84 team-weeks, 42 games):
+
+| | QB | RB | WR | TE | K | DEF | All | Teams | MAE | Brier |
+|---|---|---|---|---|---|---|---|---|---|---|
+| v2, 80% coverage | 0.750 | 0.695 | 0.613 | 0.645 | 0.740 | 0.617 | 0.660 | 0.786 | 20.08 | 0.2368 |
+| v1, 80% coverage | 0.688 | 0.712 | 0.629 | 0.657 | 0.643 | 0.679 | 0.662 | 0.833 | 20.30 | 0.2365 |
+| Actual ≤ 0 | 8% | 11% | 24% | 19% | 8% | 11% | | | | |
+
+v2 fails the gate at RB, WR and TE and on the Brier score. Most of the player shortfall is the zero rule: a player who scores 0 or less, usually because he did not play, has u = 0 and counts as a miss however large his dud chance, so no model can cover more than 76% of WRs or 81% of TEs. Leaving zeros out, v2 covers 0.78–0.82 at every position but DEF (v1 0.70–0.82), and it fixes v1's thin left tail: QB scores above 0 but below the 2.5th percentile fell from 11.6% of QB player-weeks under v1 to 2.7%. Scoring each 0 as a draw from the dud part of its distribution instead would give v2 QB 0.80, RB 0.75, WR 0.78, TE 0.77, and leave v1 unchanged. DEF has no dud, and 26% of its actuals land above the 90th percentile. The Brier gap is noise: a bootstrap over the 42 games puts v2's score minus v1's between −0.003 and +0.004.
+
+**Calibration** (the `calibrate` step, `pipeline/steps/calibrate.py`) checks the model as it actually ran, season to date, without refitting. It scores every earlier week of the season that has both `player_week_stats` rows and stat lines:
+
+- *Players* with μ ≥ 2: PIT coverage of the central 50%, 80% and 95% by position and overall, from the stored μ and σ and the dud block of the version that stored each row.
+- *Teams:* each week's latest [p10, p90] from `team_distribution_curves` against `matchups.points`, with owners mapped to rosters through that week's `team_lineups`. A week without curves is skipped and listed.
+- *Moneylines:* the Brier score of each week's latest `betting_odds_matchup_ml` win chances against the results, a tie counting as half a win.
+
+The metrics go to `odds.db.calibration_metrics`, which is published: one row per metric and position, counts included, recorded at the run's week under the run's model version, and replaced when that week is recalibrated. The step also draws the 80% coverage by position as `calibration_week_N.png`. Before any week is complete it warns `no completed weeks with actuals yet` and writes nothing. Run as week 17 of 2025, it found the notebooks' distributions covered 65.5% of 2,335 player-weeks at 80% (QB 0.62, RB 0.72, WR 0.62, TE 0.65, K 0.66, DEF 0.69), teams 85% of 60 team-weeks (week 13 has no curves), and a moneyline Brier score of 0.229 over 36 games.
 
 ## 5. Analytics curves
 
