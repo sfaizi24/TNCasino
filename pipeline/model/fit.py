@@ -339,5 +339,7 @@ def print_gate(gate: dict) -> None:
     for metric in ["team_coverage_80", "team_mae", "moneyline_brier", "n_team_weeks", "n_matchups"]:
         table.append([metric, "", str(gate[metric]), str(gate["v1"][metric])])
     print_table(["metric", "position", "fitted", "v1"], table)
+    delta, se = gate["moneyline_brier_delta"], gate["moneyline_brier_delta_se"]
+    print(f"moneyline Brier fitted minus v1, game by game: {delta:+.4f}, standard error {se:.4f}")
     failures = gate_failures(gate, gate["v1"])
     print("gate passed" if gate["passed"] else "gate failed: " + "; ".join(failures))

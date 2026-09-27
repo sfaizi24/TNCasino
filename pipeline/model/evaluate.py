@@ -4,7 +4,8 @@ A player's score is judged by its probability integral transform (PIT), the quan
 the player's predicted distribution: when the model is calibrated, 80% of actuals land inside the central 80%
 interval. Team totals are simulated from the week's lineups and judged by how often the actual total lands inside
 [p10, p90], and moneylines by their Brier score. Pooled over held-out weeks, these metrics are the gate a fitted
-parameter version must pass, reported beside the frozen v1 baseline.
+parameter version must pass, reported beside the frozen v1 baseline, whose moneylines are compared with the fit's
+game by game.
 """
 
 import sqlite3
@@ -143,10 +144,23 @@ def band_coverage(u_low: np.ndarray, u_high: np.ndarray, low: float, high: float
         return np.where(width > 0, overlap / width, point_inside)
 
 
-def brier_score(p_first: pd.Series, first_points: pd.Series, second_points: pd.Series) -> float:
-    """Mean squared error of P(first team wins) against the result, a tie counting as half a win."""
-    outcome = (first_points > second_points) + 0.5 * (first_points == second_points)
-    return float(np.mean((p_first - outcome) ** 2))
+def brier_errors(games: pd.DataFrame) -> pd.Series:
+    """Each game's squared error of the chance that the first team wins against the result, a tie counting as half
+    a win. The mean over games is the Brier score."""
+    first, second = games["first_points"], games["second_points"]
+    first_won = (first > second) + 0.5 * (first == second)
+    return (games["p_first"] - first_won) ** 2
+
+
+def brier_difference(games: pd.DataFrame, baseline_games: pd.DataFrame) -> tuple[float, float]:
+    """The mean, game by game, of how much worse the forecasts in `games` did than the baseline's forecasts of the
+    same games, and its standard error."""
+    assert len(games) == len(baseline_games), "both versions must be scored on the same games"
+    differences = brier_errors(games) - brier_errors(baseline_games)
+    if len(differences) < 2:
+        # One game has no spread to measure; a standard error of 0 makes any difference count.
+        return float(differences.mean()), 0.0
+    return float(differences.mean()), float(differences.std(ddof=1) / np.sqrt(len(differences)))
 
 
 def load_team_weeks(settings: Settings, season: int, weeks: list[int]) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -183,20 +197,25 @@ def leave_one_week_out(rows: pd.DataFrame) -> Iterator[tuple[tuple[int, int], pd
 def evaluate_gate(
     rows: pd.DataFrame, team_weeks: tuple[pd.DataFrame, pd.DataFrame], folds: dict[tuple[int, int], dict], seed: int
 ) -> dict:
-    """Held-out metrics of the fitted folds beside v1's on the same weeks, and whether the fit passes the gate.
+    """Held-out metrics of the fitted folds beside v1's on the same weeks, how much the fit's moneyline Brier score
+    differs from v1's game by game, with the standard error of that difference, and whether the fit passes the gate.
 
     `rows` are the training rows, `team_weeks` what load_team_weeks returns for them, and `folds` maps each
     (season, week) of the rows to the parameters fitted without that week.
     """
-    fitted = held_out_metrics(rows, team_weeks, folds, seed)
+    fitted, games = held_out_metrics(rows, team_weeks, folds, seed)
     v1 = load_params("v1")
-    baseline = held_out_metrics(rows, team_weeks, dict.fromkeys(folds, v1), seed)
-    return {"passed": not gate_failures(fitted, baseline), **fitted, "v1": baseline}
+    baseline, baseline_games = held_out_metrics(rows, team_weeks, dict.fromkeys(folds, v1), seed)
+    delta, se = brier_difference(games, baseline_games)
+    gate = {**fitted, "moneyline_brier_delta": round(delta, 4), "moneyline_brier_delta_se": round(se, 4)}
+    return {"passed": not gate_failures(gate, baseline), **gate, "v1": baseline}
 
 
 def held_out_metrics(
     rows: pd.DataFrame, team_weeks: tuple[pd.DataFrame, pd.DataFrame], folds: dict[tuple[int, int], dict], seed: int
-) -> dict:
+) -> tuple[dict, pd.DataFrame]:
+    """The metrics pooled over the held-out weeks, and the held-out games in fold order, so that two versions'
+    forecasts of the same games can be paired."""
     lineups, matchups = team_weeks
     players, teams, games = [], [], []
     for (season, week), _, test in leave_one_week_out(rows):
@@ -209,9 +228,10 @@ def held_out_metrics(
         week_teams, week_games = simulate_week(starters, week_matchups, params, seed)
         teams.append(week_teams)
         games.append(week_games)
-    return pooled_metrics(
-        pd.concat(players, ignore_index=True), pd.concat(teams, ignore_index=True), pd.concat(games, ignore_index=True)
-    )
+    players = pd.concat(players, ignore_index=True)
+    teams = pd.concat(teams, ignore_index=True)
+    games = pd.concat(games, ignore_index=True)
+    return pooled_metrics(players, teams, games), games
 
 
 def score_players(players: pd.DataFrame, params: dict) -> pd.DataFrame:
@@ -263,23 +283,27 @@ def simulate_week(
 def pooled_metrics(players: pd.DataFrame, teams: pd.DataFrame, games: pd.DataFrame) -> dict:
     coverage = player_coverage(players)
     inside = teams["points"].between(teams["p10"], teams["p90"])
-    brier = brier_score(games["p_first"], games["first_points"], games["second_points"])
+    game_errors = brier_errors(games)
     return {
         "player_coverage_80": {name: round(values[80], 4) for name, values in coverage.items()},
         "player_zero_share": {name: round(values["zero_share"], 4) for name, values in coverage.items()},
         "team_coverage_80": round(float(inside.mean()), 4),
         "team_mae": round(float((teams["mean"] - teams["points"]).abs().mean()), 2),
-        "moneyline_brier": round(brier, 4),
+        "moneyline_brier": round(float(game_errors.mean()), 4),
         "player_coverage_50": {name: round(values[50], 4) for name, values in coverage.items()},
         "player_coverage_95": {name: round(values[95], 4) for name, values in coverage.items()},
         "n_player_rows": {name: values["n"] for name, values in coverage.items()},
         "n_team_weeks": len(teams),
-        "n_matchups": len(games),
+        "n_matchups": len(game_errors),
     }
 
 
 def gate_failures(fitted: dict, baseline: dict) -> list[str]:
-    """Why the fitted metrics miss the gate; empty when they pass."""
+    """Why the fitted metrics miss the gate; empty when they pass.
+
+    Over a few dozen games two versions' Brier scores differ by chance alone, so the fit fails on the moneyline only
+    when it does worse than v1 by more than two standard errors of the game-by-game difference.
+    """
     failures = []
     low, high = PLAYER_GATE
     for position in GATED_POSITIONS:
@@ -289,8 +313,10 @@ def gate_failures(fitted: dict, baseline: dict) -> list[str]:
     low, high = TEAM_GATE
     if not low <= fitted["team_coverage_80"] <= high:
         failures.append(f"team 80% coverage {fitted['team_coverage_80']:.3f} is outside [{low:.2f}, {high:.2f}]")
-    if fitted["moneyline_brier"] > baseline["moneyline_brier"]:
+    delta, se = fitted["moneyline_brier_delta"], fitted["moneyline_brier_delta_se"]
+    if delta > 2 * se:
         failures.append(
-            f"moneyline Brier {fitted['moneyline_brier']:.4f} is above v1's {baseline['moneyline_brier']:.4f}"
+            f"moneyline Brier {fitted['moneyline_brier']:.4f} is above v1's {baseline['moneyline_brier']:.4f} "
+            f"by more than two standard errors ({delta:+.4f}, se {se:.4f})"
         )
     return failures

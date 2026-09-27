@@ -9,7 +9,8 @@ from scipy.special import expit
 from pipeline.db import connect
 from pipeline.model.evaluate import (
     COVERAGE_BANDS,
-    brier_score,
+    brier_difference,
+    brier_errors,
     eligible_rows,
     gate_failures,
     leave_one_week_out,
@@ -140,16 +141,37 @@ def test_the_gate_reports_the_share_of_zeros_by_position_then_all():
     assert metrics["player_zero_share"] == {"QB": 0.0, "WR": 0.6667, "ALL": 0.5}
 
 
-def test_brier_score_counts_a_tie_as_half_a_win():
-    p_first = pd.Series([0.8, 0.3, 0.6])
+def test_each_games_brier_error_counts_a_tie_as_half_a_win():
+    games = pd.DataFrame({"p_first": [0.8, 0.3, 0.6], "first_points": [100, 90, 95], "second_points": [90, 100, 95]})
 
-    brier = brier_score(p_first, pd.Series([100, 90, 95]), pd.Series([90, 100, 95]))
-
-    assert brier == pytest.approx((0.2**2 + 0.3**2 + 0.1**2) / 3)
+    assert brier_errors(games).tolist() == pytest.approx([0.2**2, 0.3**2, 0.1**2])
 
 
-def gate_metrics(coverage: dict[str, float], team_coverage: float, brier: float) -> dict:
-    return {"player_coverage_80": coverage, "team_coverage_80": team_coverage, "moneyline_brier": brier}
+def test_the_brier_difference_pairs_each_game_with_the_baseline_forecast_of_it():
+    games = pd.DataFrame({"p_first": [0.6, 0.3, 0.9], "first_points": [100, 90, 120], "second_points": [90, 100, 80]})
+    baseline_games = games.assign(p_first=[0.7, 0.3, 0.5])
+
+    delta, se = brier_difference(games, baseline_games)
+
+    # Game by game the squared errors are 0.16, 0.09 and 0.01 against the baseline's 0.09, 0.09 and 0.25.
+    differences = pd.Series([0.07, 0.0, -0.24])
+    assert delta == pytest.approx(differences.mean())
+    assert se == pytest.approx(differences.std(ddof=1) / np.sqrt(3))
+
+
+CALIBRATED = {"QB": 0.8, "RB": 0.8, "WR": 0.8, "TE": 0.8}
+
+
+def gate_metrics(
+    coverage: dict[str, float], team_coverage: float, brier: float, delta: float = 0.0, se: float = 0.0
+) -> dict:
+    return {
+        "player_coverage_80": coverage,
+        "team_coverage_80": team_coverage,
+        "moneyline_brier": brier,
+        "moneyline_brier_delta": delta,
+        "moneyline_brier_delta_se": se,
+    }
 
 
 def test_the_gate_bounds_are_inclusive_and_kickers_and_defenses_are_not_gated():
@@ -158,17 +180,40 @@ def test_the_gate_bounds_are_inclusive_and_kickers_and_defenses_are_not_gated():
     assert gate_failures(gate_metrics(coverage, 0.72, 0.2365), gate_metrics({}, 0.8, 0.2365)) == []
 
 
+@pytest.mark.parametrize(
+    ("delta", "passed"),
+    [(0.0003, True), (0.0034, True), (0.0035, False)],
+    ids=["well within two standard errors", "at two standard errors", "beyond two standard errors"],
+)
+def test_a_moneyline_worse_than_v1s_fails_the_gate_only_beyond_two_standard_errors(delta, passed):
+    fitted = gate_metrics(CALIBRATED, 0.8, 0.2365 + delta, delta, se=0.0017)
+
+    assert (gate_failures(fitted, gate_metrics({}, 0.8, 0.2365)) == []) == passed
+
+
+def test_a_single_game_has_no_standard_error_so_any_worse_moneyline_fails():
+    games = pd.DataFrame({"p_first": [0.6], "first_points": [110.0], "second_points": [100.0]})
+
+    delta, se = brier_difference(games, games.assign(p_first=0.61))
+
+    assert (delta, se) == pytest.approx((0.4**2 - 0.39**2, 0.0))
+    assert gate_failures(gate_metrics(CALIBRATED, 0.8, 0.16, delta, se), gate_metrics({}, 0.8, 0.1521)) == [
+        "moneyline Brier 0.1600 is above v1's 0.1521 by more than two standard errors (+0.0079, se 0.0000)"
+    ]
+
+
 def test_every_way_of_missing_the_gate_is_named():
     coverage = {"QB": 0.75, "RB": 0.695, "WR": 0.6129, "TE": 0.95}
 
-    failures = gate_failures(gate_metrics(coverage, 0.89, 0.2368), gate_metrics({}, 0.8, 0.2365))
+    fitted = gate_metrics(coverage, 0.89, 0.2400, delta=0.0035, se=0.0017)
+    failures = gate_failures(fitted, gate_metrics({}, 0.8, 0.2365))
 
     assert failures == [
         "RB 80% coverage 0.695 is outside [0.70, 0.90]",
         "WR 80% coverage 0.613 is outside [0.70, 0.90]",
         "TE 80% coverage 0.950 is outside [0.70, 0.90]",
         "team 80% coverage 0.890 is outside [0.72, 0.88]",
-        "moneyline Brier 0.2368 is above v1's 0.2365",
+        "moneyline Brier 0.2400 is above v1's 0.2365 by more than two standard errors (+0.0035, se 0.0017)",
     ]
 
 
