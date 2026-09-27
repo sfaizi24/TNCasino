@@ -84,6 +84,8 @@ WHERE league_id = ?
 """
 
 WEEK_SOURCES = "SELECT DISTINCT source_website FROM projections WHERE season = ? AND week = ? ORDER BY source_website"
+# The weekly steps' tables each later week passes through; the step clears that week's rows from them when it is done.
+SHARED_TABLES = ["projections", "projections_with_sleeper", "player_week_stats"]
 
 
 @dataclass
@@ -117,7 +119,10 @@ def run(ctx: StepContext) -> StepResult:
     current_week = simulated_current_week(ctx, columns)
     n_sims = len(current_week.scores)
     future_weeks = list(range(settings.week + 1, league.playoff_week_start))
-    future, projections, warnings = simulate_future_weeks(ctx, future_weeks, league.slots, teams, columns, n_sims)
+    try:
+        future, projections, warnings = simulate_future_weeks(ctx, future_weeks, league.slots, teams, columns, n_sims)
+    finally:
+        clear_future_weeks(ctx.db("projections"), settings.season, future_weeks)
     weeks = [current_week, *future]
     records = record_to_date(league_conn, settings.league_id, list(columns))
     warnings += standings_warnings(weeks, records, settings.week)
@@ -222,9 +227,8 @@ def simulate_future_weeks(
 
 
 def future_sources(requested: list[str] | None) -> list[ProjectionSource]:
-    """The sources to scrape for later weeks: those that publish them, Sleeper first. As in the scrape step,
-    --sources picks which are scraped and the rest keep the rows they have, but Sleeper, which every week needs, is
-    always scraped."""
+    """The sources to scrape for later weeks: those that publish them, Sleeper first. --sources narrows them, but
+    Sleeper, which every week needs, is always scraped."""
     sources = []
     for name in SOURCE_NAMES:
         if name != "sleeper" and requested is not None and name not in requested:
@@ -266,6 +270,17 @@ def project_week(
         week_stats = stats.run(week_ctx)
         websites = [row["source_website"] for row in conn.execute(WEEK_SOURCES, (settings.season, week))]
     return ProjectedWeek(websites, failures, week_stats.summary["n_players"], warnings + week_stats.warnings)
+
+
+def clear_future_weeks(conn: sqlite3.Connection, season: int, weeks: list[int]) -> None:
+    """Delete the later weeks' rows from the weekly steps' tables: they were made for this run's simulation, and left
+    in place they would pass for the week's own projections. A table not created yet has nothing to delete."""
+    existing = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    week_keys = [(season, week) for week in weeks]
+    with conn:
+        for table in SHARED_TABLES:
+            if table in existing:
+                conn.executemany(f"DELETE FROM {table} WHERE season = ? AND week = ?", week_keys)
 
 
 def pick_starters(

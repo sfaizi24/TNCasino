@@ -12,7 +12,7 @@ from pipeline.settings import Settings
 from pipeline.sources import SOURCE_NAMES
 from pipeline.sources.base import POSITIONS, Projection
 from pipeline.sources.verify import Check, SourceReport
-from pipeline.steps import league, odds, playoffs, scrape, simulate
+from pipeline.steps import clean, league, match, odds, playoffs, scrape, simulate, stats
 
 LEAGUE_ID = "L2026"
 WEEK = 11  # the playoffs start in week 14, so the step projects, picks and simulates weeks 12 and 13 itself
@@ -133,13 +133,13 @@ def sources(monkeypatch, strengths) -> dict[str, FakeSource]:
 
 
 @pytest.fixture(autouse=True)
-def failing(monkeypatch) -> set[str]:
-    """Websites whose rows fail their checks; every other source passes."""
+def failing(monkeypatch) -> set[tuple[str, int]]:
+    """(website, week) pairs whose rows fail their checks; every other scrape passes."""
     failing = set()
 
     def verify_source(rows, week, *references):
         website = rows[0].source
-        status = "fail" if website in failing else "ok"
+        status = "fail" if (website, week) in failing else "ok"
         return SourceReport(website, status, [Check("value_agreement", status, "QB points disagree")], len(rows))
 
     monkeypatch.setattr(scrape, "verify_source", verify_source)
@@ -171,6 +171,13 @@ def write_simulation(settings: Settings, draws: dict[int, np.ndarray]) -> None:
         simulate.record_run(ctx, len(roster_ids), draws_path)
 
 
+def run_weekly_steps(settings: Settings) -> None:
+    """The current week's projections, matches and player stats, as a full run leaves them for the playoffs step."""
+    for step in [scrape, clean, match, stats]:
+        with StepContext(settings, run_id="2026w11-20261117T100000", options={}, step=step.NAME) as ctx:
+            step.run(ctx)
+
+
 def run_playoffs(
     settings: Settings, requested: list[str] | None = None, no_charts: bool = True, run_id: str = RUN_ID
 ) -> StepResult:
@@ -196,6 +203,20 @@ def odds_tables(settings: Settings) -> set[str]:
     tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     conn.close()
     return tables
+
+
+def shared_rows(settings: Settings) -> dict[str, list[dict]]:
+    """Every row of the weekly steps' tables that the playoffs step projects its later weeks through, by table."""
+    conn = connect(settings, "projections")
+    rows = {}
+    for table in playoffs.SHARED_TABLES:
+        rows[table] = [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+    conn.close()
+    return rows
+
+
+def weeks_held(rows_by_table: dict[str, list[dict]]) -> dict[str, list[int]]:
+    return {table: sorted({row["week"] for row in rows}) for table, rows in rows_by_table.items()}
 
 
 def position_probabilities(settings: Settings) -> np.ndarray:
@@ -297,8 +318,33 @@ def test_future_lineups_stay_in_memory(settings):
     assert "team_lineups" not in tables
 
 
+def test_the_later_weeks_projections_last_only_for_the_run(settings):
+    run_weekly_steps(settings)
+    current_week = shared_rows(settings)
+
+    result = run_playoffs(settings)
+
+    assert [week["n_players"] for week in result.summary["projections"]] == [20, 20]
+    after = shared_rows(settings)
+    assert weeks_held(after) == {table: [WEEK] for table in playoffs.SHARED_TABLES}
+    assert after == current_week
+
+
+def test_a_run_that_fails_on_a_later_week_clears_the_weeks_before_it(settings, failing):
+    run_weekly_steps(settings)
+    current_week = shared_rows(settings)
+    failing.add(("sleeper.com", 13))  # after week 12 has been scraped, matched and given player stats
+
+    with pytest.raises(RuntimeError, match="sleeper.com failed its checks for week 13"):
+        run_playoffs(settings)
+
+    after = shared_rows(settings)
+    assert weeks_held(after) == {table: [WEEK] for table in playoffs.SHARED_TABLES}
+    assert after == current_week
+
+
 def test_a_source_failing_its_checks_is_dropped_for_the_week(settings, failing):
-    failing.add("espn.com")
+    failing.update({("espn.com", 12), ("espn.com", 13)})
 
     result = run_playoffs(settings)
 
@@ -307,7 +353,7 @@ def test_a_source_failing_its_checks_is_dropped_for_the_week(settings, failing):
 
 
 def test_sleeper_failing_its_checks_stops_the_step_before_anything_is_priced(settings, failing):
-    failing.add("sleeper.com")
+    failing.add(("sleeper.com", 12))
 
     with pytest.raises(RuntimeError, match="sleeper.com failed its checks for week 12: value_agreement"):
         run_playoffs(settings)
