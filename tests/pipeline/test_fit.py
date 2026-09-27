@@ -449,6 +449,8 @@ def test_the_fit_is_scored_beside_v1_and_written_where_load_params_finds_it(sett
     assert isinstance(gate["passed"], bool)
     assert set(gate["v1"]) == set(gate) - {"passed", "v1", "moneyline_brier_delta", "moneyline_brier_delta_se"}
     assert (gate["n_player_rows"]["ALL"], gate["n_team_weeks"], gate["n_matchups"]) == (4 * 32 * len(TEAM), 8, 4)
+    # Two lineups a week for four weeks, each a starter of T0 or T1 at every position of TEAM.
+    assert gate["n_starter_rows"] == {"QB": 8, "RB": 16, "WR": 24, "TE": 8, "K": 8, "DEF": 8, "ALL": 72}
     fitted_minus_v1 = gate["moneyline_brier"] - gate["v1"]["moneyline_brier"]
     assert gate["moneyline_brier_delta"] == pytest.approx(fitted_minus_v1, abs=2e-4)
     # The data was drawn from the model being fitted, and each week is scored by a fit that never saw it.

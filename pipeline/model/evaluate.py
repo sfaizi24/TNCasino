@@ -226,9 +226,11 @@ def held_out_metrics(
     players, teams, games = [], [], []
     for (season, week), _, test in leave_one_week_out(rows):
         params = folds[(season, week)]
-        players.append(score_players(player_weeks(eligible_rows(test), params["sources"]), params))
-
         week_lineups = lineups[(lineups["season"] == season) & (lineups["week"] == week)]
+        week_players = score_players(player_weeks(eligible_rows(test), params["sources"]), params)
+        started = week_players["sleeper_player_id"].isin(week_lineups["sleeper_player_id"])
+        players.append(week_players.assign(starter=started))
+
         week_matchups = matchups[(matchups["season"] == season) & (matchups["week"] == week)]
         starters = recompute_starters(week_lineups, player_weeks(test, params["sources"]), params)
         week_teams, week_games = simulate_week(starters, week_matchups, params, seed)
@@ -287,18 +289,24 @@ def simulate_week(
 
 
 def pooled_metrics(players: pd.DataFrame, teams: pd.DataFrame, games: pd.DataFrame) -> dict:
+    """The gate's metrics, with the starters, the eligible rows whose player was in one of the week's lineups, also
+    scored on their own: they are the players the odds are built from."""
     coverage = player_coverage(players)
+    starters = player_coverage(players[players["starter"]])
     inside = teams["points"].between(teams["p10"], teams["p90"])
     game_errors = brier_errors(games)
     return {
         "player_coverage_80": {name: round(values[80], 4) for name, values in coverage.items()},
         "player_zero_share": {name: round(values["zero_share"], 4) for name, values in coverage.items()},
+        "starter_coverage_80": {name: round(values[80], 4) for name, values in starters.items()},
+        "starter_zero_share": {name: round(values["zero_share"], 4) for name, values in starters.items()},
         "team_coverage_80": round(float(inside.mean()), 4),
         "team_mae": round(float((teams["mean"] - teams["points"]).abs().mean()), 2),
         "moneyline_brier": round(float(game_errors.mean()), 4),
         "player_coverage_50": {name: round(values[50], 4) for name, values in coverage.items()},
         "player_coverage_95": {name: round(values[95], 4) for name, values in coverage.items()},
         "n_player_rows": {name: values["n"] for name, values in coverage.items()},
+        "n_starter_rows": {name: values["n"] for name, values in starters.items()},
         "n_team_weeks": len(teams),
         "n_matchups": len(game_errors),
     }

@@ -389,6 +389,9 @@ def print_gate(gate: dict) -> None:
         "player_coverage_95",
         "player_zero_share",
         "n_player_rows",
+        "starter_coverage_80",
+        "starter_zero_share",
+        "n_starter_rows",
     ]:
         for position, value in gate[metric].items():
             table.append([metric, position, str(value), str(gate["v1"][metric][position])])

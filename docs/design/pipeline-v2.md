@@ -526,6 +526,14 @@ a calibrated model could not pass. The Brier rule changed because a strict ≤ o
 coin flip: v2's score was 0.0004 above v1's with a standard error of 0.0017. The gate result goes
 in the WP6 and WP6b reports and in `docs/architecture/03`.
 
+Amended 2026-09-27 (v2.1). The gate also scores the starters, the eligible player-weeks whose
+player is in one of the week's `team_lineups`, on their own: `starter_coverage_80`,
+`starter_zero_share` and `n_starter_rows` by position and ALL, in the gate block for both
+versions. The calibrate step records the same three metrics from the stored `player_week_stats`
+rows joined to `team_lineups`. The pass rule stays on the eligible rows. Why: the odds are built
+from the starters alone, so a miss there matters more than one among bench players, but 64 DEF
+starters resolve coverage only to ±0.10, too coarse to decide the gate.
+
 Known v1 findings to fix: player sigma too wide at low mu and too narrow at high mu; source
 disagreement not predictive (so `alpha` carries little information); left tail too thin.
 

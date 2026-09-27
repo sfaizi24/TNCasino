@@ -153,6 +153,7 @@ def test_the_gate_reports_the_share_of_zeros_by_position_then_all():
             "actual": [0.0, -1.5, 3.0, 12.0],
             "u_low": [0.0, 0.0, 0.4, 0.5],
             "u_high": [0.2, 0.2, 0.4, 0.5],
+            "starter": [False, False, True, True],
         }
     )
     teams = pd.DataFrame({"mean": [100.0], "p10": [80.0], "p90": [120.0], "points": [110.0]})
@@ -161,10 +162,32 @@ def test_the_gate_reports_the_share_of_zeros_by_position_then_all():
     metrics = pooled_metrics(players, teams, games)
 
     assert metrics["player_zero_share"] == {"QB": 0.0, "WR": 0.6667, "ALL": 0.5}
+    assert metrics["starter_zero_share"] == {"QB": 0.0, "WR": 0.0, "ALL": 0.0}
+
+
+def test_the_starters_are_scored_again_on_their_own():
+    players = pd.DataFrame(
+        {
+            "position": ["WR", "WR", "WR", "QB"],
+            "actual": [0.0, 9.0, 30.0, 12.0],
+            "u_low": [0.0, 0.5, 0.97, 0.5],
+            "u_high": [0.2, 0.5, 0.97, 0.5],
+            "starter": [False, True, True, False],
+        }
+    )
+    teams = pd.DataFrame({"mean": [100.0], "p10": [80.0], "p90": [120.0], "points": [110.0]})
+    games = pd.DataFrame({"p_first": [0.6], "first_points": [110.0], "second_points": [100.0]})
+
+    metrics = pooled_metrics(players, teams, games)
+
+    # Half of the bench WR's dud interval [0, 0.2] lies inside [0.10, 0.90].
+    assert metrics["player_coverage_80"] == {"QB": 1.0, "WR": 0.5, "ALL": 0.625}
+    assert metrics["starter_coverage_80"] == {"WR": 0.5, "ALL": 0.5}
+    assert metrics["n_starter_rows"] == {"WR": 2, "ALL": 2}
 
 
 def test_a_tie_is_left_out_of_the_brier_score_and_the_games_counted():
-    players = pd.DataFrame({"position": ["WR"], "actual": [10.0], "u_low": [0.5], "u_high": [0.5]})
+    players = pd.DataFrame({"position": ["WR"], "actual": [10.0], "u_low": [0.5], "u_high": [0.5], "starter": [True]})
     teams = pd.DataFrame({"mean": [100.0], "p10": [80.0], "p90": [120.0], "points": [110.0]})
     games = pd.DataFrame({"p_first": [0.8, 0.3, 0.6], "first_points": [100, 90, 95], "second_points": [90, 100, 95]})
 

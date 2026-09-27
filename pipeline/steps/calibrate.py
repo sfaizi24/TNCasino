@@ -1,18 +1,23 @@
 """Season-to-date calibration of the model as it ran; nothing is refitted.
 
 A week is scored once the accuracy step has graded it, which it does only after every game of the week is final.
-Each player distribution stored in player_week_stats is judged against the points the player scored, and each team's
-[p10, p90] and moneyline by the accuracy step's grades in team_accuracy, taken from the week's latest odds run. The
-metrics are recorded at the current week, so calibration_metrics shows how the season-to-date numbers moved from
-week to week.
+Each player distribution stored in player_week_stats is judged against the points the player scored, over every
+eligible player-week and again over the starters alone, the players in the week's team_lineups. Each team's
+[p10, p90] and moneyline are judged by the accuracy step's grades in team_accuracy, taken from the week's latest odds
+run. The metrics are recorded at the current week, so calibration_metrics shows how the season-to-date numbers moved
+from week to week.
 """
 
+import sqlite3
+
+import numpy as np
 import pandas as pd
 
 from pipeline.model import calibration_charts
 from pipeline.model.evaluate import COVERAGE_BANDS, MIN_MU, load_actuals, pit, player_coverage
 from pipeline.model.params import load_params
 from pipeline.runner import StepContext, StepResult, print_table, timestamp, utc_now
+from pipeline.steps.simulate import SLOT_RANK
 from pipeline.steps.stats import POSITION_ORDER
 
 NAME = "calibrate"
@@ -22,7 +27,8 @@ CREATE TABLE IF NOT EXISTS calibration_metrics (
   season INTEGER NOT NULL,
   week INTEGER NOT NULL,
   model_version TEXT NOT NULL,
-  -- by position: player_coverage_50, player_coverage_80, player_coverage_95, player_zero_share, n_player_rows;
+  -- by position: player_coverage_50, player_coverage_80, player_coverage_95, player_zero_share, n_player_rows,
+  -- and for the starters alone starter_coverage_80, starter_zero_share, n_starter_rows;
   -- at ALL only: team_coverage_80, n_team_weeks, moneyline_brier, n_matchups
   metric TEXT NOT NULL,
   position TEXT NOT NULL,
@@ -44,6 +50,7 @@ WHERE season = ? AND week < ? AND week IN (SELECT week FROM player_week_stats WH
 ORDER BY week
 """
 TEAM_GRADES = "SELECT week, covered, win_prob, won FROM team_accuracy WHERE season = ? AND week < ?"
+LINEUP_PLAYERS = "SELECT week, slot, sleeper_player_id FROM team_lineups WHERE season = ?"
 
 
 def run(ctx: StepContext) -> StepResult:
@@ -56,10 +63,16 @@ def run(ctx: StepContext) -> StepResult:
     versions = ", ".join(sorted(players["model_version"].unique()))
     ctx.log(f"weeks {weeks}: distributions stored by {versions}, recorded under {settings.model_version}")
     coverage = player_coverage(players)
-    print_coverage(coverage)
+    starter_coverage = player_coverage(players[players["starter"]])
+    print_coverage(coverage, starter_coverage)
 
     teams = team_grades(ctx, weeks)
-    metrics = {**player_metrics(coverage), **team_metrics(teams), **moneyline_metrics(teams)}
+    metrics = {
+        **player_metrics(coverage),
+        **starter_metrics(starter_coverage),
+        **team_metrics(teams),
+        **moneyline_metrics(teams),
+    }
     save_metrics(ctx, metrics)
 
     weeks_without_curves = sorted(set(weeks) - set(teams.loc[teams["covered"].notna(), "week"]))
@@ -71,7 +84,11 @@ def run(ctx: StepContext) -> StepResult:
     written = []
     if not ctx.options.get("no_charts"):
         chart = calibration_charts.coverage_chart(
-            settings.images_dir, settings.week, summary["player_coverage_80"], summary["team_coverage_80"]
+            settings.images_dir,
+            settings.week,
+            summary["player_coverage_80"],
+            summary["starter_coverage_80"],
+            summary["team_coverage_80"],
         )
         written.append(chart)
     return StepResult(summary=summary, charts=written)
@@ -80,17 +97,20 @@ def run(ctx: StepContext) -> StepResult:
 def completed_weeks(ctx: StepContext) -> list[int]:
     """Weeks before the current one that the accuracy step has graded and whose player distributions are stored."""
     conn = ctx.db("projections")
-    tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     # The accuracy step creates its tables the first time it grades a week.
-    if "prediction_accuracy" not in tables:
+    if "prediction_accuracy" not in table_names(conn):
         return []
     season, week = ctx.settings.season, ctx.settings.week
     return [row["week"] for row in conn.execute(GRADED_WEEKS, (season, week, season))]
 
 
+def table_names(conn: sqlite3.Connection) -> set[str]:
+    return {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+
+
 def score_players(ctx: StepContext, weeks: list[int]) -> pd.DataFrame:
-    """The eligible stored distributions of `weeks` beside the actual points, with each row's PIT interval taken
-    under the dud and floor blocks of the model version that stored it."""
+    """The eligible stored distributions of `weeks` beside the actual points, flagged where the player started,
+    with each row's PIT interval taken under the dud and floor blocks of the model version that stored it."""
     settings = ctx.settings
     stored = pd.read_sql_query(STORED_PLAYERS, ctx.db("projections"), params=(settings.season, settings.week, MIN_MU))
     stored = stored[stored["week"].isin(weeks) & stored["position"].isin(POSITION_ORDER)]
@@ -98,12 +118,26 @@ def score_players(ctx: StepContext, weeks: list[int]) -> pd.DataFrame:
     players = stored.merge(actuals, on=["sleeper_player_id", "week"], how="left")
     # A player without a stats row did not play and scored 0.
     players["actual"] = players["actual"].fillna(0.0)
+    players["starter"] = started(ctx, players)
 
     scored = []
     for version, group in players.groupby("model_version"):
         u_low, u_high = pit(group, load_params(version))
         scored.append(group.assign(u_low=u_low, u_high=u_high))
     return pd.concat(scored, ignore_index=True)
+
+
+def started(ctx: StepContext, players: pd.DataFrame) -> np.ndarray:
+    """Whether each player-week is in one of its week's lineups, at a slot the simulate step fills; none is before the
+    lineups step has run in this data dir."""
+    conn = ctx.db("projections")
+    if "team_lineups" not in table_names(conn):
+        return np.zeros(len(players), dtype=bool)
+    lineups = pd.read_sql_query(LINEUP_PLAYERS, conn, params=(ctx.settings.season,))
+    # Migrated week 10 still holds two retired slots, "RB" and "WR", beside the canonical nine.
+    lineups = lineups[lineups["slot"].isin(list(SLOT_RANK))]
+    starters = pd.MultiIndex.from_frame(lineups[["week", "sleeper_player_id"]])
+    return pd.MultiIndex.from_frame(players[["week", "sleeper_player_id"]]).isin(starters)
 
 
 def team_grades(ctx: StepContext, weeks: list[int]) -> pd.DataFrame:
@@ -121,6 +155,15 @@ def player_metrics(coverage: dict[str, dict]) -> dict[tuple[str, str], float]:
             metrics[(f"player_coverage_{level}", position)] = values[level]
         metrics[("player_zero_share", position)] = values["zero_share"]
         metrics[("n_player_rows", position)] = values["n"]
+    return metrics
+
+
+def starter_metrics(coverage: dict[str, dict]) -> dict[tuple[str, str], float]:
+    metrics = {}
+    for position, values in coverage.items():
+        metrics[("starter_coverage_80", position)] = values[80]
+        metrics[("starter_zero_share", position)] = values["zero_share"]
+        metrics[("n_starter_rows", position)] = values["n"]
     return metrics
 
 
@@ -143,12 +186,19 @@ def moneyline_metrics(teams: pd.DataFrame) -> dict[tuple[str, str], float]:
     return metrics
 
 
-def print_coverage(coverage: dict[str, dict]) -> None:
+def print_coverage(coverage: dict[str, dict], starter_coverage: dict[str, dict]) -> None:
+    headers = ["position", "n", "zeros", *(f"{level}%" for level in COVERAGE_BANDS)]
+    headers += ["starters n", "starters zeros", "starters 80%"]
     rows = []
     for position, values in coverage.items():
         bands = [f"{values[level]:.3f}" for level in COVERAGE_BANDS]
-        rows.append([position, str(values["n"]), f"{values['zero_share']:.3f}", *bands])
-    print_table(["position", "n", "zeros", *(f"{level}%" for level in COVERAGE_BANDS)], rows)
+        starters = starter_coverage.get(position)
+        if starters is None:
+            starter_cells = ["0", "-", "-"]
+        else:
+            starter_cells = [str(starters["n"]), f"{starters['zero_share']:.3f}", f"{starters[80]:.3f}"]
+        rows.append([position, str(values["n"]), f"{values['zero_share']:.3f}", *bands, *starter_cells])
+    print_table(headers, rows)
 
 
 def save_metrics(ctx: StepContext, metrics: dict[tuple[str, str], float]) -> None:
@@ -172,19 +222,21 @@ def save_metrics(ctx: StepContext, metrics: dict[tuple[str, str], float]) -> Non
 def summarise(
     model_version: str, weeks: list[int], weeks_without_curves: list[int], metrics: dict[tuple[str, str], float]
 ) -> dict:
-    player_coverage_80 = {
-        position: round(value, 4) for (metric, position), value in metrics.items() if metric == "player_coverage_80"
-    }
     team_coverage = metrics.get(("team_coverage_80", "ALL"))
     brier = metrics.get(("moneyline_brier", "ALL"))
     return {
         "model_version": model_version,
         "weeks_evaluated": weeks,
         "weeks_without_curves": weeks_without_curves,
-        "player_coverage_80": player_coverage_80,
+        "player_coverage_80": by_position(metrics, "player_coverage_80"),
+        "starter_coverage_80": by_position(metrics, "starter_coverage_80"),
         "team_coverage_80": None if team_coverage is None else round(team_coverage, 4),
         "moneyline_brier": None if brier is None else round(brier, 4),
         "n_player_rows": metrics[("n_player_rows", "ALL")],
         "n_team_weeks": metrics[("n_team_weeks", "ALL")],
         "n_matchups": metrics[("n_matchups", "ALL")],
     }
+
+
+def by_position(metrics: dict[tuple[str, str], float], name: str) -> dict[str, float]:
+    return {position: round(value, 4) for (metric, position), value in metrics.items() if metric == name}

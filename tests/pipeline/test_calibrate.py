@@ -13,6 +13,7 @@ from pipeline.runner import StepContext, StepResult
 from pipeline.settings import Settings
 from pipeline.steps import accuracy, calibrate
 from pipeline.steps.league import MIRROR_TABLES
+from pipeline.steps.lineups import LINEUP_TABLES
 from pipeline.steps.stats import PLAYER_WEEK_STATS_DDL
 
 LEAGUE_ID = "L2026"
@@ -78,6 +79,26 @@ def write_team_grades(settings: Settings, week: int, teams: list[tuple]) -> None
         computed_at=COMPUTED_AT,
     )
     write_grades(settings, "team_accuracy", grades)
+
+
+def write_lineups(settings: Settings, rows: list[tuple]) -> None:
+    """Lineup slots as (week, roster id, slot, player id, position), in team_lineups as the lineups step creates it."""
+    lineups = pd.DataFrame(rows, columns=["week", "roster_id", "slot", "sleeper_player_id", "position"])
+    lineups = lineups.assign(
+        season=settings.season,
+        team_name=lineups["roster_id"].map("Team {}".format),
+        owner=lineups["roster_id"].map("owner{}".format),
+        record="0-0",
+        player_name=lineups["sleeper_player_id"],
+        mu=10.0,
+        sigma=4.0,
+        var=16.0,
+        n_sources=4,
+        timestamp=COMPUTED_AT,
+    )
+    with closing(connect(settings, "projections")) as conn:
+        conn.executescript(LINEUP_TABLES)
+        lineups.to_sql("team_lineups", conn, if_exists="append", index=False)
 
 
 def run_calibrate(settings: Settings, charts: bool = False) -> StepResult:
@@ -155,6 +176,8 @@ def test_player_coverage_scores_each_stored_distribution_against_the_actual_poin
         "weeks_evaluated": [1, 2],
         "weeks_without_curves": [1, 2],
         "player_coverage_80": {"QB": 1.0, "WR": 0.6667, "ALL": 0.75},
+        # The lineups step has not run in this data dir, so no one started.
+        "starter_coverage_80": {},
         "team_coverage_80": None,
         "moneyline_brier": None,
         "n_player_rows": 4,
@@ -173,6 +196,55 @@ def test_player_coverage_scores_each_stored_distribution_against_the_actual_poin
         for level in COVERAGE_BANDS:
             expected[(f"player_coverage_{level}", position)] = coverage
     assert stored_metrics(settings) == pytest.approx(expected)
+
+
+def test_the_starters_are_the_players_in_their_weeks_lineups(settings, capsys):
+    write_players(
+        settings,
+        [
+            (1, "qb", "QB", 20.0, 7.0),
+            (1, "wr1", "WR", 10.0, 5.0),
+            (1, "wr2", "WR", 8.0, 4.0),  # no stats row: did not play, scored 0
+            (2, "qb", "QB", 20.0, 7.0),
+            (2, "wr1", "WR", 12.0, 5.0),
+        ],
+    )
+    write_actuals(
+        settings,
+        [(1, "qb", median(20.0, 7.0)), (1, "wr1", median(10.0, 5.0)), (2, "qb", 60.0), (2, "wr1", median(12.0, 5.0))],
+    )
+    grade_weeks(settings, [1, 2])
+    write_lineups(
+        settings,
+        [
+            (1, 1, "QB", "qb", "QB"),
+            (1, 1, "FLEX", "wr2", "WR"),
+            (1, 2, "WR1", None, "WR"),  # an unresolved hole
+            # Migrated week 10 keeps two retired slots beside the nine the simulate step fills.
+            (2, 1, "WR", "wr1", "WR"),
+        ],
+    )
+
+    summary = run_calibrate(settings).summary
+
+    assert summary["player_coverage_80"] == {"QB": 0.5, "WR": 0.6667, "ALL": 0.6}
+    assert summary["starter_coverage_80"] == {"QB": 1.0, "WR": 0.0, "ALL": 0.5}
+    starters = {key: value for key, value in stored_metrics(settings).items() if "starter" in key[0]}
+    assert starters == {
+        ("starter_coverage_80", "QB"): 1.0,
+        ("starter_coverage_80", "WR"): 0.0,
+        ("starter_coverage_80", "ALL"): 0.5,
+        ("starter_zero_share", "QB"): 0.0,
+        ("starter_zero_share", "WR"): 1.0,
+        ("starter_zero_share", "ALL"): 0.5,
+        ("n_starter_rows", "QB"): 1,
+        ("n_starter_rows", "WR"): 1,
+        ("n_starter_rows", "ALL"): 2,
+    }
+    printed = capsys.readouterr().out
+    assert "starters n  starters zeros  starters 80%" in printed
+    all_row = next(line for line in printed.splitlines() if line.startswith("ALL"))
+    assert all_row.split() == ["ALL", "5", "0.200", "0.600", "0.600", "0.600", "2", "0.500", "0.500"]
 
 
 def test_rerunning_a_week_replaces_its_metrics_and_leaves_other_weeks_alone(settings):
@@ -237,9 +309,10 @@ def test_each_distribution_is_scored_under_the_version_that_stored_it(settings, 
 
 
 def test_the_chart_is_drawn_unless_disabled(settings):
-    write_players(settings, [(1, "qb", "QB", 20.0, 7.0)])
-    write_actuals(settings, [(1, "qb", 20.0)])
+    write_players(settings, [(1, "qb", "QB", 20.0, 7.0), (1, "wr", "WR", 10.0, 5.0)])
+    write_actuals(settings, [(1, "qb", 20.0), (1, "wr", 10.0)])
     grade_weeks(settings, [1])
+    write_lineups(settings, [(1, 1, "QB", "qb", "QB")])
 
     assert run_calibrate(settings).charts == []
     assert not settings.images_dir.exists()
