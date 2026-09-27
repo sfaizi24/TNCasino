@@ -55,6 +55,7 @@ def load_settings(week: int | None = None, season: int | None = None) -> Setting
         week=week,
         league_id=os.environ.get("PIPELINE_LEAGUE_ID") or discover_league_id(season),
         model_version=os.environ.get("PIPELINE_MODEL_VERSION") or DEFAULT_MODEL_VERSION,
+        data_dir=Path(os.environ.get("PIPELINE_DATA_DIR") or DATA_DIR),
         sleeper_username=os.environ.get("SLEEPER_USERNAME", ""),
     )
 

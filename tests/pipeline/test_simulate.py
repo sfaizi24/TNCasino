@@ -19,6 +19,14 @@ LINEUP = [
     ("WR1", "WR", "BUF", 12.0, 10.0),
     ("K", "K", "BUF", 8.0, 4.0),
 ]
+ROSTER_POSITIONS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF", "BN"]
+LEAGUE_SETTINGS = {
+    "playoff_week_start": 15,
+    "playoff_teams": 6,
+    "waiver_type": 2,
+    "waiver_budget": 250,
+    "num_teams": 12,
+}
 
 
 @pytest.fixture
@@ -26,18 +34,14 @@ def settings(tmp_path):
     return Settings(season=2026, week=4, league_id="L2026", n_sims=2000, data_dir=tmp_path)
 
 
-@pytest.fixture(autouse=True)
-def v1_params(monkeypatch):
-    params = json.loads((FIXTURES / "v1.json").read_text())
-    monkeypatch.setattr(simulate, "load_params", lambda version: params)
-
-
 def write_league(settings: Settings, matchups: list[tuple[int, int | None]] = ()) -> None:
     conn = connect(settings, "league")
-    conn.execute("CREATE TABLE leagues (league_id TEXT PRIMARY KEY, settings TEXT)")
     conn.execute(
-        "INSERT INTO leagues VALUES (?, ?)",
-        (settings.league_id, json.dumps({"playoff_week_start": 15, "playoff_teams": 6})),
+        "CREATE TABLE leagues (league_id TEXT PRIMARY KEY, roster_positions TEXT, settings TEXT, previous_league_id TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO leagues VALUES (?, ?, ?, ?)",
+        (settings.league_id, json.dumps(ROSTER_POSITIONS), json.dumps(LEAGUE_SETTINGS), None),
     )
     conn.execute("CREATE TABLE matchups (league_id TEXT, week INTEGER, roster_id INTEGER, matchup_id_number INTEGER)")
     conn.executemany(

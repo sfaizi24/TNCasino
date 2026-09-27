@@ -74,7 +74,7 @@ def fit_model_command(args: argparse.Namespace) -> int:
     # Imported on use, like the legacy migration below, so the weekly commands never depend on them.
     from pipeline.model.fit import fit_and_write
 
-    fit_and_write(load_settings(), args.season, args.weeks, args.out)
+    fit_and_write(load_settings(), args.season, args.weeks, args.out, args.exclude_sources)
     return 0
 
 
@@ -91,6 +91,10 @@ def source_list(value: str) -> list[str]:
     if unknown:
         raise argparse.ArgumentTypeError(f"unknown sources {unknown}; choose from {', '.join(SOURCE_NAMES)}")
     return names
+
+
+def website_list(value: str) -> list[str]:
+    return [website.strip() for website in value.split(",") if website.strip()]
 
 
 def week_range(value: str) -> list[int]:
@@ -135,6 +139,12 @@ def build_parser() -> argparse.ArgumentParser:
     fit_model.add_argument("--season", type=int, required=True)
     fit_model.add_argument("--weeks", type=week_range, required=True, help="a week or a range, e.g. 10-16")
     fit_model.add_argument("--out", required=True, help="parameter version to write, e.g. v2")
+    fit_model.add_argument(
+        "--exclude-sources",
+        type=website_list,
+        default=[],
+        help="comma-separated source websites to leave out of the fit, e.g. fantasypros.com",
+    )
     fit_model.set_defaults(handler=fit_model_command)
 
     migrate_legacy = commands.add_parser(

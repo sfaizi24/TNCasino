@@ -1,20 +1,19 @@
 """Simulate every starting lineup's weekly total n_sims times and save the draws to Parquet for the odds step."""
 
-import json
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from pipeline.model.params import load_params
 from pipeline.model.sampling import simulate_teams
 from pipeline.runner import StepContext, StepResult, timestamp, utc_now
 from pipeline.settings import Settings
+from pipeline.steps.league import load_league_settings
 
 NAME = "simulate"
 
 SLOT_RANK = {slot: rank for rank, slot in enumerate(["QB", "RB1", "RB2", "WR1", "WR2", "TE", "FLEX", "K", "DEF"])}
-PARAMS_DIR = Path(__file__).resolve().parent.parent / "model" / "params"
 
 SIMULATION_RUNS_DDL = """
 CREATE TABLE IF NOT EXISTS simulation_runs (
@@ -68,7 +67,8 @@ def load_starters(ctx: StepContext) -> pd.DataFrame:
         ctx.db("projections"),
         params=(settings.season, settings.week),
     )
-    if settings.week >= playoff_week_start(ctx):
+    league = load_league_settings(ctx.db("league"), settings.league_id)
+    if settings.week >= league.playoff_week_start:
         starters = starters[starters["roster_id"].isin(playoff_roster_ids(ctx))]
     if starters.empty:
         raise LookupError(
@@ -80,11 +80,6 @@ def load_starters(ctx: StepContext) -> pd.DataFrame:
     return starters.sort_values(["roster_id", "slot_rank"], ignore_index=True)
 
 
-def playoff_week_start(ctx: StepContext) -> int:
-    row = ctx.db("league").execute("SELECT settings FROM leagues WHERE league_id = ?", (ctx.settings.league_id,))
-    return json.loads(row.fetchone()["settings"])["playoff_week_start"]
-
-
 def playoff_roster_ids(ctx: StepContext) -> list[int]:
     """Rosters with a game this playoff week; Sleeper leaves matchup_id empty for teams without one."""
     rows = ctx.db("league").execute(
@@ -92,11 +87,6 @@ def playoff_roster_ids(ctx: StepContext) -> list[int]:
         (ctx.settings.league_id, ctx.settings.week),
     )
     return [row["roster_id"] for row in rows]
-
-
-def load_params(version: str) -> dict:
-    with open(PARAMS_DIR / f"{version}.json") as file:
-        return json.load(file)
 
 
 def save_draws(settings: Settings, run_id: str, draws: np.ndarray, roster_ids: list[int]) -> str:

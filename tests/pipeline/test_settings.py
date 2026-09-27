@@ -24,7 +24,14 @@ def unexpected_request(path):
 
 @pytest.fixture(autouse=True)
 def offline_environment(monkeypatch):
-    for name in ["PIPELINE_SEASON", "PIPELINE_LEAGUE_ID", "PIPELINE_MODEL_VERSION", "LEAGUE_ID", "SLEEPER_USERNAME"]:
+    for name in [
+        "PIPELINE_SEASON",
+        "PIPELINE_LEAGUE_ID",
+        "PIPELINE_MODEL_VERSION",
+        "PIPELINE_DATA_DIR",
+        "LEAGUE_ID",
+        "SLEEPER_USERNAME",
+    ]:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(settings_module, "load_dotenv", lambda path: None)
     monkeypatch.setattr(settings_module, "sleeper_get", unexpected_request)
@@ -61,6 +68,16 @@ def test_env_overrides_skip_discovery(monkeypatch):
     assert settings.week == 4
     assert settings.league_id == "L2026"
     assert settings.model_version == "v2"
+
+
+def test_data_dir_env_moves_every_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("PIPELINE_LEAGUE_ID", "L2026")
+    monkeypatch.setenv("PIPELINE_DATA_DIR", str(tmp_path))
+
+    settings = load_settings(week=4, season=2026)
+
+    assert settings.data_dir == tmp_path
+    assert settings.db_paths["odds"] == tmp_path / "databases" / "odds.db"
 
 
 def test_season_flag_takes_precedence_over_env(monkeypatch):

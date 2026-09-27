@@ -246,7 +246,28 @@ def test_fit_model_passes_the_season_weeks_and_version(monkeypatch, settings):
     )
 
     assert cli.main(["fit-model", "--season", "2025", "--weeks", "10-16", "--out", "v2"]) == 0
-    assert calls == [(settings, 2025, [10, 11, 12, 13, 14, 15, 16], "v2")]
+    assert calls == [(settings, 2025, [10, 11, 12, 13, 14, 15, 16], "v2", [])]
+
+
+def test_fit_model_passes_the_excluded_sources(monkeypatch, settings):
+    calls = []
+    monkeypatch.setitem(
+        sys.modules, "pipeline.model.fit", SimpleNamespace(fit_and_write=lambda *args: calls.append(args))
+    )
+
+    argv = [
+        "fit-model",
+        "--season",
+        "2025",
+        "--weeks",
+        "12",
+        "--out",
+        "v2",
+        "--exclude-sources",
+        "fantasypros.com, fanduel.com",
+    ]
+    assert cli.main(argv) == 0
+    assert calls == [(settings, 2025, [12], "v2", ["fantasypros.com", "fanduel.com"])]
 
 
 @pytest.mark.parametrize(("value", "weeks"), [("12", [12]), ("10-12", [10, 11, 12]), ("7-7", [7])])

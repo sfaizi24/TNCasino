@@ -1,9 +1,0 @@
-{
-  "version": "v1",
-  "fitted_on": null,
-  "sources": {"sleeper.com": {"weight": 1.0, "bias": 0.0}},
-  "sigma": {"formula": "v1", "alpha": 2.0, "beta": 1.0,
-            "pos_sigma": {"QB": 7, "RB": 9, "WR": 10, "TE": 8, "K": 4, "DEF": 7}, "default_pos_sigma": 8.0},
-  "dud": null,
-  "correlation": null
-}
