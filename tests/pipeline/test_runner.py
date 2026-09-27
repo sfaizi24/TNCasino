@@ -13,6 +13,7 @@ from pipeline import runner
 from pipeline.db import connect, ensure_run_tables
 from pipeline.runner import (
     StepContext,
+    StepFailed,
     StepResult,
     delete_source_projections,
     latest_step_rows,
@@ -137,6 +138,21 @@ def test_a_failed_step_stops_the_run(monkeypatch, settings):
     assert "RuntimeError: boom" in rows["scrape"]["error"]
     assert rows["scrape"]["summary"] is None
     assert run_row(settings, outcome.run_id)["error"] == "scrape: RuntimeError: boom"
+
+
+def test_a_step_may_fail_with_its_summary_on_record(monkeypatch, settings):
+    def validate(ctx):
+        raise StepFailed("2 of 3 checks failed", summary={"checks": [{"name": "owners", "status": "fail"}]})
+
+    install_steps(monkeypatch, {"validate": validate})
+
+    outcome = run_steps(settings, ["validate"], {})
+
+    assert outcome.status == "failed"
+    row = step_rows(settings)["validate"]
+    assert row["error"] == "2 of 3 checks failed"
+    assert json.loads(row["summary"]) == {"checks": [{"name": "owners", "status": "fail"}]}
+    assert run_row(settings, outcome.run_id)["error"] == "validate: 2 of 3 checks failed"
 
 
 def test_a_summary_that_is_not_json_fails_the_step(monkeypatch, settings):

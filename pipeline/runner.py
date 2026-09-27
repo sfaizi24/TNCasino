@@ -47,6 +47,14 @@ class StepResult:
     charts: list[str] = field(default_factory=list)
 
 
+class StepFailed(Exception):
+    """Raised by a step that finished its checks and must stop the run, keeping its summary on record."""
+
+    def __init__(self, message: str, summary: dict | None = None):
+        super().__init__(message)
+        self.summary = summary or {}
+
+
 @dataclass
 class StepOutcome:
     step: str
@@ -116,6 +124,11 @@ def run_step(conn: sqlite3.Connection, settings: Settings, run_id: str, name: st
         warnings = result.warnings
         charts = result.charts
         status = "warn" if warnings else "ok"
+    except StepFailed as failed:
+        summary = json.dumps(failed.summary)
+        error = str(failed)
+        status = "failed"
+        print(f"ERROR: {error}", file=sys.stderr)
     except Exception:
         error = traceback.format_exc()
         status = "failed"
