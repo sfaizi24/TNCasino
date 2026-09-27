@@ -145,16 +145,17 @@ def band_coverage(u_low: np.ndarray, u_high: np.ndarray, low: float, high: float
 
 
 def brier_errors(games: pd.DataFrame) -> pd.Series:
-    """Each game's squared error of the chance that the first team wins against the result, a tie counting as half
-    a win. The mean over games is the Brier score."""
-    first, second = games["first_points"], games["second_points"]
-    first_won = (first > second) + 0.5 * (first == second)
-    return (games["p_first"] - first_won) ** 2
+    """Each decided game's squared error of the chance that the first team wins against the result, indexed as in
+    `games`; the mean is the Brier score. A tie has no winner and is left out, as the accuracy step leaves it out."""
+    decided = games[games["first_points"] != games["second_points"]]
+    first_won = (decided["first_points"] > decided["second_points"]).astype(float)
+    return (decided["p_first"] - first_won) ** 2
 
 
 def brier_difference(games: pd.DataFrame, baseline_games: pd.DataFrame) -> tuple[float, float]:
     """The mean, game by game, of how much worse the forecasts in `games` did than the baseline's forecasts of the
-    same games, and its standard error."""
+    same games, and its standard error. Both frames hold the same games in the same order, so the same ties drop
+    out of each and the squared errors pair up by index."""
     assert len(games) == len(baseline_games), "both versions must be scored on the same games"
     differences = brier_errors(games) - brier_errors(baseline_games)
     if len(differences) < 2:

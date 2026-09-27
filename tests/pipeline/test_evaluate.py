@@ -141,19 +141,27 @@ def test_the_gate_reports_the_share_of_zeros_by_position_then_all():
     assert metrics["player_zero_share"] == {"QB": 0.0, "WR": 0.6667, "ALL": 0.5}
 
 
-def test_each_games_brier_error_counts_a_tie_as_half_a_win():
+def test_a_tie_is_left_out_of_the_brier_score_and_the_games_counted():
+    players = pd.DataFrame({"position": ["WR"], "actual": [10.0], "u_low": [0.5], "u_high": [0.5]})
+    teams = pd.DataFrame({"mean": [100.0], "p10": [80.0], "p90": [120.0], "points": [110.0]})
     games = pd.DataFrame({"p_first": [0.8, 0.3, 0.6], "first_points": [100, 90, 95], "second_points": [90, 100, 95]})
 
-    assert brier_errors(games).tolist() == pytest.approx([0.2**2, 0.3**2, 0.1**2])
+    metrics = pooled_metrics(players, teams, games)
+
+    assert brier_errors(games).to_dict() == pytest.approx({0: 0.2**2, 1: 0.3**2})
+    assert (metrics["moneyline_brier"], metrics["n_matchups"]) == (0.065, 2)
 
 
-def test_the_brier_difference_pairs_each_game_with_the_baseline_forecast_of_it():
-    games = pd.DataFrame({"p_first": [0.6, 0.3, 0.9], "first_points": [100, 90, 120], "second_points": [90, 100, 80]})
-    baseline_games = games.assign(p_first=[0.7, 0.3, 0.5])
+def test_the_brier_difference_pairs_each_decided_game_with_the_baseline_forecast_of_it():
+    games = pd.DataFrame(
+        {"p_first": [0.6, 0.5, 0.3, 0.9], "first_points": [100, 95, 90, 120], "second_points": [90, 95, 100, 80]}
+    )
+    baseline_games = games.assign(p_first=[0.7, 0.2, 0.3, 0.5])
 
     delta, se = brier_difference(games, baseline_games)
 
-    # Game by game the squared errors are 0.16, 0.09 and 0.01 against the baseline's 0.09, 0.09 and 0.25.
+    # The second game is a tie. Of the others the squared errors are 0.16, 0.09 and 0.01 against the baseline's
+    # 0.09, 0.09 and 0.25.
     differences = pd.Series([0.07, 0.0, -0.24])
     assert delta == pytest.approx(differences.mean())
     assert se == pytest.approx(differences.std(ddof=1) / np.sqrt(3))
