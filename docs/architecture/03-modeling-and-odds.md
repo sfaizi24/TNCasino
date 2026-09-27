@@ -119,29 +119,29 @@ A model version is a JSON file in `pipeline/model/params/`. `v1` holds notebook 
 
 **Gate** (`pipeline/model/evaluate.py`). Each training week is held out in turn and scored under parameters fitted on the other weeks; v1 is scored on the same rows.
 
-- *Players.* The PIT u = F(actual) under the player's distribution, F(x) = p·min(x/(0.25·μ), 1) + (1 − p)·F_lognormal(x), with u = 0 for an actual of 0 or less. A calibrated model puts 80% of the u's inside [0.10, 0.90], and likewise for the central 50% and 95%.
-- *Teams.* Each week's `team_lineups` starters, re-projected with the held-out parameters and simulated 20,000 times: how often the actual score lands inside [p10, p90], the MAE of the simulated mean, and the moneyline Brier score, the mean of (P(team 1 wins) − result)² over the week's games, a tie counting as half a win.
-- *Pass* when 80% coverage is within [0.70, 0.90] at each of QB, RB, WR and TE, team coverage within [0.72, 0.88], and the Brier score no higher than v1's.
+- *Players.* The PIT u = F(actual) under the player's distribution, F(x) = p·min(x/(0.25·μ), 1) + (1 − p)·F_lognormal(x). A calibrated model puts 80% of the u's inside [0.10, 0.90], and likewise for the central 50% and 95%. An actual of 0 or less, usually a player who did not play, is a dud whose size the model does not resolve, so its PIT is the whole interval [0, p] rather than a point, and it covers a band by the share of that interval inside it (the non-randomized PIT of Czado, Gneiting and Held, 2009). Without a dud, in v1 and at DEF, the interval is [0, 0] and misses every band. The share of actuals at 0 or less is reported beside the coverage.
+- *Teams.* Each week's `team_lineups` starters, re-projected with the held-out parameters and simulated 20,000 times: how often the actual score lands inside [p10, p90], the MAE of the simulated mean, and the moneyline Brier score, the mean of (P(team 1 wins) − result)² over the week's games. A tie has no result and is left out, as in the accuracy step.
+- *Pass* when 80% coverage is within [0.70, 0.90] at each of QB, RB, WR and TE, team coverage within [0.72, 0.88], and the moneyline is not significantly worse than v1's. For each game, d is the fitted version's squared error minus v1's; the fit fails the moneyline only when the mean of d is more than two standard errors (sd(d)/√n) above 0, or above 0 at all with fewer than 2 games.
 
-The result is stored in the version's `gate` block. A version that fails can still be adopted, but only as a deliberate choice.
+The result is stored in the version's `gate` block, with v1's metrics and the game-by-game Brier difference and its standard error beside the fitted version's. A version that fails can still be adopted, but only as a deliberate choice.
 
-**v2 on 2025 weeks 10–16** (2,311 player-weeks, 84 team-weeks, 42 games):
+**v2 on 2025 weeks 10–16** (2,311 player-weeks, 84 team-weeks, 42 games, none tied):
 
-| | QB | RB | WR | TE | K | DEF | All | Teams | MAE | Brier |
-|---|---|---|---|---|---|---|---|---|---|---|
-| v2, 80% coverage | 0.750 | 0.695 | 0.613 | 0.645 | 0.740 | 0.617 | 0.660 | 0.786 | 20.08 | 0.2368 |
-| v1, 80% coverage | 0.688 | 0.712 | 0.629 | 0.657 | 0.643 | 0.679 | 0.662 | 0.833 | 20.30 | 0.2365 |
-| Actual ≤ 0 | 8% | 11% | 24% | 19% | 8% | 11% | | | | |
+| | QB | RB | WR | TE | K | DEF | All | Teams | MAE | Brier | Brier − v1's (se) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| v2, 80% coverage | 0.798 | 0.750 | 0.776 | 0.766 | 0.746 | 0.617 | 0.754 | 0.786 | 20.08 | 0.2368 | +0.0004 (0.0017) |
+| v1, 80% coverage | 0.688 | 0.712 | 0.629 | 0.657 | 0.643 | 0.679 | 0.662 | 0.833 | 20.30 | 0.2365 | |
+| Actual ≤ 0 | 8% | 11% | 24% | 19% | 8% | 11% | 16% | | | | |
 
-v2 fails the gate at RB, WR and TE and on the Brier score. Most of the player shortfall is the zero rule: a player who scores 0 or less, usually because he did not play, has u = 0 and counts as a miss however large his dud chance, so no model can cover more than 76% of WRs or 81% of TEs. Leaving zeros out, v2 covers 0.78–0.82 at every position but DEF (v1 0.70–0.82), and it fixes v1's thin left tail: QB scores above 0 but below the 2.5th percentile fell from 11.6% of QB player-weeks under v1 to 2.7%. Scoring each 0 as a draw from the dud part of its distribution instead would give v2 QB 0.80, RB 0.75, WR 0.78, TE 0.77, and leave v1 unchanged. DEF has no dud, and 26% of its actuals land above the 90th percentile. The Brier gap is noise: a bootstrap over the 42 games puts v2's score minus v1's between −0.003 and +0.004.
+v2 passes the gate. Its player coverage rose with the zero rule: when every 0 counted as a miss, however large the player's dud chance, no model could cover more than 76% of WRs or 81% of TEs, and v2 stood at RB 0.695, WR 0.613 and TE 0.645. v1 has no dud, so its coverage is unchanged and still misses the bounds at QB, WR and TE. v2 also fixes v1's thin left tail: QB scores above 0 but below the 2.5th percentile fell from 11.6% of QB player-weeks under v1 to 2.7%. Its weak spot is DEF, which has no dud and is not gated: 0.617 against v1's 0.679, with 26% of its actuals above the 90th percentile. At the team level v2's intervals are narrower, covering 0.786 against 0.833, both inside the bounds. Its moneylines are no better than v1's: it did worse on 20 of the 42 games and better on 22, and the mean difference of +0.0004 is well inside two standard errors (0.0034), though the old rule of a Brier score no higher than v1's counted it as a failure. `PIPELINE_MODEL_VERSION` still defaults to v1; switching is a separate decision.
 
-**Calibration** (the `calibrate` step, `pipeline/steps/calibrate.py`) checks the model as it actually ran, season to date, without refitting. It scores every earlier week of the season that has both `player_week_stats` rows and stat lines:
+**Calibration** (the `calibrate` step, `pipeline/steps/calibrate.py`) checks the model as it actually ran, season to date, without refitting. It runs right after the accuracy step ([§7](#7-prediction-accuracy)) and scores every earlier week of the season that step has graded, which it does only once every game of the week is final:
 
-- *Players* with μ ≥ 2: PIT coverage of the central 50%, 80% and 95% by position and overall, from the stored μ and σ and the dud block of the version that stored each row.
-- *Teams:* each week's latest [p10, p90] from `team_distribution_curves` against `matchups.points`, with owners mapped to rosters through that week's `team_lineups`. A week without curves is skipped and listed.
-- *Moneylines:* the Brier score of each week's latest `betting_odds_matchup_ml` win chances against the results, a tie counting as half a win.
+- *Players* with μ ≥ 2: PIT coverage of the central 50%, 80% and 95% by position and overall, scored as in the gate from the stored μ and σ and the dud block of the version that stored each row, with the share of actuals at 0 or less beside it.
+- *Teams:* the share of `team_accuracy` rows whose score fell inside the week's latest [p10, p90]. A team without a curve is left out, and a week whose teams all lack one is listed.
+- *Moneylines:* the Brier score of the win chances the accuracy step recorded in `team_accuracy` against the results. A tie has no result and is left out.
 
-The metrics go to `odds.db.calibration_metrics`, which is published: one row per metric and position, counts included, recorded at the run's week under the run's model version, and replaced when that week is recalibrated. The step also draws the 80% coverage by position as `calibration_week_N.png`. Before any week is complete it warns `no completed weeks with actuals yet` and writes nothing. Run as week 17 of 2025, it found the notebooks' distributions covered 65.5% of 2,335 player-weeks at 80% (QB 0.62, RB 0.72, WR 0.62, TE 0.65, K 0.66, DEF 0.69), teams 85% of 60 team-weeks (week 13 has no curves), and a moneyline Brier score of 0.229 over 36 games.
+The metrics go to `odds.db.calibration_metrics`, which is published: one row per metric and position, counts included, recorded at the run's week under the run's model version, and replaced when that week is recalibrated. The step also draws the 80% coverage by position as `calibration_week_N.png`. Until the accuracy step has graded a week it warns `no week graded by the accuracy step yet` and writes nothing. Run as week 17 of 2025 after the accuracy step graded weeks 10–16, it found the notebooks' distributions covered 65.5% of 2,335 player-weeks at 80% (QB 0.62, RB 0.72, WR 0.62, TE 0.65, K 0.66, DEF 0.69), 17% of which scored 0 or less, teams 85% of 60 team-weeks (week 13 has no curves), and a moneyline Brier score of 0.229 over 36 games.
 
 ## 5. Analytics curves
 

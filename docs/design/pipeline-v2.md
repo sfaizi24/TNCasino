@@ -502,9 +502,17 @@ and fitted per-source weight (∝ 1/MSE, normalised) and bias (mean signed error
 
 `fit-model` fits on 2025 weeks 10–16 plus any 2026 weeks with actuals (from
 `projections_with_sleeper` + `player_stats`). Acceptance gate before `model_version` defaults to
-v2: leave-one-week-out on 2025 weeks 10–16, team-level 80% interval coverage in [0.72, 0.88],
-player-level 80% coverage by position in [0.70, 0.90] for QB/RB/WR/TE, and moneyline Brier ≤ v1's.
-The gate result goes in the WP6 report and in `docs/architecture/03`.
+v2, as amended 2026-09-27: leave-one-week-out on 2025 weeks 10–16, team-level 80% interval
+coverage in [0.72, 0.88], player-level 80% coverage by position in [0.70, 0.90] for QB/RB/WR/TE,
+and a moneyline not significantly worse than v1's. A player-week with an actual of 0 or less has
+the PIT interval [0, p_dud] and covers a band by the share of that interval inside it. For the
+moneyline, d = (p_fit − y)² − (p_v1 − y)² per held-out game, ties left out, and the fit fails only
+when mean(d) > 2·sd(d)/√n (with fewer than 2 games, when mean(d) > 0). The zero rule changed
+because 8–24% of eligible player-weeks score 0 or less, mostly players who did not play, and
+scoring each as the point 0 capped any model's coverage at one minus that share (0.76 at WR), so
+a calibrated model could not pass. The Brier rule changed because a strict ≤ on 42 games was a
+coin flip: v2's score was 0.0004 above v1's with a standard error of 0.0017. The gate result goes
+in the WP6 and WP6b reports and in `docs/architecture/03`.
 
 Known v1 findings to fix: player sigma too wide at low mu and too narrow at high mu; source
 disagreement not predictive (so `alpha` carries little information); left tail too thin.

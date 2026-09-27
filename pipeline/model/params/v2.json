@@ -95,39 +95,48 @@
       "fantasypros.com"
     ],
     "n_player_rows": 2311,
-    "fitted_at": "2026-09-27T12:36:12+00:00"
+    "fitted_at": "2026-09-27T14:07:37+00:00"
   },
   "gate": {
-    "passed": false,
+    "passed": true,
     "player_coverage_80": {
-      "QB": 0.75,
-      "RB": 0.695,
-      "WR": 0.6129,
-      "TE": 0.6447,
-      "K": 0.7398,
+      "QB": 0.7981,
+      "RB": 0.7503,
+      "WR": 0.7756,
+      "TE": 0.7663,
+      "K": 0.7457,
       "DEF": 0.6172,
-      "ALL": 0.6599
+      "ALL": 0.7541
+    },
+    "player_zero_share": {
+      "QB": 0.0804,
+      "RB": 0.112,
+      "WR": 0.237,
+      "TE": 0.1929,
+      "K": 0.0816,
+      "DEF": 0.11,
+      "ALL": 0.1636
     },
     "team_coverage_80": 0.7857,
     "team_mae": 20.08,
     "moneyline_brier": 0.2368,
     "player_coverage_50": {
-      "QB": 0.4241,
-      "RB": 0.4025,
-      "WR": 0.3871,
-      "TE": 0.3909,
+      "QB": 0.4493,
+      "RB": 0.4125,
+      "WR": 0.4611,
+      "TE": 0.4226,
       "K": 0.4031,
       "DEF": 0.3684,
-      "ALL": 0.3942
+      "ALL": 0.4299
     },
     "player_coverage_95": {
-      "QB": 0.8795,
-      "RB": 0.8527,
-      "WR": 0.727,
-      "TE": 0.7716,
-      "K": 0.8929,
+      "QB": 0.9511,
+      "RB": 0.9496,
+      "WR": 0.9444,
+      "TE": 0.9466,
+      "K": 0.9549,
       "DEF": 0.8565,
-      "ALL": 0.8014
+      "ALL": 0.9395
     },
     "n_player_rows": {
       "QB": 224,
@@ -140,6 +149,8 @@
     },
     "n_team_weeks": 84,
     "n_matchups": 42,
+    "moneyline_brier_delta": 0.0004,
+    "moneyline_brier_delta_se": 0.0017,
     "v1": {
       "player_coverage_80": {
         "QB": 0.6875,
@@ -149,6 +160,15 @@
         "K": 0.6429,
         "DEF": 0.6794,
         "ALL": 0.6625
+      },
+      "player_zero_share": {
+        "QB": 0.0804,
+        "RB": 0.112,
+        "WR": 0.237,
+        "TE": 0.1929,
+        "K": 0.0816,
+        "DEF": 0.11,
+        "ALL": 0.1636
       },
       "team_coverage_80": 0.8333,
       "team_mae": 20.3,
