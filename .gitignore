@@ -80,3 +80,6 @@ attached_assets/
 # Temporary scraper files
 _temp_*.py
 
+
+# Worktrees the Claude desktop app creates for background engineers
+.claude/worktrees/
