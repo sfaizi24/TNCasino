@@ -1,10 +1,12 @@
 import copy
+import json
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from pipeline.sources import fantasypros, firstdown, load_source
+from pipeline.sources import fanduel, fantasypros, firstdown, load_source
 from pipeline.sources.base import POSITIONS, Projection
 from pipeline.sources.teams import CANONICAL_TEAMS
 
@@ -24,6 +26,11 @@ def fantasypros_pages() -> dict[str, str]:
 @pytest.fixture(scope="module")
 def firstdown_html() -> str:
     return (FIXTURES / "firstdown" / "rankings.html").read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def fanduel_items() -> list[dict]:
+    return json.loads((FIXTURES / "fanduel" / "getProjections.json").read_text(encoding="utf-8"))
 
 
 def find(rows: list[Projection], first_name: str, last_name: str) -> Projection:
@@ -140,11 +147,93 @@ def test_firstdown_serves_no_defenses():
     assert firstdown.SOURCE.positions == {"QB", "RB", "WR", "TE", "K"}
 
 
+# FanDuel
+
+
+def test_fanduel_canonicalises_positions(fanduel_items):
+    rows = fanduel.parse(fanduel_items, SEASON, WEEK)
+    assert count_by_position(rows) == {"QB": 21, "RB": 23, "WR": 22, "TE": 21, "K": 10, "DEF": 13}
+
+
+def test_fanduel_player_row(fanduel_items):
+    rows = fanduel.parse(fanduel_items, SEASON, WEEK)
+    assert find(rows, "Josh", "Allen") == Projection(
+        source="fanduel.com",
+        season=2026,
+        week=3,
+        first_name="Josh",
+        last_name="Allen",
+        position="QB",
+        team="BUF",
+        points=22.52,
+        external_id="53775",
+    )
+
+
+def test_fanduel_defense_takes_the_sleeper_form(fanduel_items):
+    rows = fanduel.parse(fanduel_items, SEASON, WEEK)
+    chiefs = find(rows, "Kansas City", "Chiefs")  # position "D", named "Kansas City D/ST"
+    assert (chiefs.position, chiefs.team, chiefs.points) == ("DEF", "KC", 9.27)
+    assert find(rows, "Los Angeles", "Rams").team == "LAR"
+    assert find(rows, "Washington", "Commanders").team == "WAS"
+
+
+def test_fanduel_keeps_suffixes(fanduel_items):
+    rows = fanduel.parse(fanduel_items, SEASON, WEEK)
+    assert find(rows, "Kenneth", "Walker III").points == 16.2
+    assert find(rows, "Michael", "Penix Jr.").team == "ATL"
+    assert find(rows, "Ollie", "Gordon II").team == "MIA"
+
+
+@pytest.mark.parametrize(
+    ("first_name", "last_name", "team"),
+    [("Brian", "Thomas Jr.", "JAX"), ("Puka", "Nacua", "LAR"), ("Terry", "McLaurin", "WAS")],
+)
+def test_fanduel_normalises_team_aliases(fanduel_items, first_name, last_name, team):
+    rows = fanduel.parse(fanduel_items, SEASON, WEEK)
+    assert find(rows, first_name, last_name).team == team
+
+
+def test_fanduel_skips_players_projected_for_nothing(fanduel_items):
+    rows = fanduel.parse(fanduel_items, SEASON, WEEK)
+    zero_items = [item for item in fanduel_items if item["fantasy"] <= 0]
+    assert len(zero_items) == 12
+    assert len(rows) == len(fanduel_items) - len(zero_items)
+
+
+def test_fanduel_whole_number_points_become_floats(fanduel_items):
+    jefferson = find(fanduel.parse(fanduel_items, SEASON, WEEK), "Justin", "Jefferson")
+    assert jefferson.points == 14.0
+    assert isinstance(jefferson.points, float)
+
+
+def test_fanduel_stamps_the_requested_week(fanduel_items):
+    rows = fanduel.parse(fanduel_items, SEASON, 4)
+    assert {row.week for row in rows} == {4}
+
+
+def graphql_response(method: str, url: str, body: dict | None) -> SimpleNamespace:
+    return SimpleNamespace(request=SimpleNamespace(method=method, url=url, post_data_json=body))
+
+
+def test_fanduel_recognises_the_projections_response_by_its_selection():
+    url = "https://www.fanduel.com/research/api/graphql"
+    body = {
+        "operationName": "GetProjections",
+        "variables": {"input": {"type": "PPR", "position": "NFL_SKILL", "sport": "NFL"}},
+    }
+    assert fanduel.requested_selection(graphql_response("POST", url, body)) == ("PPR", "NFL_SKILL")
+    assert fanduel.requested_selection(graphql_response("POST", url, {"operationName": "GetMenus"})) is None
+    assert fanduel.requested_selection(graphql_response("GET", url, None)) is None
+    other_url = "https://www.fanduel.com/research/nfl/fantasy/ppr"
+    assert fanduel.requested_selection(graphql_response("POST", other_url, body)) is None
+
+
 # Every source
 
 # Each source module with the name of the fixture holding its captured payload.
-SOURCES = [(fantasypros, "fantasypros_pages"), (firstdown, "firstdown_html")]
-SOURCE_IDS = ["fantasypros", "firstdown"]
+SOURCES = [(fantasypros, "fantasypros_pages"), (firstdown, "firstdown_html"), (fanduel, "fanduel_items")]
+SOURCE_IDS = ["fantasypros", "firstdown", "fanduel"]
 
 
 @pytest.mark.parametrize(("module", "payload_fixture"), SOURCES, ids=SOURCE_IDS)
@@ -169,7 +258,7 @@ def test_rows_are_canonical(module, payload_fixture, request):
 
 @pytest.mark.parametrize(
     ("name", "website"),
-    [("fantasypros", "fantasypros.com"), ("firstdown", "firstdown.studio")],
+    [("fantasypros", "fantasypros.com"), ("firstdown", "firstdown.studio"), ("fanduel", "fanduel.com")],
 )
 def test_sources_are_registered(name, website):
     source = load_source(name)
