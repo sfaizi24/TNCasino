@@ -1,0 +1,187 @@
+{
+  "version": "v2",
+  "sources": {
+    "espn.com": {
+      "weight": 0.99,
+      "bias": 0.609
+    },
+    "fanduel.com": {
+      "weight": 1.092,
+      "bias": 0.35
+    },
+    "firstdown.studio": {
+      "weight": 0.828,
+      "bias": -0.72
+    },
+    "sleeper.com": {
+      "weight": 1.09,
+      "bias": 0.923
+    }
+  },
+  "sigma": {
+    "formula": "linear",
+    "by_position": {
+      "QB": {
+        "a": 5.7086,
+        "b": 0.0941
+      },
+      "RB": {
+        "a": 3.3253,
+        "b": 0.3232
+      },
+      "WR": {
+        "a": 3.6087,
+        "b": 0.2967
+      },
+      "TE": {
+        "a": 1.539,
+        "b": 0.5437
+      },
+      "K": {
+        "a": -0.1071,
+        "b": 0.5947
+      },
+      "DEF": {
+        "a": 2.7308,
+        "b": 0.5991
+      }
+    }
+  },
+  "dud": {
+    "threshold_ratio": 0.25,
+    "by_position": {
+      "QB": {
+        "c": 2.6769,
+        "d": -0.2969
+      },
+      "RB": {
+        "c": -0.3079,
+        "d": -0.1856
+      },
+      "WR": {
+        "c": 0.281,
+        "d": -0.1894
+      },
+      "TE": {
+        "c": -0.2882,
+        "d": -0.1729
+      },
+      "K": {
+        "c": -1.3244,
+        "d": -0.1022
+      }
+    }
+  },
+  "correlation": {
+    "same_nfl_team": {
+      "QB-WR": 0.22,
+      "QB-TE": 0.21,
+      "QB-RB": 0.07,
+      "RB-WR": -0.05
+    }
+  },
+  "fitted_on": {
+    "season": 2025,
+    "weeks": [
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16
+    ],
+    "excluded_sources": [
+      "fantasypros.com"
+    ],
+    "n_player_rows": 2311,
+    "fitted_at": "2026-09-27T12:36:12+00:00"
+  },
+  "gate": {
+    "passed": false,
+    "player_coverage_80": {
+      "QB": 0.75,
+      "RB": 0.695,
+      "WR": 0.6129,
+      "TE": 0.6447,
+      "K": 0.7398,
+      "DEF": 0.6172,
+      "ALL": 0.6599
+    },
+    "team_coverage_80": 0.7857,
+    "team_mae": 20.08,
+    "moneyline_brier": 0.2368,
+    "player_coverage_50": {
+      "QB": 0.4241,
+      "RB": 0.4025,
+      "WR": 0.3871,
+      "TE": 0.3909,
+      "K": 0.4031,
+      "DEF": 0.3684,
+      "ALL": 0.3942
+    },
+    "player_coverage_95": {
+      "QB": 0.8795,
+      "RB": 0.8527,
+      "WR": 0.727,
+      "TE": 0.7716,
+      "K": 0.8929,
+      "DEF": 0.8565,
+      "ALL": 0.8014
+    },
+    "n_player_rows": {
+      "QB": 224,
+      "RB": 482,
+      "WR": 806,
+      "TE": 394,
+      "K": 196,
+      "DEF": 209,
+      "ALL": 2311
+    },
+    "n_team_weeks": 84,
+    "n_matchups": 42,
+    "v1": {
+      "player_coverage_80": {
+        "QB": 0.6875,
+        "RB": 0.7116,
+        "WR": 0.629,
+        "TE": 0.6574,
+        "K": 0.6429,
+        "DEF": 0.6794,
+        "ALL": 0.6625
+      },
+      "team_coverage_80": 0.8333,
+      "team_mae": 20.3,
+      "moneyline_brier": 0.2365,
+      "player_coverage_50": {
+        "QB": 0.4107,
+        "RB": 0.4357,
+        "WR": 0.3759,
+        "TE": 0.3655,
+        "K": 0.3316,
+        "DEF": 0.4067,
+        "ALL": 0.389
+      },
+      "player_coverage_95": {
+        "QB": 0.7902,
+        "RB": 0.861,
+        "WR": 0.7407,
+        "TE": 0.7868,
+        "K": 0.7959,
+        "DEF": 0.8756,
+        "ALL": 0.7953
+      },
+      "n_player_rows": {
+        "QB": 224,
+        "RB": 482,
+        "WR": 806,
+        "TE": 394,
+        "K": 196,
+        "DEF": 209,
+        "ALL": 2311
+      },
+      "n_team_weeks": 84,
+      "n_matchups": 42
+    }
+  }
+}
