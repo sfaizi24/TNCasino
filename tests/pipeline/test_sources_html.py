@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from pipeline.sources import fantasypros, load_source
+from pipeline.sources import fantasypros, firstdown, load_source
 from pipeline.sources.base import POSITIONS, Projection
 from pipeline.sources.teams import CANONICAL_TEAMS
 
@@ -19,6 +19,11 @@ def fantasypros_pages() -> dict[str, str]:
     for position, page in fantasypros.PAGES.items():
         pages[position] = (FIXTURES / "fantasypros" / f"{page}.html").read_text(encoding="utf-8")
     return pages
+
+
+@pytest.fixture(scope="module")
+def firstdown_html() -> str:
+    return (FIXTURES / "firstdown" / "rankings.html").read_text(encoding="utf-8")
 
 
 def find(rows: list[Projection], first_name: str, last_name: str) -> Projection:
@@ -86,11 +91,60 @@ def test_fantasypros_skips_players_projected_for_nothing(fantasypros_pages):
     assert ("Josh", "Allen") not in {(row.first_name, row.last_name) for row in rows}
 
 
+# FirstDown
+
+
+def test_firstdown_reads_every_position_from_one_page(firstdown_html):
+    rows = firstdown.parse(firstdown_html, SEASON, WEEK)
+    assert count_by_position(rows) == {"QB": 32, "RB": 48, "WR": 61, "TE": 26, "K": 30}
+
+
+def test_firstdown_player_row(firstdown_html):
+    rows = firstdown.parse(firstdown_html, SEASON, WEEK)
+    assert find(rows, "Josh", "Allen") == Projection(
+        source="firstdown.studio",
+        season=2026,
+        week=3,
+        first_name="Josh",
+        last_name="Allen",
+        position="QB",
+        team="BUF",
+        points=23.74,
+        external_id="d647a471-4e45-431d-8a08-bdc4b5f6c801",
+    )
+
+
+def test_firstdown_reads_ppr_not_the_half_ppr_the_table_shows(firstdown_html):
+    rows = firstdown.parse(firstdown_html, SEASON, WEEK)
+    assert find(rows, "Jahmyr", "Gibbs").points == 24.57  # the table shows 22.3
+    assert find(rows, "Jaxon", "Smith-Njigba").points == 19.46  # the table shows 16.1
+
+
+def test_firstdown_kicker_gets_kicking_points_not_team_points(firstdown_html):
+    rows = firstdown.parse(firstdown_html, SEASON, WEEK)
+    pineiro = find(rows, "Eddy", "Pineiro")  # the K table shows Kick Pts 8.6 beside Proj. Team Pts 28.0
+    assert (pineiro.position, pineiro.team, pineiro.points) == ("K", "SF", 8.57)
+
+
+def test_firstdown_stamps_the_snapshot_week(firstdown_html):
+    rows = firstdown.parse(firstdown_html, SEASON, 4)
+    assert {row.week for row in rows} == {3}
+
+
+def test_firstdown_rejects_a_page_without_a_snapshot():
+    with pytest.raises(ValueError, match="no rankings snapshot"):
+        firstdown.parse("<html><body><table></table></body></html>", SEASON, WEEK)
+
+
+def test_firstdown_serves_no_defenses():
+    assert firstdown.SOURCE.positions == {"QB", "RB", "WR", "TE", "K"}
+
+
 # Every source
 
 # Each source module with the name of the fixture holding its captured payload.
-SOURCES = [(fantasypros, "fantasypros_pages")]
-SOURCE_IDS = ["fantasypros"]
+SOURCES = [(fantasypros, "fantasypros_pages"), (firstdown, "firstdown_html")]
+SOURCE_IDS = ["fantasypros", "firstdown"]
 
 
 @pytest.mark.parametrize(("module", "payload_fixture"), SOURCES, ids=SOURCE_IDS)
@@ -115,7 +169,7 @@ def test_rows_are_canonical(module, payload_fixture, request):
 
 @pytest.mark.parametrize(
     ("name", "website"),
-    [("fantasypros", "fantasypros.com")],
+    [("fantasypros", "fantasypros.com"), ("firstdown", "firstdown.studio")],
 )
 def test_sources_are_registered(name, website):
     source = load_source(name)
