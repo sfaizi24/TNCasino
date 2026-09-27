@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS team_lineups (
+  season INTEGER NOT NULL,
+  week INTEGER NOT NULL,
+  roster_id INTEGER NOT NULL,
+  team_name TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  record TEXT NOT NULL,
+  slot TEXT NOT NULL,
+  sleeper_player_id TEXT,
+  player_name TEXT,
+  position TEXT NOT NULL,
+  nfl_team TEXT,
+  mu REAL NOT NULL,
+  sigma REAL NOT NULL,
+  var REAL NOT NULL,
+  n_sources INTEGER NOT NULL,
+  is_replacement INTEGER NOT NULL DEFAULT 0,
+  timestamp TEXT NOT NULL,
+  PRIMARY KEY (season, week, roster_id, slot)
+);
