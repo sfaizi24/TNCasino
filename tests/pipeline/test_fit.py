@@ -43,7 +43,10 @@ SIGMA = {
 MU_RANGE = {"QB": (12, 26), "RB": (4, 20), "WR": (4, 20), "TE": (4, 14), "K": (6, 11), "DEF": (4, 10)}
 DUD = {"threshold_ratio": 0.25, "by_position": {"RB": {"c": -1.0, "d": -0.10}, "WR": {"c": -0.5, "d": -0.12}}}
 CORRELATION = {"QB-WR": 0.30, "QB-TE": 0.20, "QB-RB": 0.10, "RB-WR": -0.05}
-BIASES = {"high.com": 1.5, "low.com": -1.0}
+BIASES = {
+    "high.com": {"QB": 3.0, "RB": 1.5, "WR": 1.0, "TE": 0.5, "K": -0.5, "DEF": -1.5},
+    "low.com": {"QB": -2.0, "RB": -1.0, "WR": 0.0, "TE": 0.5, "K": 1.0, "DEF": 2.0},
+}
 
 # The starters every NFL team fields each week, and the lineup slots they fill when one team is a whole lineup.
 TEAM = ["QB", "RB", "RB", "WR", "WR", "WR", "TE", "K", "DEF"]
@@ -79,11 +82,12 @@ def synthetic_players(n_weeks: int, n_teams: int, seed: int) -> pd.DataFrame:
     return players
 
 
-def source_rows(players: pd.DataFrame, biases: dict[str, float]) -> pd.DataFrame:
-    """One projection of every player per source, off his true mu by the source's bias."""
-    rows = [
-        players.assign(source_website=source, projected_points=players["mu"] + bias) for source, bias in biases.items()
-    ]
+def source_rows(players: pd.DataFrame, biases: dict[str, dict[str, float]]) -> pd.DataFrame:
+    """One projection of every player per source, off his true mu by the source's bias at his position."""
+    rows = []
+    for source, bias in biases.items():
+        offset = players["position"].map(bias).fillna(0.0)
+        rows.append(players.assign(source_website=source, projected_points=players["mu"] + offset))
     return pd.concat(rows, ignore_index=True).drop(columns=["mu", "sigma"])
 
 
@@ -97,9 +101,10 @@ def recovered() -> dict:
     return fit_params(source_rows(synthetic_players(n_weeks=64, n_teams=32, seed=1), BIASES), [], "vtest")
 
 
-def test_fit_recovers_each_source_bias(recovered):
-    for source, bias in BIASES.items():
-        assert recovered["sources"][source]["bias"] == pytest.approx(bias, abs=0.15)
+def test_fit_recovers_each_source_bias_at_each_position(recovered):
+    # A QB's score varies by about 7 points, so 2,048 QB-weeks pin a mean error down to about 0.15.
+    for source, biases in BIASES.items():
+        assert recovered["sources"][source]["bias"] == pytest.approx(biases, abs=0.3)
 
 
 @pytest.mark.parametrize("position", list(SIGMA))
@@ -158,18 +163,52 @@ def test_sources_are_weighted_by_the_inverse_of_their_error_variance():
     assert sources["vague.com"]["weight"] == pytest.approx(0.25 / 0.42, rel=0.1)
     assert sources["wild.com"]["weight"] == 0.25
     assert sources["rare.com"] == DEFAULT_SOURCE
-    assert sources["sharp.com"]["bias"] == pytest.approx(2.0, abs=0.1)
-    assert sources["vague.com"]["bias"] == pytest.approx(-1.0, abs=0.1)
+    assert sources["sharp.com"]["bias"] == pytest.approx({"WR": 2.0}, abs=0.1)
+    assert sources["vague.com"]["bias"] == pytest.approx({"WR": -1.0}, abs=0.1)
     consensus = player_weeks(rows, sources)
     assert (consensus["mu"] - consensus["actual"]).mean() == pytest.approx(0.0, abs=0.05)
 
 
+def test_a_source_is_debiased_position_by_position_before_it_is_weighted():
+    rng = np.random.default_rng(5)
+    players = pd.DataFrame(
+        {
+            "season": 2025,
+            "week": np.repeat(np.arange(1, 7), 300),
+            "sleeper_player_id": [f"p{index}" for index in range(1800)],
+            "position": np.tile(["QB", "WR", "TE"], 600),
+            "nfl_team": "KC",
+            "actual": rng.uniform(5, 20, 1800),
+        }
+    )
+    # split.com over-projects QBs and under-projects WRs by as much, so over all its rows it is not biased at all.
+    offsets = {"split.com": {"QB": 3.0, "WR": -3.0}, "plain.com": {}}
+    rows = []
+    for source, offset in offsets.items():
+        error = players["position"].map(offset).fillna(0.0) + rng.normal(0, 1, 1800)
+        rows.append(players.assign(source_website=source, projected_points=players["actual"] + error))
+    rows = pd.concat(rows, ignore_index=True)
+    # split.com projects TEs in two weeks only, too few to fit its TE bias by.
+    rows = rows[(rows["source_website"] != "split.com") | (rows["position"] != "TE") | (rows["week"] <= 2)]
+
+    sources = fit_sources(rows)
+
+    assert sources["split.com"]["bias"] == pytest.approx({"QB": 3.0, "WR": -3.0}, abs=0.1)
+    assert sources["plain.com"]["bias"] == pytest.approx({"QB": 0.0, "WR": 0.0, "TE": 0.0}, abs=0.1)
+    # Both miss by the same noise once their biases are out, so they are trusted alike.
+    assert sources["split.com"]["weight"] == pytest.approx(1.0, rel=0.1)
+    assert sources["plain.com"]["weight"] == pytest.approx(1.0, rel=0.1)
+
+
 def test_player_weeks_match_what_the_stats_step_computes():
     params = {
-        "sources": {"espn.com": {"weight": 1.6, "bias": 0.5}, "sleeper.com": {"weight": 0.7, "bias": -0.4}},
+        "sources": {
+            "espn.com": {"weight": 1.6, "bias": {"WR": 0.5, "QB": 1.2}},
+            "sleeper.com": {"weight": 0.7, "bias": {"QB": -0.4}},
+        },
         "sigma": {"formula": "linear", "by_position": {"WR": {"a": 2.0, "b": 0.3}, "QB": {"a": 5.0, "b": 0.1}}},
     }
-    # ranks.com has no fitted parameters, and the QB has a single source.
+    # ranks.com has no fitted parameters, sleeper.com no WR bias, and the QB has a single source.
     projections = {
         ("p1", "WR"): [("espn.com", 14.0), ("sleeper.com", 12.5), ("ranks.com", 13.0)],
         ("p2", "QB"): [("espn.com", 21.0)],
@@ -283,7 +322,7 @@ def write_projections(settings: Settings, projections: pd.DataFrame) -> None:
     insert(settings, "projections", "projections_with_sleeper", rows)
 
 
-def write_season(settings: Settings, players: pd.DataFrame, biases: dict[str, float]) -> None:
+def write_season(settings: Settings, players: pd.DataFrame, biases: dict[str, dict[str, float]]) -> None:
     """Each source's projections of the synthetic players, their Sleeper positions, teams and points, and every
     week the starters of NFL teams T0 and T1 as the lineups of rosters 1 and 2, playing each other."""
     write_projections(settings, source_rows(players, biases))
@@ -373,7 +412,7 @@ def test_a_window_without_matched_projections_raises(settings):
 
 
 def test_the_fit_is_scored_beside_v1_and_written_where_load_params_finds_it(settings):
-    write_season(settings, synthetic_players(n_weeks=4, n_teams=32, seed=2), {**BIASES, "ranks.com": 0.0})
+    write_season(settings, synthetic_players(n_weeks=4, n_teams=32, seed=2), {**BIASES, "ranks.com": {}})
 
     params = fit_and_write(settings, 2025, [1, 2, 3, 4], "vtest", ["ranks.com"])
 

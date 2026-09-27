@@ -17,7 +17,7 @@ flowchart LR
 
 The `stats` step (`pipeline/steps/stats.py`) replaces notebook 05. For each `(sleeper_player_id, week)` it combines every matched source projection under the parameters of the run's model version, a JSON file in `pipeline/model/params/` chosen by `PIPELINE_MODEL_VERSION` (default `v1`):
 
-- **μ** = mean of each source's projection minus that source's `bias`, weighted by its `weight`. A source the file does not list counts at weight 1, bias 0.
+- **μ** = mean of each source's projection minus that source's `bias` at the player's position, weighted by its `weight`. A source the file does not list counts at weight 1, bias 0, and a position missing from a source's `bias` at bias 0.
 - **s** = sample standard deviation of those bias-corrected projections (`ddof=1`); `0` with one source.
 - **σ** = the version's formula below.
 
@@ -109,7 +109,7 @@ A model version is a JSON file in `pipeline/model/params/`. `v1` holds notebook 
 
 **Fitting** (`pipeline/model/fit.py`), for example `python -m pipeline fit-model --season 2025 --weeks 10-16 --out v2 --exclude-sources fantasypros.com`. The training rows are the matched projections of the non-excluded sources for players at QB, RB, WR, TE, K or DEF whose plain mean projection is at least 2 points, each joined to the player's PPR points in `league.db.player_stats` (no stat line means he did not play and scored 0). Each stage uses the one before it:
 
-1. **Sources.** For a source with rows in at least 3 weeks, bias = mean(projected − actual) and weight = 1 / the mean squared bias-corrected error, scaled so the weights average 1 and clipped to [0.25, 4]. A source with fewer weeks gets weight 1, bias 0.
+1. **Sources.** For each source and position with rows in at least 3 weeks, bias = mean(projected − actual) over those rows; a position with fewer weeks is left out of the source's `bias` and counts as 0. A source with rows in at least 3 weeks gets weight = 1 / its mean squared error once those biases are taken out, scaled so the weights average 1 and clipped to [0.25, 4]; a source with fewer weeks gets weight 1 and no bias. The bias is per position because a source can project one position too high and another too low, and one number per source then corrects one of them the wrong way.
 2. **μ** per player-week with those weights and biases, by the stats step's own formula.
 3. **Dud.** Per position, on player-weeks with at least 2 sources, a dud is an actual under 0.25·μ, and c, d are the maximum-likelihood logistic fit of the dud chance on μ. A position with fewer than 50 player-weeks or 5 duds gets no dud.
 4. **σ.** Per position, on the non-dud player-weeks: residuals from the lognormal part's mean ([§3](#3-simulation)), grouped by μ into bins of about 50; a and b are the least-squares line through the bins' residual standard deviations, weighted by bin size. A position with fewer than 100 player-weeks gets its overall residual standard deviation and b = 0.

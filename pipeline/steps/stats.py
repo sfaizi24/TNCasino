@@ -1,9 +1,9 @@
 """Turn the week's matched projections into one scoring distribution per player.
 
-mu is the weighted mean of the sources' bias-corrected points, spread is the sample standard
-deviation across sources, and sigma comes from the model's sigma formula; weights, biases and the
-formula come from the model parameters for settings.model_version. Name, position and team come
-from Sleeper's nfl_players.
+mu is the weighted mean of the sources' points, each corrected by its source's bias at the player's
+position, spread is the sample standard deviation across sources, and sigma comes from the model's
+sigma formula; weights, biases and the formula come from the model parameters for
+settings.model_version. Name, position and team come from Sleeper's nfl_players.
 """
 
 import itertools
@@ -17,7 +17,7 @@ from pipeline.runner import StepContext, StepResult, timestamp, utc_now
 
 NAME = "stats"
 
-DEFAULT_SOURCE = {"weight": 1.0, "bias": 0.0}
+DEFAULT_SOURCE = {"weight": 1.0, "bias": {}}
 POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"]
 
 PLAYER_WEEK_STATS_DDL = """
@@ -89,7 +89,7 @@ def compute_player_stats(rows: list[sqlite3.Row], player: sqlite3.Row, params: d
     weights = []
     for row in rows:
         source = params["sources"].get(row["source_website"], DEFAULT_SOURCE)
-        points.append(row["projected_points"] - source["bias"])
+        points.append(row["projected_points"] - source["bias"].get(player["position"], 0.0))
         weights.append(source["weight"])
     mu = float(np.average(points, weights=weights))
     spread = float(np.std(points, ddof=1)) if len(points) >= 2 else 0.0

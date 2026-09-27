@@ -56,12 +56,20 @@ def eligible_rows(rows: pd.DataFrame) -> pd.DataFrame:
     return rows[mean_projection >= MIN_MU]
 
 
+def source_biases(rows: pd.DataFrame, sources: dict) -> np.ndarray:
+    """Each source row's bias: its source's bias at the player's position, 0 where none was fitted."""
+    biases = [
+        sources.get(source, DEFAULT_SOURCE)["bias"].get(position, 0.0)
+        for source, position in zip(rows["source_website"], rows["position"], strict=True)
+    ]
+    return np.array(biases, dtype=float)
+
+
 def player_weeks(rows: pd.DataFrame, sources: dict) -> pd.DataFrame:
     """One row per player-week with mu, spread and n_sources as the stats step computes them from the source rows."""
     weights = {source: values["weight"] for source, values in sources.items()}
-    biases = {source: values["bias"] for source, values in sources.items()}
     weight = rows["source_website"].map(weights).fillna(DEFAULT_SOURCE["weight"])
-    points = rows["projected_points"] - rows["source_website"].map(biases).fillna(DEFAULT_SOURCE["bias"])
+    points = rows["projected_points"] - source_biases(rows, sources)
     frame = rows.assign(points=points, weight=weight, weighted=points * weight)
     players = (
         frame.groupby(PLAYER_WEEK)

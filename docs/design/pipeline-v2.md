@@ -486,7 +486,7 @@ Parameters are JSON files under `pipeline/model/params/`, committed to git, load
 {
   "version": "v1",
   "fitted_on": null,
-  "sources": {"sleeper.com": {"weight": 1.0, "bias": 0.0}},
+  "sources": {"sleeper.com": {"weight": 1.0, "bias": {}}},
   "sigma": {"formula": "v1", "alpha": 2.0, "beta": 1.0,
             "pos_sigma": {"QB": 7, "RB": 9, "WR": 10, "TE": 8, "K": 4, "DEF": 7}, "default_pos_sigma": 8.0},
   "dud": null,
@@ -499,6 +499,11 @@ v2 (WP6) uses `"sigma": {"formula": "linear", "by_position": {"QB": {"a": .., "b
 (p_dud = logistic(c + d·mu)), `"correlation": {"same_nfl_team": {"QB-WR": 0.25, "QB-TE": 0.20, "QB-RB": 0.05, "RB-WR": -0.05}}`,
 and fitted per-source weight (∝ 1/MSE, normalised) and bias (mean signed error) for sources with
 ≥ 3 weeks of history; others get weight 1, bias 0.
+
+Amended 2026-09-27 (v2.1). The bias is per source and position, `"bias": {"QB": .., "DEF": ..}`,
+fitted where the source has ≥ 3 weeks at that position and 0 where a position is absent; the
+weight stays per source, from the error left after those biases. Why: one number per source
+averaged opposite misses, so ESPN's +0.61 lowered the DEF μ it already projected too low.
 
 `fit-model` fits on 2025 weeks 10–16 plus any 2026 weeks with actuals (from
 `projections_with_sleeper` + `player_stats`). Acceptance gate before `model_version` defaults to

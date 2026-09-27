@@ -11,7 +11,7 @@ def test_v1_matches_the_notebook_05_constants():
     params = load_params("v1")
 
     assert params["version"] == "v1"
-    assert params["sources"]["sleeper.com"] == {"weight": 1.0, "bias": 0.0}
+    assert params["sources"]["sleeper.com"] == {"weight": 1.0, "bias": {}}
     assert params["sigma"]["pos_sigma"] == {"QB": 7, "RB": 9, "WR": 10, "TE": 8, "K": 4, "DEF": 7}
     assert (params["sigma"]["alpha"], params["sigma"]["beta"]) == (2.0, 1.0)
 

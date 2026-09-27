@@ -25,6 +25,7 @@ from pipeline.model.evaluate import (
     load_team_weeks,
     player_sigmas,
     player_weeks,
+    source_biases,
 )
 from pipeline.model.sampling import dud_probabilities, lognormal_means, teammate_matrix
 from pipeline.runner import print_table, timestamp, utc_now
@@ -125,29 +126,43 @@ def fit_params(rows: pd.DataFrame, excluded_sources: list[str], version: str) ->
 
 
 def source_errors(rows: pd.DataFrame) -> pd.DataFrame:
-    """Per source: distinct weeks, rows, mean over-projection (projected - actual) and the mean squared error
-    left once that bias is taken out, which is the variance of the error."""
-    errors = rows.assign(error=rows["projected_points"] - rows["actual"]).groupby("source_website")["error"]
-    weeks = rows.drop_duplicates(["source_website", "season", "week"])["source_website"].value_counts()
-    return pd.DataFrame({"weeks": weeks, "n": errors.size(), "bias": errors.mean(), "mse": errors.var(ddof=0)})
+    """Per source and position: distinct weeks, rows, mean over-projection (projected - actual) and root mean
+    squared error."""
+    keys = ["source_website", "position"]
+    error = rows["projected_points"] - rows["actual"]
+    errors = rows.assign(error=error, squared_error=error**2).groupby(keys)
+    weeks = rows.drop_duplicates([*keys, "season", "week"]).groupby(keys).size()
+    return pd.DataFrame(
+        {
+            "weeks": weeks,
+            "n": errors.size(),
+            "bias": errors["error"].mean(),
+            "rmse": np.sqrt(errors["squared_error"].mean()),
+        }
+    )
 
 
 def fit_sources(rows: pd.DataFrame) -> dict:
-    """Bias and weight per source seen in at least MIN_SOURCE_WEEKS weeks, the weight being the inverse of the
-    source's error variance scaled so these sources average 1; any other source keeps weight 1 and bias 0."""
+    """A bias for each source and position seen in at least MIN_SOURCE_WEEKS weeks, and a weight for each source
+    seen in that many weeks: the inverse of the mean squared error left once its biases are taken out, scaled so
+    these sources average 1. Any other source keeps weight 1 and no bias."""
     errors = source_errors(rows)
-    fitted = errors[errors["weeks"] >= MIN_SOURCE_WEEKS]
-    precision = 1 / fitted["mse"]
-    weights = (precision / precision.mean()).clip(*WEIGHT_RANGE)
+    biases = errors.loc[errors["weeks"] >= MIN_SOURCE_WEEKS, "bias"]
     sources = {}
-    for source in errors.index:
-        if source in fitted.index:
-            sources[source] = {
-                "weight": round(float(weights[source]), 3),
-                "bias": round(float(fitted.at[source, "bias"]), 3),
-            }
-        else:
-            sources[source] = dict(DEFAULT_SOURCE)
+    for source in sorted(rows["source_website"].unique()):
+        fitted = [position for position in POSITION_ORDER if (source, position) in biases.index]
+        sources[source] = {
+            "weight": DEFAULT_SOURCE["weight"],
+            "bias": {position: round(float(biases[source, position]), 3) for position in fitted},
+        }
+
+    residual = rows["projected_points"] - source_biases(rows, sources) - rows["actual"]
+    mse = (residual**2).groupby(rows["source_website"]).mean()
+    weeks = rows.drop_duplicates(["source_website", "season", "week"])["source_website"].value_counts()
+    precision = 1 / mse[weeks.index[weeks >= MIN_SOURCE_WEEKS]]
+    weights = (precision / precision.mean()).clip(*WEIGHT_RANGE)
+    for source, weight in weights.items():
+        sources[source]["weight"] = round(float(weight), 3)
     return sources
 
 
@@ -273,12 +288,25 @@ def print_fit(eligible: pd.DataFrame, players: pd.DataFrame, params: dict) -> No
 
 
 def print_sources(eligible: pd.DataFrame, sources: dict) -> None:
+    errors = source_errors(eligible)
     table = []
-    for source in source_errors(eligible).itertuples():
-        written = sources[source.Index]
-        cells = [str(source.weeks), str(source.n), f"{source.bias:.2f}", f"{np.sqrt(source.mse):.2f}"]
-        table.append([source.Index, *cells, f"{written['bias']:.3f}", f"{written['weight']:.3f}"])
-    print_table(["source", "weeks", "rows", "mean error", "rmse", "bias", "weight"], table)
+    for source, written in sources.items():
+        for position in POSITION_ORDER:
+            if (source, position) not in errors.index:
+                continue
+            # A row of mixed columns comes back as floats, the counts among them.
+            measured = errors.loc[(source, position)]
+            bias = written["bias"].get(position)
+            cells = [
+                str(int(measured["weeks"])),
+                str(int(measured["n"])),
+                f"{measured['bias']:.2f}",
+                f"{measured['rmse']:.2f}",
+                "-" if bias is None else f"{bias:.3f}",
+                f"{written['weight']:.3f}",
+            ]
+            table.append([source, position, *cells])
+    print_table(["source", "position", "weeks", "rows", "mean error", "rmse", "bias", "weight"], table)
 
 
 def print_dud(players: pd.DataFrame, dud: dict) -> None:

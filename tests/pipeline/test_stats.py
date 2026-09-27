@@ -104,9 +104,10 @@ def test_name_position_and_team_come_from_sleeper(settings):
 
 
 def test_source_weights_and_biases_come_from_the_models_parameters(settings, monkeypatch):
+    # The player is a QB, so only espn.com's QB bias applies.
     params = {
         "version": "test",
-        "sources": {"espn.com": {"weight": 3.0, "bias": 2.0}},
+        "sources": {"espn.com": {"weight": 3.0, "bias": {"QB": 2.0, "WR": -5.0}}},
         "sigma": {"formula": "linear", "by_position": {"QB": {"a": 2.0, "b": 0.5}}},
     }
     requested = []
