@@ -18,7 +18,7 @@ class Hole:
 
 
 @dataclass(frozen=True)
-class FreeAgent:
+class ProjectedPlayer:
     sleeper_player_id: str
     player_name: str
     position: str
@@ -29,15 +29,19 @@ class FreeAgent:
     var: float
     n_sources: int
 
+    def can_play(self, slot_position: str) -> bool:
+        eligible = FLEX_POSITIONS if slot_position == "FLEX" else {slot_position}
+        return not self.positions.isdisjoint(eligible)
+
 
 @dataclass(frozen=True)
 class Assignment:
     hole: Hole
-    free_agent: FreeAgent | None  # None when the pool ran out
+    free_agent: ProjectedPlayer | None  # None when the pool ran out
     mu: float
 
 
-def allocate(holes: list[Hole], pool: list[FreeAgent], cap_by_position: dict[str, float]) -> list[Assignment]:
+def allocate(holes: list[Hole], pool: list[ProjectedPlayer], cap_by_position: dict[str, float]) -> list[Assignment]:
     """Position by position, FLEX last: the i-th team in waiver order gets the i-th best free agent left.
 
     Waiver order is most FAAB remaining first, then the lower waiver_position. A position with no cap is uncapped.
@@ -45,11 +49,10 @@ def allocate(holes: list[Hole], pool: list[FreeAgent], cap_by_position: dict[str
     available = sorted(pool, key=lambda free_agent: free_agent.mu, reverse=True)
     assignments = []
     for position in ALLOCATION_ORDER:
-        eligible = FLEX_POSITIONS if position == "FLEX" else {position}
         claimants = [hole for hole in holes if hole.position == position]
         claimants.sort(key=lambda hole: (-hole.faab_remaining, hole.waiver_position))
         for hole in claimants:
-            free_agent = next((fa for fa in available if fa.positions & eligible), None)
+            free_agent = next((fa for fa in available if fa.can_play(position)), None)
             if free_agent is None:
                 assignments.append(Assignment(hole, None, 0.0))
                 continue

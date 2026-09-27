@@ -1,4 +1,4 @@
-from pipeline.waivers import Assignment, FreeAgent, Hole, allocate
+from pipeline.waivers import Assignment, Hole, ProjectedPlayer, allocate
 
 NO_CAPS: dict[str, float] = {}
 
@@ -8,7 +8,7 @@ def hole(roster_id, slot, position, faab_remaining=100, waiver_position=None):
 
 
 def free_agent(player_id, position, mu, positions=None):
-    return FreeAgent(
+    return ProjectedPlayer(
         sleeper_player_id=player_id,
         player_name=f"Player {player_id}",
         position=position,
