@@ -1,18 +1,18 @@
 """Season-to-date calibration of the model as it ran; nothing is refitted.
 
-Every completed week before the current one is scored with what the pipeline stored at the time: the player
-distributions in player_week_stats and each week's latest team intervals and moneylines, against what players and
-teams actually scored. The metrics are recorded at the current week, so calibration_metrics shows how the
-season-to-date numbers moved from week to week.
+A week is scored once the accuracy step has graded it, which it does only after every game of the week is final.
+Each player distribution stored in player_week_stats is judged against the points the player scored, and each team's
+[p10, p90] and moneyline by the accuracy step's grades in team_accuracy, taken from the week's latest odds run. The
+metrics are recorded at the current week, so calibration_metrics shows how the season-to-date numbers moved from
+week to week.
 """
 
 import pandas as pd
 
 from pipeline.model import calibration_charts
-from pipeline.model.evaluate import COVERAGE_BANDS, MIN_MU, brier_score, load_actuals, pit, player_coverage
+from pipeline.model.evaluate import COVERAGE_BANDS, MIN_MU, load_actuals, pit, player_coverage
 from pipeline.model.params import load_params
 from pipeline.runner import StepContext, StepResult, print_table, timestamp, utc_now
-from pipeline.steps.publish import keep_latest_run
 from pipeline.steps.stats import POSITION_ORDER
 
 NAME = "calibrate"
@@ -37,21 +37,20 @@ SELECT week, sleeper_player_id, position, mu, sigma, model_version
 FROM player_week_stats
 WHERE season = ? AND week < ? AND mu >= ?
 """
-STORED_CURVES = "SELECT run_id, week, owner, p10, p90, created_at FROM team_distribution_curves WHERE season = ?"
-STORED_MONEYLINES = """
-SELECT run_id, week, team1_id, team2_id, team1_win_prob, created_at
-FROM betting_odds_matchup_ml
-WHERE season = ?
+GRADED_WEEKS = """
+SELECT DISTINCT week
+FROM prediction_accuracy
+WHERE season = ? AND week < ? AND week IN (SELECT week FROM player_week_stats WHERE season = ?)
+ORDER BY week
 """
-ROSTER_OWNERS = "SELECT DISTINCT week, roster_id, owner FROM team_lineups WHERE season = ?"
-TEAM_POINTS = "SELECT week, roster_id, points FROM matchups WHERE league_id = ?"
+TEAM_GRADES = "SELECT week, covered, win_prob, won FROM team_accuracy WHERE season = ? AND week < ?"
 
 
 def run(ctx: StepContext) -> StepResult:
     settings = ctx.settings
     weeks = completed_weeks(ctx)
     if not weeks:
-        return StepResult(summary={}, warnings=["no completed weeks with actuals yet"])
+        return StepResult(summary={}, warnings=["no week graded by the accuracy step yet"])
 
     players = score_players(ctx, weeks)
     versions = ", ".join(sorted(players["model_version"].unique()))
@@ -59,13 +58,11 @@ def run(ctx: StepContext) -> StepResult:
     coverage = player_coverage(players)
     print_coverage(coverage)
 
-    points = pd.read_sql_query(TEAM_POINTS, ctx.db("league"), params=(settings.league_id,))
-    teams = score_teams(ctx, weeks, points)
-    games = score_moneylines(ctx, weeks, points)
-    metrics = {**player_metrics(coverage), **team_metrics(teams), **moneyline_metrics(games)}
+    teams = team_grades(ctx, weeks)
+    metrics = {**player_metrics(coverage), **team_metrics(teams), **moneyline_metrics(teams)}
     save_metrics(ctx, metrics)
 
-    weeks_without_curves = sorted(set(weeks) - set(teams["week"]))
+    weeks_without_curves = sorted(set(weeks) - set(teams.loc[teams["covered"].notna(), "week"]))
     summary = summarise(settings.model_version, weeks, weeks_without_curves, metrics)
     ctx.log(f"team [p10, p90] coverage {summary['team_coverage_80']} over {summary['n_team_weeks']} team-weeks")
     ctx.log(f"weeks without team curves: {weeks_without_curves or 'none'}")
@@ -81,15 +78,14 @@ def run(ctx: StepContext) -> StepResult:
 
 
 def completed_weeks(ctx: StepContext) -> list[int]:
-    """Weeks before the current one with both stored player distributions and actual player scores."""
+    """Weeks before the current one that the accuracy step has graded and whose player distributions are stored."""
+    conn = ctx.db("projections")
+    tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    # The accuracy step creates its tables the first time it grades a week.
+    if "prediction_accuracy" not in tables:
+        return []
     season, week = ctx.settings.season, ctx.settings.week
-    modelled = ctx.db("projections").execute(
-        "SELECT DISTINCT week FROM player_week_stats WHERE season = ? AND week < ?", (season, week)
-    )
-    played = ctx.db("league").execute(
-        "SELECT DISTINCT week FROM player_stats WHERE season = ? AND week < ?", (season, week)
-    )
-    return sorted({row["week"] for row in modelled} & {row["week"] for row in played})
+    return [row["week"] for row in conn.execute(GRADED_WEEKS, (season, week, season))]
 
 
 def score_players(ctx: StepContext, weeks: list[int]) -> pd.DataFrame:
@@ -110,25 +106,12 @@ def score_players(ctx: StepContext, weeks: list[int]) -> pd.DataFrame:
     return pd.concat(scored, ignore_index=True)
 
 
-def score_teams(ctx: StepContext, weeks: list[int], points: pd.DataFrame) -> pd.DataFrame:
-    """Each team-week's latest [p10, p90] beside the points the team scored. Curves name teams by owner, so the
-    week's lineups map each owner to its roster."""
+def team_grades(ctx: StepContext, weeks: list[int]) -> pd.DataFrame:
+    """The accuracy step's grade of each team-week in `weeks`: covered is null where the week had no team curve,
+    win_prob where it had no moneyline, and won after a tie or a bye."""
     settings = ctx.settings
-    curves = pd.read_sql_query(STORED_CURVES, ctx.db("odds"), params=(settings.season,))
-    curves = keep_latest_run(curves, ctx.db("odds"))
-    owners = pd.read_sql_query(ROSTER_OWNERS, ctx.db("projections"), params=(settings.season,))
-    teams = curves[curves["week"].isin(weeks)].merge(owners, on=["week", "owner"])
-    return teams.merge(points, on=["week", "roster_id"])
-
-
-def score_moneylines(ctx: StepContext, weeks: list[int], points: pd.DataFrame) -> pd.DataFrame:
-    """Each game's latest chance that team1 wins beside both teams' points."""
-    lines = pd.read_sql_query(STORED_MONEYLINES, ctx.db("odds"), params=(ctx.settings.season,))
-    lines = keep_latest_run(lines, ctx.db("odds"))
-    team1 = points.rename(columns={"roster_id": "team1_id", "points": "team1_points"})
-    team2 = points.rename(columns={"roster_id": "team2_id", "points": "team2_points"})
-    games = lines[lines["week"].isin(weeks)].merge(team1, on=["week", "team1_id"])
-    return games.merge(team2, on=["week", "team2_id"])
+    teams = pd.read_sql_query(TEAM_GRADES, ctx.db("projections"), params=(settings.season, settings.week))
+    return teams[teams["week"].isin(weeks)]
 
 
 def player_metrics(coverage: dict[str, dict]) -> dict[tuple[str, str], float]:
@@ -142,18 +125,21 @@ def player_metrics(coverage: dict[str, dict]) -> dict[tuple[str, str], float]:
 
 
 def team_metrics(teams: pd.DataFrame) -> dict[tuple[str, str], float]:
-    metrics = {("n_team_weeks", "ALL"): len(teams)}
-    if not teams.empty:
-        inside = teams["points"].between(teams["p10"], teams["p90"])
-        metrics[("team_coverage_80", "ALL")] = float(inside.mean())
+    covered = teams["covered"].dropna()
+    metrics = {("n_team_weeks", "ALL"): len(covered)}
+    if not covered.empty:
+        metrics[("team_coverage_80", "ALL")] = float(covered.mean())
     return metrics
 
 
-def moneyline_metrics(games: pd.DataFrame) -> dict[tuple[str, str], float]:
-    metrics = {("n_matchups", "ALL"): len(games)}
-    if not games.empty:
-        brier = brier_score(games["team1_win_prob"], games["team1_points"], games["team2_points"])
-        metrics[("moneyline_brier", "ALL")] = brier
+def moneyline_metrics(teams: pd.DataFrame) -> dict[tuple[str, str], float]:
+    """The Brier score over team-weeks with both a win chance and a result. The two sides of a game carry the same
+    squared error, so it is also the mean over games."""
+    graded = teams.dropna(subset=["win_prob", "won"])
+    # The accuracy step writes results and win chances for both sides of a game or for neither, so the count is even.
+    metrics = {("n_matchups", "ALL"): len(graded) // 2}
+    if not graded.empty:
+        metrics[("moneyline_brier", "ALL")] = float(((graded["win_prob"] - graded["won"]) ** 2).mean())
     return metrics
 
 

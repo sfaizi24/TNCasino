@@ -11,17 +11,13 @@ from pipeline.model import params as model_params
 from pipeline.model.evaluate import COVERAGE_BANDS
 from pipeline.runner import StepContext, StepResult
 from pipeline.settings import Settings
-from pipeline.steps import calibrate
+from pipeline.steps import accuracy, calibrate
 from pipeline.steps.league import MIRROR_TABLES
-from pipeline.steps.lineups import LINEUP_TABLES
-from pipeline.steps.odds import ODDS_DDL
 from pipeline.steps.stats import PLAYER_WEEK_STATS_DDL
 
 LEAGUE_ID = "L2026"
 RUN_ID = "2026w04-20260929T180000"
 COMPUTED_AT = "2026-09-20T12:00:00+00:00"
-OLD_RUN_ID, OLD_CREATED_AT = "2026w01-20260910T120000", "2026-09-10T12:00:00+00:00"
-NEW_RUN_ID, NEW_CREATED_AT = "2026w01-20260911T120000", "2026-09-11T12:00:00+00:00"
 
 
 def median(mu: float, sd: float) -> float:
@@ -55,63 +51,33 @@ def write_actuals(settings: Settings, rows: list[tuple]) -> None:
     insert(settings, "league", "player_stats", actuals.assign(stat_id=stat_ids, season=str(settings.season)))
 
 
-def write_teams(settings: Settings, week: int, teams: list[tuple]) -> None:
-    """A week's teams as (roster id, owner, points): the owner as the lineups name it, the points as Sleeper
-    scored them."""
-    frame = pd.DataFrame(teams, columns=["roster_id", "owner", "points"]).assign(week=week)
-    lineups = frame[["week", "roster_id", "owner"]].assign(
+def write_grades(settings: Settings, table: str, rows: pd.DataFrame) -> None:
+    """Rows into one of the accuracy step's tables, created as the step creates them."""
+    with closing(connect(settings, "projections")) as conn:
+        conn.executescript(accuracy.ACCURACY_DDL)
+        rows.to_sql(table, conn, if_exists="append", index=False)
+
+
+def grade_weeks(settings: Settings, weeks: list[int]) -> None:
+    """The consensus row the accuracy step writes for each week it grades, once all of the week's games are final."""
+    graded = pd.DataFrame({"week": weeks}).assign(
+        season=settings.season, source="consensus", position="ALL", n=1, mae=2.0, bias=0.0, computed_at=COMPUTED_AT
+    )
+    write_grades(settings, "prediction_accuracy", graded)
+
+
+def write_team_grades(settings: Settings, week: int, teams: list[tuple]) -> None:
+    """The accuracy step's grades of a week's teams as (roster id, covered, win prob, won)."""
+    grades = pd.DataFrame(teams, columns=["roster_id", "covered", "win_prob", "won"])
+    grades = grades.assign(
         season=settings.season,
-        team_name=frame["owner"],
-        record="0-0",
-        slot="QB",
-        position="QB",
-        mu=20.0,
-        sigma=7.0,
-        var=49.0,
-        n_sources=4,
-        timestamp=COMPUTED_AT,
-    )
-    insert(settings, "projections", "team_lineups", lineups)
-    matchup_ids = frame["week"].astype(str) + "_" + frame["roster_id"].astype(str)
-    matchups = frame[["week", "roster_id", "points"]].assign(
-        matchup_id=matchup_ids, league_id=LEAGUE_ID, matchup_id_number=1
-    )
-    insert(settings, "league", "matchups", matchups)
-
-
-def write_curves(settings: Settings, run_id: str, created_at: str, week: int, curves: list[tuple]) -> None:
-    """One run's team intervals as (owner, p10, p90)."""
-    frame = pd.DataFrame(curves, columns=["owner", "p10", "p90"])
-    middle = (frame["p10"] + frame["p90"]) / 2
-    frame = frame.assign(
-        run_id=run_id,
         week=week,
-        season=settings.season,
-        x_values="[]",
-        density_values="[]",
-        cdf_values="[]",
-        mean=middle,
-        p50=middle,
-        n_sims=1000,
-        created_at=created_at,
+        owner=grades["roster_id"].map("owner{}".format),
+        projected=100.0,
+        actual=100.0,
+        computed_at=COMPUTED_AT,
     )
-    insert(settings, "odds", "team_distribution_curves", frame)
-
-
-def write_moneyline(
-    settings: Settings, run_id: str, created_at: str, week: int, team1_id: int, team2_id: int, team1_win_prob: float
-) -> None:
-    line = {
-        "run_id": run_id,
-        "week": week,
-        "season": settings.season,
-        "team1_id": team1_id,
-        "team2_id": team2_id,
-        "team1_win_prob": team1_win_prob,
-        "team2_win_prob": 1 - team1_win_prob,
-        "created_at": created_at,
-    }
-    insert(settings, "odds", "betting_odds_matchup_ml", pd.DataFrame([line]))
+    write_grades(settings, "team_accuracy", grades)
 
 
 def run_calibrate(settings: Settings, charts: bool = False) -> StepResult:
@@ -132,24 +98,28 @@ def stored_metrics(settings: Settings) -> dict[tuple[str, str], float]:
 @pytest.fixture
 def settings(tmp_path):
     settings = Settings(season=2026, week=4, league_id=LEAGUE_ID, data_dir=tmp_path)
-    ddls = {"league": MIRROR_TABLES, "projections": PLAYER_WEEK_STATS_DDL + LINEUP_TABLES, "odds": ODDS_DDL}
-    for database, ddl in ddls.items():
+    for database, ddl in {"league": MIRROR_TABLES, "projections": PLAYER_WEEK_STATS_DDL}.items():
         with closing(connect(settings, database)) as conn:
             conn.executescript(ddl)
     return settings
 
 
-def test_nothing_is_scored_until_an_earlier_week_has_both_distributions_and_actuals(settings):
-    write_players(settings, [(3, "qb", "QB", 20.0, 7.0), (4, "qb", "QB", 20.0, 7.0)])
-    write_actuals(settings, [(2, "qb", 18.0), (4, "qb", 18.0)])
+def test_nothing_is_scored_until_the_accuracy_step_has_graded_a_week(settings):
+    write_players(settings, [(3, "qb", "QB", 20.0, 7.0)])
+    # Week 3 has stat lines, but until the accuracy step grades it one of its games may still be to come.
+    write_actuals(settings, [(3, "qb", 18.0)])
 
     result = run_calibrate(settings)
 
     assert result.summary == {}
-    assert result.warnings == ["no completed weeks with actuals yet"]
+    assert result.warnings == ["no week graded by the accuracy step yet"]
     with closing(connect(settings, "odds")) as conn:
         tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "calibration_metrics" not in tables
+
+    grade_weeks(settings, [3])
+
+    assert run_calibrate(settings).summary["weeks_evaluated"] == [3]
 
 
 def test_player_coverage_scores_each_stored_distribution_against_the_actual_points(settings):
@@ -176,6 +146,7 @@ def test_player_coverage_scores_each_stored_distribution_against_the_actual_poin
             (4, "wr1", 40.0),
         ],
     )
+    grade_weeks(settings, [1, 2])
 
     summary = run_calibrate(settings).summary
 
@@ -207,11 +178,13 @@ def test_player_coverage_scores_each_stored_distribution_against_the_actual_poin
 def test_rerunning_a_week_replaces_its_metrics_and_leaves_other_weeks_alone(settings):
     write_players(settings, [(1, "qb", "QB", 20.0, 7.0), (2, "qb", "QB", 20.0, 7.0)])
     write_actuals(settings, [(1, "qb", 20.0), (2, "qb", 20.0)])
+    grade_weeks(settings, [1, 2])
     run_calibrate(replace(settings, week=3))
     run_calibrate(settings)
 
     write_players(settings, [(3, "qb", "QB", 20.0, 7.0)])
     write_actuals(settings, [(3, "qb", 60.0)])
+    grade_weeks(settings, [3])
     run_calibrate(settings)
 
     with closing(connect(settings, "odds")) as conn:
@@ -221,22 +194,24 @@ def test_rerunning_a_week_replaces_its_metrics_and_leaves_other_weeks_alone(sett
     assert stored_metrics(settings)[("player_coverage_80", "ALL")] == pytest.approx(2 / 3)
 
 
-def test_teams_and_moneylines_are_scored_from_each_weeks_latest_run(settings):
+def test_teams_and_moneylines_are_scored_from_the_accuracy_steps_grades(settings):
     write_players(settings, [(1, "qb", "QB", 20.0, 7.0), (2, "qb", "QB", 20.0, 7.0)])
     write_actuals(settings, [(1, "qb", 20.0), (2, "qb", 20.0)])
-    write_teams(settings, 1, [(1, "alice", 90.0), (3, "carol", 110.0)])
-    write_curves(settings, OLD_RUN_ID, OLD_CREATED_AT, 1, [("alice", 100.0, 120.0), ("carol", 120.0, 140.0)])
-    write_curves(settings, NEW_RUN_ID, NEW_CREATED_AT, 1, [("alice", 80.0, 100.0), ("carol", 100.0, 120.0)])
-    write_moneyline(settings, OLD_RUN_ID, OLD_CREATED_AT, 1, team1_id=3, team2_id=1, team1_win_prob=0.1)
-    write_moneyline(settings, NEW_RUN_ID, NEW_CREATED_AT, 1, team1_id=3, team2_id=1, team1_win_prob=0.8)
+    grade_weeks(settings, [1, 2])
+    # Rosters 2 and 4 tied in week 1, so neither side has a result.
+    write_team_grades(settings, 1, [(1, 1, 0.2, 0), (2, 0, 0.5, None), (3, 1, 0.8, 1), (4, 1, 0.5, None)])
+    # Week 2's odds run drew no team curves.
+    write_team_grades(settings, 2, [(1, None, 0.6, 1), (3, None, 0.4, 0)])
 
     summary = run_calibrate(settings).summary
 
     assert summary["weeks_without_curves"] == [2]
-    assert summary["team_coverage_80"] == 1.0
-    assert summary["n_team_weeks"] == 2
-    assert summary["moneyline_brier"] == pytest.approx(0.04)
-    assert summary["n_matchups"] == 1
+    assert (summary["team_coverage_80"], summary["n_team_weeks"]) == (0.75, 4)
+    # 0.2^2 and 0.4^2 for both sides of week 1's and week 2's decided games.
+    assert summary["moneyline_brier"] == pytest.approx(0.1)
+    assert summary["n_matchups"] == 2
+    metrics = stored_metrics(settings)
+    assert (metrics[("team_coverage_80", "ALL")], metrics[("moneyline_brier", "ALL")]) == pytest.approx((0.75, 0.1))
 
 
 def test_each_distribution_is_scored_under_the_version_that_stored_it(settings, tmp_path, monkeypatch):
@@ -250,6 +225,7 @@ def test_each_distribution_is_scored_under_the_version_that_stored_it(settings, 
     write_players(settings, [(1, "wr_b", "WR", 10.0, 3.0)], model_version="vb")
     # Halfway up the dud range but deep in the lognormal's lower tail, so only vb's dud block covers it.
     write_actuals(settings, [(1, "wr_a", 1.25), (1, "wr_b", 1.25)])
+    grade_weeks(settings, [1])
     v2 = replace(settings, model_version="v2")
 
     summary = run_calibrate(v2).summary
@@ -262,6 +238,7 @@ def test_each_distribution_is_scored_under_the_version_that_stored_it(settings, 
 def test_the_chart_is_drawn_unless_disabled(settings):
     write_players(settings, [(1, "qb", "QB", 20.0, 7.0)])
     write_actuals(settings, [(1, "qb", 20.0)])
+    grade_weeks(settings, [1])
 
     assert run_calibrate(settings).charts == []
     assert not settings.images_dir.exists()
