@@ -327,7 +327,13 @@ def print_correlation(players: pd.DataFrame, params: dict) -> None:
 def print_gate(gate: dict) -> None:
     """The held-out metrics of the fit beside v1's, and the gate's verdict."""
     table = []
-    for metric in ["player_coverage_50", "player_coverage_80", "player_coverage_95", "n_player_rows"]:
+    for metric in [
+        "player_coverage_50",
+        "player_coverage_80",
+        "player_coverage_95",
+        "player_zero_share",
+        "n_player_rows",
+    ]:
         for position, value in gate[metric].items():
             table.append([metric, position, str(value), str(gate["v1"][metric][position])])
     for metric in ["team_coverage_80", "team_mae", "moneyline_brier", "n_team_weeks", "n_matchups"]:

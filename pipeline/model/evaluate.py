@@ -91,10 +91,15 @@ def player_sigmas(players: pd.DataFrame, params: dict) -> list[float]:
     return [sigma(mu, position, spread, params) for mu, position, spread in columns]
 
 
-def pit(players: pd.DataFrame, dud: dict | None) -> np.ndarray:
+def pit(players: pd.DataFrame, dud: dict | None) -> tuple[np.ndarray, np.ndarray]:
     """Each actual's quantile under the player's score distribution, the lognormal mixed with a uniform dud on
-    [0, t * mu] when `dud` is set: u = p * min(x / (t * mu), 1) + (1 - p) * F_lognormal(x). A score of 0 or less
-    has u = 0."""
+    [0, t * mu] when `dud` is set: u = p * min(x / (t * mu), 1) + (1 - p) * F_lognormal(x), returned as the interval
+    (u_low, u_high), a single point for a score above 0.
+
+    A score of 0 or less counts as a dud, whose PIT is uniform on [0, p], so its interval is the whole dud component
+    [0, p]: the non-randomized PIT of a point mass (Czado, Gneiting and Held 2009, "Predictive model assessment for
+    count data"). Without a dud chance, under v1 or for a defense, that is [0, 0].
+    """
     mu = players["mu"].to_numpy(dtype=float)
     actual = players["actual"].to_numpy(dtype=float).clip(min=0.0)
     p_dud = dud_probabilities(players, dud)
@@ -103,25 +108,39 @@ def pit(players: pd.DataFrame, dud: dict | None) -> np.ndarray:
     columns = zip(lognormal_mu, players["sigma"], strict=True)
     mu_ln, sigma_ln = np.array([lognormal_params(mean, sd) for mean, sd in columns]).T
     with np.errstate(divide="ignore"):
-        lognormal_cdf = ndtr((np.log(actual) - mu_ln) / sigma_ln)
-    if dud is None:
-        return lognormal_cdf
-    dud_cdf = np.minimum(actual / (threshold * mu), 1.0)
-    return p_dud * dud_cdf + (1 - p_dud) * lognormal_cdf
+        u = ndtr((np.log(actual) - mu_ln) / sigma_ln)
+    if dud is not None:
+        dud_cdf = np.minimum(actual / (threshold * mu), 1.0)
+        u = p_dud * dud_cdf + (1 - p_dud) * u
+    scored_nothing = actual == 0
+    return np.where(scored_nothing, 0.0, u), np.where(scored_nothing, p_dud, u)
 
 
 def player_coverage(players: pd.DataFrame) -> dict[str, dict]:
-    """Row count and share of PITs `u` inside each central interval, by position in canonical order, then ALL."""
+    """Row count, share of actuals of 0 or less, and mean share of the PIT intervals [u_low, u_high] inside each
+    central band, by position in canonical order, then ALL."""
     groups = {position: players[players["position"] == position] for position in POSITION_ORDER}
     groups["ALL"] = players
     coverage = {}
     for name, group in groups.items():
         if group.empty:
             continue
-        coverage[name] = {"n": len(group)}
+        coverage[name] = {"n": len(group), "zero_share": float((group["actual"] <= 0).mean())}
+        u_low, u_high = group["u_low"].to_numpy(), group["u_high"].to_numpy()
         for level, (low, high) in COVERAGE_BANDS.items():
-            coverage[name][level] = float(group["u"].between(low, high).mean())
+            coverage[name][level] = float(band_coverage(u_low, u_high, low, high).mean())
     return coverage
+
+
+def band_coverage(u_low: np.ndarray, u_high: np.ndarray, low: float, high: float) -> np.ndarray:
+    """How much of each PIT interval lies inside [low, high]: the overlapping share of an interval, and 1 or 0 for
+    a point inside or outside."""
+    width = u_high - u_low
+    overlap = np.maximum(np.minimum(u_high, high) - np.maximum(u_low, low), 0.0)
+    point_inside = (low <= u_low) & (u_low <= high)
+    # A point has no width, and its 0 / 0 is replaced by whether it is inside.
+    with np.errstate(invalid="ignore"):
+        return np.where(width > 0, overlap / width, point_inside)
 
 
 def brier_score(p_first: pd.Series, first_points: pd.Series, second_points: pd.Series) -> float:
@@ -197,7 +216,8 @@ def held_out_metrics(
 
 def score_players(players: pd.DataFrame, params: dict) -> pd.DataFrame:
     players = players.assign(sigma=player_sigmas(players, params))
-    return players.assign(u=pit(players, params["dud"]))
+    u_low, u_high = pit(players, params["dud"])
+    return players.assign(u_low=u_low, u_high=u_high)
 
 
 def recompute_starters(lineups: pd.DataFrame, consensus: pd.DataFrame, params: dict) -> pd.DataFrame:
@@ -246,6 +266,7 @@ def pooled_metrics(players: pd.DataFrame, teams: pd.DataFrame, games: pd.DataFra
     brier = brier_score(games["p_first"], games["first_points"], games["second_points"])
     return {
         "player_coverage_80": {name: round(values[80], 4) for name, values in coverage.items()},
+        "player_zero_share": {name: round(values["zero_share"], 4) for name, values in coverage.items()},
         "team_coverage_80": round(float(inside.mean()), 4),
         "team_mae": round(float((teams["mean"] - teams["points"]).abs().mean()), 2),
         "moneyline_brier": round(brier, 4),

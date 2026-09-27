@@ -192,8 +192,13 @@ def test_player_coverage_scores_each_stored_distribution_against_the_actual_poin
     }
     assert json.loads(json.dumps(summary)) == summary
     expected = {("n_team_weeks", "ALL"): 0, ("n_matchups", "ALL"): 0}
-    for position, n_rows, coverage in [("QB", 1, 1.0), ("WR", 3, 2 / 3), ("ALL", 4, 0.75)]:
+    for position, n_rows, zero_share, coverage in [
+        ("QB", 1, 0.0, 1.0),
+        ("WR", 3, 1 / 3, 2 / 3),
+        ("ALL", 4, 0.25, 0.75),
+    ]:
         expected[("n_player_rows", position)] = n_rows
+        expected[("player_zero_share", position)] = zero_share
         for level in COVERAGE_BANDS:
             expected[(f"player_coverage_{level}", position)] = coverage
     assert stored_metrics(settings) == pytest.approx(expected)
@@ -211,7 +216,7 @@ def test_rerunning_a_week_replaces_its_metrics_and_leaves_other_weeks_alone(sett
 
     with closing(connect(settings, "odds")) as conn:
         rows = conn.execute("SELECT week, COUNT(*) AS n FROM calibration_metrics GROUP BY week").fetchall()
-    assert {row["week"]: row["n"] for row in rows} == {3: 10, 4: 10}
+    assert {row["week"]: row["n"] for row in rows} == {3: 12, 4: 12}
     assert stored_metrics(replace(settings, week=3))[("player_coverage_80", "ALL")] == 1.0
     assert stored_metrics(settings)[("player_coverage_80", "ALL")] == pytest.approx(2 / 3)
 

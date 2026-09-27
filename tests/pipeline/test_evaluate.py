@@ -16,6 +16,7 @@ from pipeline.model.evaluate import (
     load_team_weeks,
     pit,
     player_coverage,
+    pooled_metrics,
     recompute_starters,
     simulate_week,
 )
@@ -39,17 +40,25 @@ def test_a_correctly_specified_model_covers_each_band_at_its_nominal_rate(dud):
     players["sigma"] = 1 + 0.35 * players["mu"]
     players["actual"] = player_points(rng.standard_normal((1, n_players)), players, dud)[0]
 
-    coverage = player_coverage(players.assign(u=pit(players, dud)))["ALL"]
+    u_low, u_high = pit(players, dud)
+    coverage = player_coverage(players.assign(u_low=u_low, u_high=u_high))["ALL"]
 
     for level in COVERAGE_BANDS:
         assert coverage[level] == pytest.approx(level / 100, abs=0.01)
 
 
-def test_a_score_of_zero_or_less_is_the_bottom_of_the_distribution():
-    players = pd.DataFrame({"position": "WR", "mu": [10.0, 10.0], "sigma": [4.0, 4.0], "actual": [0.0, -1.5]})
+def test_a_score_of_zero_or_less_is_the_whole_dud_component_of_the_distribution():
+    players = pd.DataFrame({"position": ["WR", "WR", "DEF"], "mu": 10.0, "sigma": 4.0, "actual": [0.0, -1.5, 0.0]})
+    coefficients = DUD["by_position"]["WR"]
+    p_dud = expit(coefficients["c"] + coefficients["d"] * 10.0)
 
-    for dud in [None, DUD]:
-        assert pit(players, dud).tolist() == [0.0, 0.0]
+    u_low, u_high = pit(players, DUD)
+
+    assert u_low.tolist() == [0.0, 0.0, 0.0]
+    # A defense has no dud coefficients, so its zero is a point at the bottom of the distribution.
+    assert u_high.tolist() == pytest.approx([p_dud, p_dud, 0.0])
+    for bound in pit(players, None):
+        assert bound.tolist() == [0.0, 0.0, 0.0]
 
 
 def test_pit_is_the_cdf_of_the_dud_and_lognormal_mixture():
@@ -64,7 +73,9 @@ def test_pit_is_the_cdf_of_the_dud_and_lognormal_mixture():
 
     expected = p_dud * np.minimum(actual / (threshold * mu), 1) + (1 - p_dud) * lognormal.cdf(actual)
 
-    np.testing.assert_allclose(pit(players, DUD), expected)
+    u_low, u_high = pit(players, DUD)
+    np.testing.assert_allclose(u_low, expected)
+    np.testing.assert_array_equal(u_high, u_low)
 
 
 def test_each_week_is_held_out_once_in_season_and_week_order():
@@ -93,13 +104,40 @@ def test_only_scoring_positions_projected_for_at_least_two_points_are_eligible()
 
 
 def test_coverage_is_the_share_of_pits_inside_each_central_band_by_position_then_all():
-    players = pd.DataFrame({"position": ["WR", "WR", "WR", "QB"], "u": [0.5, 0.95, 0.2, 0.05]})
+    u = [0.5, 0.95, 0.2, 0.05]
+    players = pd.DataFrame({"position": ["WR", "WR", "WR", "QB"], "actual": 10.0, "u_low": u, "u_high": u})
 
     coverage = player_coverage(players)
 
     assert list(coverage) == ["QB", "WR", "ALL"]
-    assert coverage["WR"] == pytest.approx({"n": 3, 50: 1 / 3, 80: 2 / 3, 95: 1.0})
-    assert coverage["ALL"] == pytest.approx({"n": 4, 50: 0.25, 80: 0.5, 95: 1.0})
+    assert coverage["WR"] == pytest.approx({"n": 3, "zero_share": 0.0, 50: 1 / 3, 80: 2 / 3, 95: 1.0})
+    assert coverage["ALL"] == pytest.approx({"n": 4, "zero_share": 0.0, 50: 0.25, 80: 0.5, 95: 1.0})
+
+
+def test_a_zero_is_covered_by_the_share_of_its_dud_component_inside_each_band():
+    players = pd.DataFrame({"position": ["WR"], "actual": [0.0], "u_low": [0.0], "u_high": [0.2]})
+
+    coverage = player_coverage(players)["WR"]
+
+    # [0, 0.2] against [0.25, 0.75], [0.10, 0.90] and [0.025, 0.975].
+    assert coverage == pytest.approx({"n": 1, "zero_share": 1.0, 50: 0.0, 80: 0.5, 95: 0.875})
+
+
+def test_the_gate_reports_the_share_of_zeros_by_position_then_all():
+    players = pd.DataFrame(
+        {
+            "position": ["WR", "WR", "WR", "QB"],
+            "actual": [0.0, -1.5, 3.0, 12.0],
+            "u_low": [0.0, 0.0, 0.4, 0.5],
+            "u_high": [0.2, 0.2, 0.4, 0.5],
+        }
+    )
+    teams = pd.DataFrame({"mean": [100.0], "p10": [80.0], "p90": [120.0], "points": [110.0]})
+    games = pd.DataFrame({"p_first": [0.6], "first_points": [110.0], "second_points": [100.0]})
+
+    metrics = pooled_metrics(players, teams, games)
+
+    assert metrics["player_zero_share"] == {"QB": 0.0, "WR": 0.6667, "ALL": 0.5}
 
 
 def test_brier_score_counts_a_tie_as_half_a_win():

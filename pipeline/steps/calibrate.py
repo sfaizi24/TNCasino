@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS calibration_metrics (
   season INTEGER NOT NULL,
   week INTEGER NOT NULL,
   model_version TEXT NOT NULL,
+  -- by position: player_coverage_50, player_coverage_80, player_coverage_95, player_zero_share, n_player_rows;
+  -- at ALL only: team_coverage_80, n_team_weeks, moneyline_brier, n_matchups
   metric TEXT NOT NULL,
   position TEXT NOT NULL,
   value REAL NOT NULL,
@@ -91,7 +93,7 @@ def completed_weeks(ctx: StepContext) -> list[int]:
 
 
 def score_players(ctx: StepContext, weeks: list[int]) -> pd.DataFrame:
-    """The eligible stored distributions of `weeks` beside the actual points, with each row's PIT `u` taken
+    """The eligible stored distributions of `weeks` beside the actual points, with each row's PIT interval taken
     under the dud block of the model version that stored it."""
     settings = ctx.settings
     stored = pd.read_sql_query(STORED_PLAYERS, ctx.db("projections"), params=(settings.season, settings.week, MIN_MU))
@@ -103,8 +105,8 @@ def score_players(ctx: StepContext, weeks: list[int]) -> pd.DataFrame:
 
     scored = []
     for version, group in players.groupby("model_version"):
-        dud = load_params(version)["dud"]
-        scored.append(group.assign(u=pit(group, dud)))
+        u_low, u_high = pit(group, load_params(version)["dud"])
+        scored.append(group.assign(u_low=u_low, u_high=u_high))
     return pd.concat(scored, ignore_index=True)
 
 
@@ -134,6 +136,7 @@ def player_metrics(coverage: dict[str, dict]) -> dict[tuple[str, str], float]:
     for position, values in coverage.items():
         for level in COVERAGE_BANDS:
             metrics[(f"player_coverage_{level}", position)] = values[level]
+        metrics[("player_zero_share", position)] = values["zero_share"]
         metrics[("n_player_rows", position)] = values["n"]
     return metrics
 
@@ -157,8 +160,9 @@ def moneyline_metrics(games: pd.DataFrame) -> dict[tuple[str, str], float]:
 def print_coverage(coverage: dict[str, dict]) -> None:
     rows = []
     for position, values in coverage.items():
-        rows.append([position, str(values["n"]), *(f"{values[level]:.3f}" for level in COVERAGE_BANDS)])
-    print_table(["position", "n", *(f"{level}%" for level in COVERAGE_BANDS)], rows)
+        bands = [f"{values[level]:.3f}" for level in COVERAGE_BANDS]
+        rows.append([position, str(values["n"]), f"{values['zero_share']:.3f}", *bands])
+    print_table(["position", "n", "zeros", *(f"{level}%" for level in COVERAGE_BANDS)], rows)
 
 
 def save_metrics(ctx: StepContext, metrics: dict[tuple[str, str], float]) -> None:
