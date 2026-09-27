@@ -56,12 +56,18 @@ def correlate_teammates(normals: np.ndarray, starters: pd.DataFrame, pair_correl
     """Correlate, in place, the normals of starters who share an NFL team; unlisted position pairs stay at 0."""
     positions = starters["position"].to_numpy()
     for columns in starters.groupby("nfl_team").indices.values():
-        matrix = np.eye(len(columns))
-        for i, j in combinations(range(len(columns)), 2):
-            first, second = positions[columns[i]], positions[columns[j]]
-            rho = pair_correlations.get(f"{first}-{second}", pair_correlations.get(f"{second}-{first}", 0.0))
-            matrix[i, j] = matrix[j, i] = rho
+        matrix = teammate_matrix(positions[columns], pair_correlations)
         normals[:, columns] = normals[:, columns] @ np.linalg.cholesky(matrix).T
+
+
+def teammate_matrix(positions: list[str], pair_correlations: dict[str, float]) -> np.ndarray:
+    """Correlation matrix of teammates playing these positions; unlisted position pairs stay at 0."""
+    matrix = np.eye(len(positions))
+    for i, j in combinations(range(len(positions)), 2):
+        first, second = positions[i], positions[j]
+        rho = pair_correlations.get(f"{first}-{second}", pair_correlations.get(f"{second}-{first}", 0.0))
+        matrix[i, j] = matrix[j, i] = rho
+    return matrix
 
 
 def player_points(normals: np.ndarray, starters: pd.DataFrame, dud: dict | None) -> np.ndarray:
@@ -70,9 +76,7 @@ def player_points(normals: np.ndarray, starters: pd.DataFrame, dud: dict | None)
     sigma = starters["sigma"].to_numpy(dtype=float)
     p_dud = dud_probabilities(starters, dud)
     threshold = dud["threshold_ratio"] if dud else 0.0
-    # A dud scores uniformly on [0, threshold * mu], so it averages threshold * mu / 2 and the
-    # lognormal part carries the rest of the mean.
-    lognormal_mu = (mu - p_dud * threshold * mu / 2) / (1 - p_dud)
+    lognormal_mu = lognormal_means(mu, p_dud, threshold)
     mu_ln, sigma_ln = np.array([lognormal_params(m, s) for m, s in zip(lognormal_mu, sigma, strict=True)]).T
 
     points = np.exp(mu_ln + sigma_ln * normals)
@@ -83,6 +87,12 @@ def player_points(normals: np.ndarray, starters: pd.DataFrame, dud: dict | None)
         lognormal = np.exp(mu_ln[mixed] + sigma_ln[mixed] * ndtri((u - p) / (1 - p)))
         points[:, mixed] = np.where(u < p, u / p * threshold * mu[mixed], lognormal)
     return points
+
+
+def lognormal_means(mu: np.ndarray, p_dud: np.ndarray, threshold: float) -> np.ndarray:
+    """Mean of the lognormal part of the mixture. A dud scores uniformly on [0, threshold * mu], so it
+    averages threshold * mu / 2 and the lognormal part carries the rest of the mean mu."""
+    return (mu - p_dud * threshold * mu / 2) / (1 - p_dud)
 
 
 def dud_probabilities(starters: pd.DataFrame, dud: dict | None) -> np.ndarray:
