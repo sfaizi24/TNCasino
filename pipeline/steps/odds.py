@@ -16,7 +16,6 @@ NAME = "odds"
 
 CURVE_X = np.linspace(0, 300, 300)
 MARGIN_X = np.linspace(-40, 40, 161)
-MIN_PRICED_PROBABILITY = 0.001
 
 # The legacy odds.db tables plus season; the two curve tables also gain run_id so every run is kept.
 ODDS_DDL = """
@@ -213,9 +212,10 @@ def load_matchups(ctx: StepContext) -> list[tuple[int, int]]:
     return [tuple(rosters) for rosters in rosters_by_matchup.values() if len(rosters) == 2]
 
 
-def probability_to_american_odds(prob: float) -> str:
-    """Fair (no-vig) American odds as a numeric string; Flask parses it with int(), so p never reaches 0 or 1."""
-    prob = min(max(prob, MIN_PRICED_PROBABILITY), 1 - MIN_PRICED_PROBABILITY)
+def probability_to_american_odds(prob: float) -> str | None:
+    """Fair (no-vig) American odds as a numeric string; None for a chance of 0 or 1, which is not offered."""
+    if prob <= 0 or prob >= 1:
+        return None
     if prob >= 0.5:
         odds = -(prob / (1 - prob)) * 100
         return f"{round(odds)}"

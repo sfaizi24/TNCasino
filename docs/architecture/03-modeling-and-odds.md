@@ -100,7 +100,7 @@ All prices are **fair odds with no vig**, rounded to whole numbers and stored as
 | p ≥ 0.5 | −100 · p / (1 − p) |
 | p < 0.5 | +100 · (1 − p) / p |
 
-The pipeline clamps p to [0.001, 0.999] before converting, so a team that never wins in the simulation is priced `+99900` rather than the `"-∞"`/`"+∞"` strings notebook 07 stored (Flask parses the string with `int()`, so it must stay numeric). Every market shares the one converter in `pipeline/steps/odds.py`.
+Chances are not clamped, so a selection that wins one simulation in 50,000 is priced `+4999900` (the owner's decision of 2026-09-28, `docs/design/odds-models-2026.md` §10). A chance of exactly 0 or 1, a selection that wins in no simulation or in every one, has no price: its row keeps the probability, and the price column is NULL, which marks the selection as not offered. Every market shares the one converter in `pipeline/steps/odds.py`.
 
 | Market | Table | Derived from |
 |---|---|---|

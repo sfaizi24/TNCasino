@@ -184,13 +184,15 @@ def rows_per_run(settings: Settings) -> dict[str, dict[str, int]]:
         (0.5, "-100"),
         (0.75, "-300"),
         (0.2, "+400"),
-        (1.0, "-99900"),
-        (0.0, "+99900"),
+        (1 / 50000, "+4999900"),
+        (49999 / 50000, "-4999900"),
+        (1.0, None),
+        (0.0, None),
         (0.50004, "-100"),
         (0.49996, "+100"),
     ],
 )
-def test_american_odds_are_fair_and_stay_numeric_at_the_extremes(probability, american_odds):
+def test_american_odds_are_fair_and_unclamped_with_no_price_at_zero_or_one(probability, american_odds):
     assert odds.probability_to_american_odds(probability) == american_odds
 
 
@@ -254,14 +256,36 @@ def test_every_team_sharing_the_top_or_bottom_score_counts_the_sim(settings):
         (1, 500, 0.5, "-100"),
         (2, 500, 0.5, "-100"),
         (3, 500, 0.5, "-100"),
-        (4, 0, 0.0, "+99900"),
+        (4, 0, 0.0, None),
     ]
     lowest = read_rows(settings, "betting_odds_lowest_scorer", "team_id")
     assert pick(lowest, "team_id", "count", "probability", "odds") == [
-        (1, 0, 0.0, "+99900"),
+        (1, 0, 0.0, None),
         (2, 500, 0.5, "-100"),
-        (3, 0, 0.0, "+99900"),
-        (4, 1000, 1.0, "-99900"),
+        (3, 0, 0.0, None),
+        (4, 1000, 1.0, None),
+    ]
+
+
+def test_a_side_that_never_wins_keeps_its_row_without_a_price(settings):
+    # Roster 2 scores 100 in every sim; roster 1 beats it in 900 and ties the other 100.
+    write_week(
+        settings,
+        {1: np.repeat([105.0, 100.0], [900, 100]), 2: np.full(N_SIMS, 100.0)},
+        matchups=[(1, 1), (2, 1)],
+    )
+
+    run_odds(settings)
+
+    moneylines = read_rows(settings, "betting_odds_matchup_ml", "matchup")
+    assert pick(moneylines, "team1_win_prob", "team1_ml", "team2_win_prob", "team2_ml", "ties") == [
+        (0.9, "-900", 0.0, None, 100)
+    ]
+    team_lines = read_rows(settings, "betting_odds_team_ou", "team_id")
+    columns = ["team_id", "line", "push_count", "over_prob", "over_odds", "under_prob", "under_odds"]
+    assert pick(team_lines, *columns) == [
+        (1, 105.0, 900, 0.0, None, 0.1, "+900"),
+        (2, 100.0, 1000, 0.0, None, 0.0, None),
     ]
 
 
