@@ -2,13 +2,14 @@
 
 import json
 import sqlite3
+from collections.abc import Callable
 from itertools import permutations
 
 import numpy as np
 import pandas as pd
 from scipy.stats import gaussian_kde
 
-from pipeline import charts
+from pipeline import charts, markets
 from pipeline.runner import StepContext, StepResult, timestamp, utc_now
 from pipeline.settings import Settings
 
@@ -138,14 +139,16 @@ def run(ctx: StepContext) -> StepResult:
     matchups = load_matchups(ctx)
     ctx.log(f"simulation {simulation['run_id']}: {len(draws)} sims, {draws.shape[1]} teams, {len(matchups)} matchups")
 
+    scores = draws.to_numpy()
+    roster_ids = list(draws.columns)
     densities = score_densities(draws)
-    moneylines = matchup_moneylines(draws, teams, matchups)
+    moneylines = matchup_moneylines(scores, roster_ids, teams, matchups)
     tables = {
-        "betting_odds_team_ou": team_over_unders(draws, teams),
-        "betting_odds_matchup_ou": matchup_over_unders(draws, teams, matchups),
+        "betting_odds_team_ou": team_over_unders(scores, roster_ids, teams),
+        "betting_odds_matchup_ou": matchup_over_unders(scores, roster_ids, teams, matchups),
         "betting_odds_matchup_ml": moneylines,
-        "betting_odds_highest_scorer": scorer_odds(draws, teams, draws.max(axis=1)),
-        "betting_odds_lowest_scorer": scorer_odds(draws, teams, draws.min(axis=1)),
+        "betting_odds_highest_scorer": scorer_odds(scores, roster_ids, teams, markets.highest_scorer),
+        "betting_odds_lowest_scorer": scorer_odds(scores, roster_ids, teams, markets.lowest_scorer),
         "team_distribution_curves": distribution_curves(draws, teams, densities),
         "team_matchup_margin_curves": margin_curves(draws, teams),
     }
@@ -237,10 +240,10 @@ def matchup_columns(teams: pd.DataFrame, team1_id: int, team2_id: int) -> dict:
     }
 
 
-def over_under(points: pd.Series, line: float) -> dict:
-    """Over and under priced on their own share of sims; a push (points == line) pays neither side."""
-    over_prob = (points > line).mean()
-    under_prob = (points < line).mean()
+def over_under(line: float, over: markets.Outcome, under: markets.Outcome) -> dict:
+    """Over and under priced on their own share of sims, so a push (a score on the line) counts against both."""
+    over_prob = markets.probability(over)
+    under_prob = markets.probability(under)
     return {
         "line": line,
         "over_prob": over_prob,
@@ -250,30 +253,39 @@ def over_under(points: pd.Series, line: float) -> dict:
     }
 
 
-def team_over_unders(draws: pd.DataFrame, teams: pd.DataFrame) -> list[dict]:
+def team_over_unders(scores: np.ndarray, roster_ids: list[int], teams: pd.DataFrame) -> list[dict]:
     rows = []
-    for roster_id, points in draws.items():
-        line = np.round(points.median(), 2)
-        push_count = int((points == line).sum())
-        rows.append({**team_columns(teams, roster_id), **over_under(points, line), "push_count": push_count})
+    for team, roster_id in enumerate(roster_ids):
+        line = np.round(np.median(scores[:, team]), 2)
+        over = markets.team_total(scores, team, line, "over")
+        under = markets.team_total(scores, team, line, "under")
+        push_count = int(over.pushed.sum())
+        rows.append({**team_columns(teams, roster_id), **over_under(line, over, under), "push_count": push_count})
     return rows
 
 
-def matchup_over_unders(draws: pd.DataFrame, teams: pd.DataFrame, matchups: list[tuple[int, int]]) -> list[dict]:
+def matchup_over_unders(
+    scores: np.ndarray, roster_ids: list[int], teams: pd.DataFrame, matchups: list[tuple[int, int]]
+) -> list[dict]:
     rows = []
     for team1_id, team2_id in matchups:
-        combined = draws[team1_id] + draws[team2_id]
-        rows.append({**matchup_columns(teams, team1_id, team2_id), **over_under(combined, combined.median())})
+        team1, team2 = roster_ids.index(team1_id), roster_ids.index(team2_id)
+        line = np.median(scores[:, team1] + scores[:, team2])
+        over = markets.matchup_total(scores, team1, team2, line, "over")
+        under = markets.matchup_total(scores, team1, team2, line, "under")
+        rows.append({**matchup_columns(teams, team1_id, team2_id), **over_under(line, over, under)})
     return rows
 
 
-def matchup_moneylines(draws: pd.DataFrame, teams: pd.DataFrame, matchups: list[tuple[int, int]]) -> list[dict]:
+def matchup_moneylines(
+    scores: np.ndarray, roster_ids: list[int], teams: pd.DataFrame, matchups: list[tuple[int, int]]
+) -> list[dict]:
     rows = []
     for team1_id, team2_id in matchups:
-        team1 = draws[team1_id]
-        team2 = draws[team2_id]
-        team1_win_prob = (team1 > team2).mean()
-        team2_win_prob = (team2 > team1).mean()
+        team1, team2 = roster_ids.index(team1_id), roster_ids.index(team2_id)
+        team1_wins = markets.moneyline(scores, team1, team2)
+        team1_win_prob = markets.probability(team1_wins)
+        team2_win_prob = markets.probability(markets.moneyline(scores, team2, team1))
         rows.append(
             {
                 **matchup_columns(teams, team1_id, team2_id),
@@ -281,22 +293,27 @@ def matchup_moneylines(draws: pd.DataFrame, teams: pd.DataFrame, matchups: list[
                 "team1_ml": probability_to_american_odds(team1_win_prob),
                 "team2_win_prob": team2_win_prob,
                 "team2_ml": probability_to_american_odds(team2_win_prob),
-                "ties": int((team1 == team2).sum()),
+                "ties": int(team1_wins.pushed.sum()),
             }
         )
     return rows
 
 
-def scorer_odds(draws: pd.DataFrame, teams: pd.DataFrame, extremes: pd.Series) -> list[dict]:
-    """How often each team posts the week's extreme score; every team sharing it in a sim gets that sim."""
-    counts = draws.eq(extremes, axis=0).sum()
+def scorer_odds(
+    scores: np.ndarray,
+    roster_ids: list[int],
+    teams: pd.DataFrame,
+    rule: Callable[[np.ndarray, int], markets.Outcome],
+) -> list[dict]:
+    """Each team's chance in the highest or lowest scorer market that `rule` settles, likeliest first."""
     rows = []
-    for roster_id, count in counts.items():
-        probability = count / len(draws)
+    for team, roster_id in enumerate(roster_ids):
+        outcome = rule(scores, team)
+        probability = markets.probability(outcome)
         rows.append(
             {
                 **team_columns(teams, roster_id),
-                "count": int(count),
+                "count": int(outcome.won.sum()),
                 "probability": probability,
                 "odds": probability_to_american_odds(probability),
             }
