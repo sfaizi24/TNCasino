@@ -82,6 +82,7 @@ pipeline/
     params/v1.json     today's constants (alpha, beta, pos sigma, equal weights)
     params/v2.json     the first fit (WP6), kept as a record
     params/v2.1.json   fitted parameters, the default since 2026-09-27 (WP6c)
+    params/v2.2.json   v2.1 with Sleeper's QB bias at 1.45, the default since 2026-09-28
     sigma.py           sigma(mu, position, spread, params)
     sampling.py        joint player sampling: lognormal, dud mixture, copula
     fit.py             fitting from history (WP6)
@@ -109,7 +110,7 @@ from the environment, with no season, week or league, so nothing is asked of Sle
 fitted season's league in `league.db.leagues` (amended 2026-09-27).
 
 Fields: `season: int`, `week: int`, `league_id: str`, `seed: int` (default 1738),
-`n_sims: int` (default 50_000), `model_version: str` (default `"v2.1"` since 2026-09-27, `"v1"` before),
+`n_sims: int` (default 50_000), `model_version: str` (default `"v2.2"` since 2026-09-28, `"v2.1"` from 2026-09-27, `"v1"` before),
 `data_dir: Path` (`backend/data`), `db_paths: dict[str, Path]` (league, projections, odds, pipeline),
 `sims_dir: Path` (`backend/data/sims`), `images_dir: Path` (`backend/data/images`),
 `sleeper_username: str`.
@@ -548,6 +549,15 @@ v2.1 is fitted by the amended `fit-model` on the same 2025 weeks 10–16; the ac
 applies to v2.1 in v2's place. Why: each `player_week_stats` row names the version that stored
 it, and calibrate scores the row with that version's dud and floor blocks, so a refit under the
 old name would silently rescore what the first fit produced.
+
+Amended 2026-09-28 (v2.2). A parameter file may also be derived from another by hand and committed
+under a new version, with an `amended` block (`from_version`, `on`, `changed`, `why`, `check`) and the
+`fitted_on` and `gate` blocks of the fit it derives from. v2.2 is v2.1 with
+`sources."sleeper.com".bias.QB` at 1.45 instead of 4.41. Why: Sleeper's QB level fell between seasons
+(Sleeper minus ESPN at QB was +3.30 in 2025 weeks 10–16 and +0.45 in 2026 week 4), a refit on 2025
+alone reproduces 4.41, and an edit to v2.1 would leave the `player_week_stats` rows it already
+produced, with μ from the 4.41 bias, named as if they came from the new number.
+sources-2026-research.md §9 has the evidence and the week-4 check.
 
 Known v1 findings to fix: player sigma too wide at low mu and too narrow at high mu; source
 disagreement not predictive (so `alpha` carries little information); left tail too thin.

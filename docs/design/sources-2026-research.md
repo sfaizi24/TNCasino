@@ -708,6 +708,8 @@ it; team totals and over/under lines do not.
 - Runner-up: leave v2.1 and state the shift in the run notes.
 - What would change my mind: the week-4 accuracy row for Sleeper QBs coming in near +4.4.
 - Refitting on 2025 alone would reproduce 4.41, so a refit does not fix this unless it includes 2026 weeks.
+- Done 2026-09-28: `pipeline/model/params/v2.2.json` is v2.1 with the bias at 1.45 and an `amended`
+  block recording why; the default since that day.
 
 Test: after Monday 5 October, read `prediction_accuracy` for (2026, week 4, sleeper.com, QB). Its bias is the mean
 of projected minus actual. v2.1 implies about +4.4; I expect about +1.45. v2.1's QB sigma is about 7.5 points at a
