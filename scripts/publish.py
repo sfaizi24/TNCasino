@@ -49,7 +49,7 @@ TABLE_MAP = [
 ]
 
 # Tables protected from DROP (owned by Flask ORM)
-PROTECTED_TABLES = {"users", "bets", "weekly_stats", "betting_periods"}
+PROTECTED_TABLES = {"users", "bets", "bet_legs", "weekly_stats", "betting_periods"}
 
 
 def read_sqlite_table(db_path, table_name):

@@ -46,7 +46,7 @@ TABLES = [
     ("pipeline", "source_reviews", "source_reviews"),
 ]
 # Owned by the Flask app: `users` holds the site's accounts, while Sleeper's users publish as sleeper_users.
-PROTECTED_TABLES = {"users", "bets", "weekly_stats", "betting_periods"}
+PROTECTED_TABLES = {"users", "bets", "bet_legs", "weekly_stats", "betting_periods"}
 # The dashboard lists every run of the season, so these keep all their runs instead of the latest per week.
 RUN_HISTORY = {"pipeline_runs", "pipeline_steps"}
 

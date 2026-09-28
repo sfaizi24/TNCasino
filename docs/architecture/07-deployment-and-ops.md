@@ -89,22 +89,17 @@ Runs Flask on `0.0.0.0:5000` against whatever `DATABASE_URL` is set. The local `
 
 ## Tests
 
-88 tests in `tests/`, running in about a second against in-memory SQLite (`StaticPool`).
+709 tests in `tests/`, running in about 40 seconds. The app tests use in-memory SQLite (`StaticPool`); `test_balance_race.py` builds a file-backed SQLite app (`file_backed_app` in `conftest.py`) so twenty threads really race. The pipeline tests under `tests/pipeline/` run on scratch SQLite files and recorded fixtures, never the network or the real databases.
 
-| File | Covers |
-|---|---|
-| `conftest.py` | App fixture, logged-in/admin clients (faked via `sess["_user_id"]`), `analytics_tables` (hand-written DDL for 13 analytics tables), `seeded_analytics` (week 10 data) |
-| `test_models.py` (5) | ORM defaults and constraints |
-| `test_helpers.py` (6) | Current week, lazy lock logic |
-| `test_betting.py` (11) | Place/remove bets, balance and weekly-stat accounting, lock enforcement |
-| `test_settlement.py` (7) | Won/lost settlement, weekly stats, double-settle guard |
-| `test_admin.py` (5) | Admin access control, set period, unlock |
-| `test_leaderboard.py` (9) | Leaderboard rankings and highlights |
-| `test_odds.py` (25) | `query_analytics`, team mapping, odds and analytics endpoints against seeded tables |
-| `test_scrape.py` (9) | Week normalization and `validate_scraping` pass/fail rules |
-| `test_scrapers.py` (11) | Scraper imports and pure parsing helpers (no network) |
+| Area | Files | Covers |
+|---|---|---|
+| Fixtures | `conftest.py` | App fixture, logged-in/admin clients (faked via `sess["_user_id"]`), `analytics_tables` (hand-written DDL for the analytics tables, with `season` and `run_id`), `seeded_analytics` (2026 week 10), `file_backed_app` |
+| Markets and money (128) | `test_markets.py`, `test_betting.py`, `test_settlement.py`, `test_ledger.py`, `test_balance_race.py` | Market keys and quotes, placing, removing and settling by key, the refusals, accounting, lock enforcement, guarded balance changes, the twenty-thread race |
+| Odds and pages (75) | `test_odds.py`, `test_leaderboard.py`, `test_admin.py`, `test_admin_pipeline.py`, `test_helpers.py`, `test_models.py` | `query_analytics`, team mapping, odds and analytics endpoints against seeded tables, leaderboard rankings, admin access and periods, the pipeline dashboard, current week and lazy lock, ORM defaults and migrations |
+| Legacy scrapers (20) | `test_scrape.py`, `test_scrapers.py` | Week normalization, `validate_scraping` pass/fail rules, pure parsing helpers (no network) |
+| Pipeline (486) | `tests/pipeline/` (28 files) | One file per step or shared module: settings, runner, the CLI, sources, teams, names, scrape, verify, clean, match, stats, validate, league, lineups, waivers, sampling, simulate, odds, playoffs, standings, accuracy, fit, evaluate, calibrate, publish, legacy migration |
 
-**Not covered:** the real OAuth round trip, `/account` and CSRF, `pages.py` routes, `publish.py`, scrapers, notebooks, JavaScript, and anything Postgres-specific (the tests run on SQLite, prod runs on Postgres). The analytics DDL in `conftest.py` is maintained by hand and can drift from what the notebooks actually produce.
+**Not covered:** the real OAuth round trip, `/account/update-profile` and CSRF, `pages.py` routes, the legacy `scripts/publish.py`, the legacy scrapers' network paths, notebooks, JavaScript, and anything Postgres-specific (the tests run on SQLite, prod runs on Postgres). The analytics DDL in `conftest.py` is maintained by hand and can drift from what the pipeline actually produces.
 
 ## Observability
 

@@ -55,7 +55,7 @@ Ten Jupyter notebooks in `backend/notebooks/`, run sequentially. See `docs/archi
 - **Scrapers are fragile** — they break when source sites change layout. Expect failures and be ready to debug/adapt selectors.
 - **Player name matching is brittle** — injury indicators get stripped from names; mismatches cause silent data loss.
 - **Monte Carlo uses lognormal** (not normal) distribution. Position baseline variances: QB=7, RB=9, WR=10, TE=8, K=4, DST=7.
-- **Tests**: `python -m pytest` — 88 tests, all in-memory SQLite, runs in <1s. CI runs lint + tests on every push/PR.
+- **Tests**: `python -m pytest` — 709 tests (app tests on in-memory SQLite, pipeline tests on scratch SQLite files), about 40 s. CI runs lint + tests on every push/PR.
 - **`.env` required** — needs `SECRET_KEY`, `DATABASE_URL`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `ADMIN_EMAILS`. Local dev also needs `OAUTHLIB_INSECURE_TRANSPORT=1` and `OAUTHLIB_RELAX_TOKEN_SCOPE=1`. Prod sets `ANALYTICS_IMAGES_DIR=/var/lib/tncasino/analytics` so the analytics charts live outside the git working tree; local dev falls back to `backend/data/images/`.
 
 ## Code Quality Philosophy
@@ -85,15 +85,16 @@ app/                  — Flask application package
   database.py         — SQLAlchemy instance
   extensions.py       — Shared Flask extensions (CSRFProtect)
   ledger.py           — The only code that moves money: open_week, place, remove, settle
+  markets.py          — Market keys and their quotes: parse_key, key_for_row, find_quote, price_from_odds, potential_win
   migrations.py       — Schema migrations (run on startup)
-  models.py           — SQLAlchemy models (User, Bet, WeeklyStats, BettingPeriod)
+  models.py           — SQLAlchemy models (User, Bet, BetLeg, WeeklyStats, BettingPeriod)
   routes/
     helpers.py        — Shared helpers: query_analytics(), get_current_week(), check_betting_period_lock(), admin_required()
     pages.py          — Public pages: /, /about, /analytics, static files
     account.py        — User account: /account, /account/update-profile
-    odds.py           — Odds API: /api/matchups, /api/team_performance, etc. (9 routes)
+    odds.py           — Odds API: /api/matchups, /api/team_performance, etc. (12 routes)
     betting.py        — Betting: /betting, /leaderboard, /api/place_bet, etc. (6 routes)
-    admin.py          — Admin: /admin, /api/admin/* (7 routes)
+    admin.py          — Admin: /admin, /admin/pipeline, /api/admin/* (9 routes)
 
 scripts/              — Standalone CLI tools (invoked as `python -m scripts.<name>`)
   publish.py          — Push local SQLite analytics data to production PostgreSQL
