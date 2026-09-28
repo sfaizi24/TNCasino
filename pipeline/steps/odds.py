@@ -270,7 +270,7 @@ def matchup_over_unders(
     rows = []
     for team1_id, team2_id in matchups:
         team1, team2 = roster_ids.index(team1_id), roster_ids.index(team2_id)
-        line = np.median(scores[:, team1] + scores[:, team2])
+        line = np.round(np.median(scores[:, team1] + scores[:, team2]), 2)
         over = markets.matchup_total(scores, team1, team2, line, "over")
         under = markets.matchup_total(scores, team1, team2, line, "under")
         rows.append({**matchup_columns(teams, team1_id, team2_id), **over_under(line, over, under)})
