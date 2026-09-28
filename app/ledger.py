@@ -68,14 +68,27 @@ def remove(bet):
 
 def settle(bet, won):
     if won:
-        status = "won"
-        result = bet.potential_win
-        payout = bet.amount + bet.potential_win
-    else:
-        status = "lost"
-        result = -bet.amount
-        payout = 0.0
+        return _close(
+            bet,
+            "won",
+            result=bet.potential_win,
+            payout=bet.amount + bet.potential_win,
+            bets_won=WeeklyStats.bets_won + 1,
+        )
+    return _close(bet, "lost", result=-bet.amount, payout=0.0)
 
+
+def push(bet):
+    """A result exactly on the line: the stake comes back and the bet still counts as placed."""
+    return _close(bet, "push", result=0.0, payout=bet.amount)
+
+
+def void(bet):
+    """A bet that should never have stood: the stake comes back and it no longer counts as placed."""
+    return _close(bet, "void", result=0.0, payout=bet.amount, bets_placed=WeeklyStats.bets_placed - 1)
+
+
+def _close(bet, status, result, payout, **counters):
     settled_at = datetime.now(UTC)
     close = (
         update(Bet)
@@ -95,7 +108,7 @@ def settle(bet, won):
         bet,
         active_bets_amount=WeeklyStats.active_bets_amount - bet.amount,
         settled_pnl=WeeklyStats.settled_pnl + result,
-        bets_won=WeeklyStats.bets_won + (1 if won else 0),
+        **counters,
     )
     return True
 
