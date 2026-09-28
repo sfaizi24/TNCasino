@@ -83,3 +83,6 @@ _temp_*.py
 
 # Worktrees the Claude desktop app creates for background engineers
 .claude/worktrees/
+
+# Written permissions from projection sources: private, kept out of the public repo
+Source Permissions/
