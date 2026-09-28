@@ -1,9 +1,27 @@
 import pytest
+from sqlalchemy import text
 
-from app.models import Bet, WeeklyStats
-from tests.conftest import RUN_ID
+from app import ledger
+from app.models import Bet, User, WeeklyStats
+from tests.conftest import RUN_ID, set_points
 
 HIGHEST_SCORER_BET = {"market": "2026-w10-highest_scorer", "selection": "1", "run_id": RUN_ID, "amount": 100}
+MONEYLINE_BET = {"market": "2026-w10-moneyline-1v2", "selection": "2", "run_id": RUN_ID, "amount": 100}
+TEAM_TOTAL_BET = {
+    "market": "2026-w10-team_total-1",
+    "selection": "under",
+    "line": 110.5,
+    "run_id": RUN_ID,
+    "amount": 100,
+}
+LOWEST_SCORER_BET = {"market": "2026-w10-lowest_scorer", "selection": "1", "run_id": RUN_ID, "amount": 100}
+FIRST_PLACE_BET = {"market": "2026-first_place", "selection": "2", "run_id": RUN_ID, "amount": 100}
+
+# With Alice A on 110.50 and Bob B on 120.25, the moneyline on Bob wins at +130, the under on
+# Alice's 110.50 line pushes, the highest scorer on Alice loses, the lowest scorer on Alice wins at
+# +400 and the first place bet waits for the season.
+WEEK_OF_BETS = [MONEYLINE_BET, TEAM_TOTAL_BET, HIGHEST_SCORER_BET, LOWEST_SCORER_BET, FIRST_PLACE_BET]
+SCORES = {1: 110.5, 2: 120.25}
 
 
 def _place_legacy_bet(db_session, user, betting_period):
@@ -190,3 +208,264 @@ def test_a_second_settlement_leaves_the_leg_as_first_settled(
 
     assert reply == {"success": False, "error": "Bet already settled"}
     assert [leg.status for leg in db_session.session.get(Bet, bet_id).legs] == ["won"]
+
+
+def _place(client, bets):
+    ids = []
+    for bet in bets:
+        ids.append(client.post("/api/place_bet", json=bet).get_json()["bet_id"])
+    return ids
+
+
+def _preview(client, week=10):
+    return client.get(f"/api/admin/settlement_preview?week={week}").get_json()
+
+
+def _settle(client, shown):
+    return client.post("/api/admin/settle_outcomes", json={"week": 10, "bets": shown}).get_json()
+
+
+def _decided(preview):
+    """What the admin page sends when the admin settles the preview's decided bets."""
+    return [{"id": row["id"], "outcome": row["outcome"]} for row in preview["bets"] if row["outcome"] != "undecided"]
+
+
+def test_the_preview_judges_every_pending_bet_of_the_week_beside_the_scores(
+    admin_client, user, betting_period, seeded_analytics, db_session
+):
+    moneyline, team_total, highest, lowest, first_place = _place(admin_client, WEEK_OF_BETS)
+    legacy, _ = _place_legacy_bet(db_session, user, betting_period)
+    set_points(db_session.session, SCORES)
+
+    preview = _preview(admin_client)
+
+    assert preview["scores"] == [
+        {"roster_id": 1, "team": "Alice A", "points": 110.5},
+        {"roster_id": 2, "team": "Bob B", "points": 120.25},
+    ]
+    assert [(row["id"], row["user"], row["outcome"], row["reason"]) for row in preview["bets"]] == [
+        (moneyline, "Admin User", "won", "Bob B 120.25 vs Alice A 110.50"),
+        (team_total, "Admin User", "push", "Alice A 110.50, line 110.50"),
+        (highest, "Admin User", "lost", "highest 120.25: Bob B"),
+        (lowest, "Admin User", "won", "lowest 110.50: Alice A"),
+        (first_place, "Admin User", "undecided", "futures: settle by hand"),
+        (legacy.id, "Test User", "undecided", "placed before market keys: settle by hand"),
+    ]
+    assert (preview["success"], preview["week"], preview["decided"], preview["undecided"]) == (True, 10, 4, 2)
+
+
+def test_a_preview_row_shows_the_bet_as_it_was_placed(admin_client, user, betting_period, seeded_analytics, db_session):
+    [team_total] = _place(admin_client, [TEAM_TOTAL_BET])
+    legacy, _ = _place_legacy_bet(db_session, user, betting_period)
+    set_points(db_session.session, SCORES)
+
+    assert _preview(admin_client)["bets"] == [
+        {
+            "id": team_total,
+            "user": "Admin User",
+            "description": "Alice A O/U 110.50: Under",
+            "amount": 100.0,
+            "odds": "+100",
+            "potential_win": 100.0,
+            "market": "2026-w10-team_total-1",
+            "selection": "under",
+            "line": 110.5,
+            "outcome": "push",
+            "reason": "Alice A 110.50, line 110.50",
+        },
+        {
+            "id": legacy.id,
+            "user": "Test User",
+            "description": "Player A: Highest Scorer +200",
+            "amount": 100.0,
+            "odds": "+200",
+            "potential_win": 200.0,
+            "market": None,
+            "selection": None,
+            "line": None,
+            "outcome": "undecided",
+            "reason": "placed before market keys: settle by hand",
+        },
+    ]
+
+
+def test_the_preview_leaves_out_settled_bets_and_other_weeks(admin_client, betting_period, seeded_analytics):
+    moneyline, team_total = _place(admin_client, [MONEYLINE_BET, TEAM_TOTAL_BET])
+    admin_client.post("/api/admin/settle_bet", json={"bet_id": moneyline, "won": True})
+
+    assert [row["id"] for row in _preview(admin_client)["bets"]] == [team_total]
+    assert _preview(admin_client, week=11)["bets"] == []
+
+
+def test_a_bettor_without_a_name_shows_as_the_start_of_their_id(
+    admin_client, betting_period, seeded_analytics, db_session
+):
+    db_session.session.add(User(id="a1b2c3d4-e5f6", account_balance=900.0))
+    db_session.session.add(
+        Bet(
+            user_id="a1b2c3d4-e5f6",
+            bet_type="highest_scorer",
+            description="Player A: Highest Scorer +200",
+            week=10,
+            amount=100.0,
+            odds="+200",
+            potential_win=200.0,
+        )
+    )
+    db_session.session.commit()
+
+    preview = admin_client.get("/api/admin/settlement_preview").get_json()
+
+    assert (preview["week"], [row["user"] for row in preview["bets"]]) == (10, ["User #a1b2c3d4"])
+
+
+def test_a_week_without_published_scores_decides_nothing(admin_client, betting_period, seeded_analytics, db_session):
+    _place(admin_client, [MONEYLINE_BET])
+    db_session.session.execute(text("DELETE FROM sleeper_matchups"))
+    db_session.session.commit()
+
+    preview = _preview(admin_client)
+
+    assert (preview["scores"], preview["decided"], preview["undecided"]) == ([], 0, 1)
+    assert preview["bets"][0]["reason"] == "no score for Team 2 and Team 1"
+
+
+def test_a_week_with_scores_from_two_leagues_is_not_previewed(
+    admin_client, betting_period, seeded_analytics, db_session
+):
+    db_session.session.execute(
+        text("INSERT INTO sleeper_matchups (league_id, week, roster_id, points) VALUES ('old-league', 10, 99, 101.0)")
+    )
+    db_session.session.commit()
+
+    assert _preview(admin_client) == {
+        "success": False,
+        "error": "Week 10 has scores from 2 leagues; publish only this season's league",
+    }
+
+
+def test_settling_the_preview_closes_each_decided_bet_and_leaves_the_rest(
+    admin_client, admin_user, betting_period, seeded_analytics, db_session
+):
+    moneyline, team_total, highest, lowest, first_place = _place(admin_client, WEEK_OF_BETS)
+    set_points(db_session.session, SCORES)
+
+    reply = _settle(admin_client, _decided(_preview(admin_client)))
+
+    assert reply == {"success": True, "settled": [moneyline, team_total, highest, lowest], "skipped": []}
+    statuses = {bet.id: (bet.status, bet.legs[0].status) for bet in db_session.session.query(Bet)}
+    assert statuses == {
+        moneyline: ("won", "won"),
+        team_total: ("push", "push"),
+        highest: ("lost", "lost"),
+        lowest: ("won", "won"),
+        first_place: ("pending", "pending"),
+    }
+    week = db_session.session.query(WeeklyStats).filter_by(user_id=admin_user.id, week=10).one()
+    db_session.session.refresh(admin_user)
+    assert (admin_user.account_balance, admin_user.total_pnl) == (1330.0, 430.0)
+    assert (week.bets_placed, week.bets_won, week.settled_pnl, week.active_bets_amount) == (5, 2, 430.0, 100.0)
+
+
+def test_settling_skips_each_bet_that_no_longer_stands_as_shown(
+    admin_client, betting_period, seeded_analytics, db_session
+):
+    moneyline, team_total, highest, lowest, first_place = _place(admin_client, WEEK_OF_BETS)
+    admin_client.post("/api/admin/settle_bet", json={"bet_id": highest, "won": False})
+    set_points(db_session.session, SCORES)
+    shown = [
+        {"id": team_total, "outcome": "won"},
+        {"id": highest, "outcome": "lost"},
+        {"id": 999, "outcome": "won"},
+        {"id": first_place, "outcome": "won"},
+    ]
+
+    reply = _settle(admin_client, shown)
+
+    assert reply == {
+        "success": True,
+        "settled": [],
+        "skipped": [
+            {"id": team_total, "reason": "scores changed: now push"},
+            {"id": highest, "reason": "already settled"},
+            {"id": 999, "reason": "not found"},
+            {"id": first_place, "reason": "undecided"},
+        ],
+    }
+    statuses = [bet.status for bet in db_session.session.query(Bet).order_by(Bet.id)]
+    assert statuses == ["pending", "pending", "lost", "pending", "pending"]
+
+
+def test_bets_settled_before_a_failure_stand_and_the_rest_stay_pending(
+    admin_client, admin_user, betting_period, seeded_analytics, db_session, monkeypatch
+):
+    moneyline, _, _, lowest, _ = _place(admin_client, WEEK_OF_BETS)
+    set_points(db_session.session, SCORES)
+    settle = ledger.settle
+
+    def settle_until_lowest(bet, won):
+        if bet.id == lowest:
+            raise RuntimeError("connection lost")
+        return settle(bet, won)
+
+    monkeypatch.setattr(ledger, "settle", settle_until_lowest)
+
+    reply = _settle(admin_client, [{"id": moneyline, "outcome": "won"}, {"id": lowest, "outcome": "won"}])
+
+    db_session.session.refresh(admin_user)
+    assert reply == {"success": False, "error": "connection lost"}
+    assert (db_session.session.get(Bet, moneyline).status, db_session.session.get(Bet, lowest).status) == (
+        "won",
+        "pending",
+    )
+    assert admin_user.account_balance == 500.0 + 230.0
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("GET", "/api/admin/settlement_preview?week=10", None),
+        ("POST", "/api/admin/settle_outcomes", {"week": 10, "bets": [{"id": 1, "outcome": "won"}]}),
+        ("POST", "/api/admin/void_bet", {"bet_id": 1}),
+    ],
+)
+def test_the_settlement_routes_turn_a_bettor_away(
+    logged_in_client, betting_period, seeded_analytics, db_session, method, path, body
+):
+    [bet_id] = _place(logged_in_client, [MONEYLINE_BET])
+    set_points(db_session.session, SCORES)
+
+    response = logged_in_client.open(path, method=method, json=body)
+
+    assert response.status_code == 302
+    assert db_session.session.get(Bet, bet_id).status == "pending"
+
+
+def test_voiding_a_bet_refunds_it_and_stops_counting_it(
+    admin_client, admin_user, betting_period, seeded_analytics, db_session
+):
+    [bet_id] = _place(admin_client, [MONEYLINE_BET])
+
+    reply = admin_client.post("/api/admin/void_bet", json={"bet_id": bet_id}).get_json()
+
+    bet = db_session.session.get(Bet, bet_id)
+    [leg] = bet.legs
+    week = db_session.session.query(WeeklyStats).filter_by(user_id=admin_user.id, week=10).one()
+    db_session.session.refresh(admin_user)
+    assert reply == {"success": True}
+    assert (bet.status, bet.result, leg.status) == ("void", 0.0, "void")
+    assert bet.settled_at is not None
+    assert leg.settled_at == bet.settled_at
+    assert (admin_user.account_balance, admin_user.total_pnl) == (1000.0, 0.0)
+    assert (week.bets_placed, week.active_bets_amount) == (0, 0.0)
+
+
+def test_only_a_pending_bet_can_be_voided(admin_client, betting_period, seeded_analytics):
+    [bet_id] = _place(admin_client, [MONEYLINE_BET])
+    admin_client.post("/api/admin/void_bet", json={"bet_id": bet_id})
+
+    again = admin_client.post("/api/admin/void_bet", json={"bet_id": bet_id}).get_json()
+    unknown = admin_client.post("/api/admin/void_bet", json={"bet_id": 999}).get_json()
+
+    assert again == {"success": False, "error": "Bet already settled"}
+    assert unknown == {"success": False, "error": "Bet not found"}

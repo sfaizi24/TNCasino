@@ -3,6 +3,7 @@ from sqlalchemy import text
 
 from app.models import Bet, BetLeg
 from app.settlement import LOST, PUSH, UNDECIDED, WON, SettlementError, TeamScore, outcome_for, team_scores
+from tests.conftest import set_points
 
 MONEYLINE = "2026-w10-moneyline-1v2"
 TEAM_TOTAL = "2026-w10-team_total-1"
@@ -132,22 +133,14 @@ def test_a_key_that_does_not_parse_is_undecided_with_the_parse_error(market):
     assert (result.outcome, result.reason) == (UNDECIDED, "Unknown market")
 
 
-def _set_points(db_session, roster_id, points):
-    db_session.session.execute(
-        text("UPDATE sleeper_matchups SET points = :points WHERE week = 10 AND roster_id = :roster_id"),
-        {"points": points, "roster_id": roster_id},
-    )
-
-
 def test_scores_name_every_roster_of_the_weeks_league(seeded_analytics, db_session):
-    _set_points(db_session, 1, 120.5)
-    _set_points(db_session, 2, 98.25)
+    set_points(db_session.session, {1: 120.5, 2: 98.25})
 
     assert team_scores(10) == {1: TeamScore(1, "Alice A", 120.5), 2: TeamScore(2, "Bob B", 98.25)}
 
 
 def test_a_roster_at_zero_or_without_points_has_not_played(seeded_analytics, db_session):
-    _set_points(db_session, 1, 0.0)
+    set_points(db_session.session, {1: 0.0})
 
     assert team_scores(10) == {1: TeamScore(1, "Alice A", None), 2: TeamScore(2, "Bob B", None)}
 

@@ -417,6 +417,16 @@ def seed_analytics(session):
     session.commit()
 
 
+def set_points(session, points):
+    """Publish week 10 scores by roster id, the way the league step records them once games are played."""
+    for roster_id, score in points.items():
+        session.execute(
+            text("UPDATE sleeper_matchups SET points = :points WHERE week = 10 AND roster_id = :roster_id"),
+            {"points": score, "roster_id": roster_id},
+        )
+    session.commit()
+
+
 @pytest.fixture
 def analytics_tables(db_session):
     create_analytics_tables(db_session.session)
