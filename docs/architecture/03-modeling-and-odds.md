@@ -102,11 +102,23 @@ All prices are **fair odds with no vig**, rounded to whole numbers and stored as
 
 Chances are not clamped, so a selection that wins one simulation in 50,000 is priced `+4999900` (the owner's decision of 2026-09-28, `docs/design/odds-models-2026.md` §10). A chance of exactly 0 or 1, a selection that wins in no simulation or in every one, has no price: its row keeps the probability, and the price column is NULL, which marks the selection as not offered. Every market shares the one converter in `pipeline/steps/odds.py`.
 
+**Win rules.** The rule of every market lives in `pipeline/markets.py`, and the odds step prices through it. The module imports only numpy and the standard library, so the Flask app can re-price a bet with the same rules. A rule reads a run's score matrix, one row per simulation and one column per roster, and says for each simulation whether the selection won and whether it pushed:
+
+| Rule | Wins | Pushes |
+|---|---|---|
+| Moneyline | the team's score is above its opponent's | equal scores |
+| Over | the total, a team's score or a matchup's combined score, is above the line | the total is on the line |
+| Under | the total is below the line | the total is on the line |
+| Spread (no market yet) | the team's score plus the line is above its opponent's | exactly equal |
+| Highest / lowest scorer | the team has the simulation's top (bottom) score, and every tied team wins | never |
+
+Scores are compared exactly, in float64. A selection's chance is its share of all simulations, so a push counts against both sides: when some simulations land on a total's line, its over and under sum to less than 1. Total lines are the simulated median rounded to cents, and both sides are priced at the rounded line. The module also encodes the score matrix that publish stores for every run ([04](04-data-model.md#publishing-map)).
+
 | Market | Table | Derived from |
 |---|---|---|
 | **Moneyline** | `betting_odds_matchup_ml` | P(team1 > team2) across paired simulations; ties tracked separately |
-| **Team over/under** | `betting_odds_team_ou` | Line = the team's simulated **median**, so over/under are ≈50/50 and paid at `EVEN` |
-| **Matchup over/under** | `betting_odds_matchup_ou` | Line = median of combined score. **Computed but not published or offered.** |
+| **Team over/under** | `betting_odds_team_ou` | Line = the team's simulated **median** rounded to cents, so over/under are ≈50/50 and paid at `EVEN` |
+| **Matchup over/under** | `betting_odds_matchup_ou` | Line = median of the combined score, rounded to cents. Published, not yet offered. |
 | **Highest / lowest scorer** | `betting_odds_highest_scorer`, `_lowest_scorer` | Share of simulations in which each team has the max/min score (ties credit every tied team) |
 | **First place** | `betting_odds_first_place` | Notebook 09: P(rank 1) after adding each simulated week to current standings |
 | **Make playoffs** | `betting_odds_make_playoffs` | Notebook 09: P(rank ≤ 8). Offered in the app as the `make_playoffs` market |
@@ -196,7 +208,7 @@ The `playoffs` step (`pipeline/steps/playoffs.py`) replaces notebook 09. The not
 | **Make playoffs** | `betting_odds_make_playoffs` | Share of seasons it finishes in the top `playoff_teams` (league setting; 8 in 2026) |
 | — | `standings_probability_matrix` | Every team at every finishing position, including 0% |
 
-The step fails unless first place sums to 1 and make playoffs to `playoff_teams`, each within 1e-6. The two betting tables keep only 0.01 ≤ p ≤ 0.99, as before; the matrix is not published because the web app does not read it. All three tables carry `run_id` and `season`, and a rerun replaces the week's rows whichever run wrote them, so a week has one set of futures.
+The step fails unless first place sums to 1 and make playoffs to `playoff_teams`, each within 1e-6. The two betting tables keep only 0.01 ≤ p ≤ 0.99, as before; the matrix is published too, though the web app does not read it yet. All three tables carry `run_id` and `season`, and a rerun replaces the week's rows whichever run wrote them, so a week has one set of futures.
 
 Limits: weeks are independent draws from today's rosters, so trades, waiver moves and injuries after today are not modeled. A league with divisions is refused, since division winners would change who makes the playoffs. From `playoff_week_start` on the step writes nothing and warns that the playoffs have started.
 
