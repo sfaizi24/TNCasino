@@ -31,7 +31,7 @@ LEAGUE_SETTINGS = {
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(season=2026, week=4, league_id="L2026", n_sims=2000, data_dir=tmp_path)
+    return Settings(season=2026, week=4, league_id="L2026", n_sims=2000, data_dir=tmp_path, model_version="v1")
 
 
 def write_league(settings: Settings, matchups: list[tuple[int, int | None]] = ()) -> None:

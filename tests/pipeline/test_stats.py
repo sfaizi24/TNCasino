@@ -25,7 +25,7 @@ PLAYERS = [
 
 @pytest.fixture
 def settings(tmp_path):
-    settings = Settings(season=2026, week=WEEK, league_id="L2026", data_dir=tmp_path)
+    settings = Settings(season=2026, week=WEEK, league_id="L2026", data_dir=tmp_path, model_version="v1")
     conn = connect(settings, "league")
     conn.execute(NFL_PLAYERS_DDL)
     with conn:

@@ -118,7 +118,7 @@ def stored_metrics(settings: Settings) -> dict[tuple[str, str], float]:
 
 @pytest.fixture
 def settings(tmp_path):
-    settings = Settings(season=2026, week=4, league_id=LEAGUE_ID, data_dir=tmp_path)
+    settings = Settings(season=2026, week=4, league_id=LEAGUE_ID, data_dir=tmp_path, model_version="v1")
     for database, ddl in {"league": MIRROR_TABLES, "projections": PLAYER_WEEK_STATS_DDL}.items():
         with closing(connect(settings, database)) as conn:
             conn.executescript(ddl)

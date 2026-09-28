@@ -13,7 +13,7 @@ from pipeline.db import DB_NAMES
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "backend" / "data"
 SLEEPER_API = "https://api.sleeper.app/v1"
-DEFAULT_MODEL_VERSION = "v1"
+DEFAULT_MODEL_VERSION = "v2.1"
 
 
 class SettingsError(Exception):
