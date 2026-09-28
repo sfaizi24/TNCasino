@@ -159,7 +159,7 @@ The other end, where the product pays far too much:
 | 3 wins, 3 over 103.93, 6 under 109.44 | 10.7% | 24.5% | 12,242 | 2.29 | +837 | +308 |
 | 4 wins, 4 over 107.70, 1 under 108.58 | 12.2% | 25.2% | 12,575 | 2.06 | +719 | +298 |
 
-Chart `r2_parlay_ratio_distribution.png` shows the same thing as bars: how many combinations fall
+Chart `docs/design/images/r2_parlay_ratio_distribution.png` shows the same thing as bars: how many combinations fall
 in each 0.1-wide band of the ratio, two legs in the top panel and three legs below, on a log scale.
 Combinations whose legs all come from different matchups (blue) sit only in the 0.9 and 1.0 bands;
 combinations that share a matchup (orange) spread from 0 to beyond 2.5.
@@ -899,7 +899,7 @@ agree. The difference is in same-game pairs:
 | A team wins and goes under | 84 | 13.2% | 25.0% | 15.5% |
 
 Winners went over their own line in 29 of 42 games (69%); the product assumes 50%, and the model
-said 73.6%. Chart `r2_parlay_calibration_2025.png` shows the four moneyline-and-total kinds as
+said 73.6%. Chart `docs/design/images/r2_parlay_calibration_2025.png` shows the four moneyline-and-total kinds as
 grouped bars: the product's chance (grey), the joint chance (blue) and what happened (orange). The
 orange bars sit beside the blue ones.
 
@@ -1102,8 +1102,8 @@ the week-4 draws, never the originals.
 | `seed_prices.py` | exact seed, top 3, top 4 and last place | §4, §5 |
 | `spreads_week4.py` | week-4 spreads | §4 |
 
-Charts, bar charts only: `r2_parlay_ratio_distribution.png` (§1.2) and
-`r2_parlay_calibration_2025.png` (§7.3).
+Charts, bar charts only, committed under `docs/design/images/`: `r2_parlay_ratio_distribution.png`
+(§1.2) and `r2_parlay_calibration_2025.png` (§7.3).
 
 Not verified:
 
