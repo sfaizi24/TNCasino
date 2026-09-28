@@ -282,6 +282,23 @@ def test_tables_without_created_at_take_run_times_from_simulation_runs(local):
     assert tables["simulation_runs"]["run_id"].tolist() == ["a"]
 
 
+@pytest.mark.parametrize("table", ["betting_odds_matchup_ou", "standings_probability_matrix"])
+def test_matchup_totals_and_the_standings_matrix_publish_their_latest_run(local, target, table):
+    add_rows(
+        local["odds"],
+        table,
+        [
+            {"season": 2026, "week": 4, "run_id": "a", "created_at": "2026-09-23 03:01:00"},
+            {"season": 2026, "week": 4, "run_id": "b", "created_at": "2026-09-25 03:01:00"},
+        ],
+    )
+
+    tables, _ = read_tables(local, 2026, "L2026")
+    write_tables(target, tables)
+
+    assert [row["run_id"] for row in target_rows(target, table)] == ["b"]
+
+
 def test_the_flask_users_table_is_never_replaced(local, target):
     with target.begin() as conn:
         conn.execute(text("CREATE TABLE users (id INTEGER, email TEXT)"))

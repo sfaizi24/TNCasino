@@ -26,10 +26,12 @@ SCP_TIMEOUT_S = 60
 TABLES = [
     ("odds", "betting_odds_matchup_ml", "betting_odds_matchup_ml"),
     ("odds", "betting_odds_team_ou", "betting_odds_team_ou"),
+    ("odds", "betting_odds_matchup_ou", "betting_odds_matchup_ou"),
     ("odds", "betting_odds_highest_scorer", "betting_odds_highest_scorer"),
     ("odds", "betting_odds_lowest_scorer", "betting_odds_lowest_scorer"),
     ("odds", "betting_odds_first_place", "betting_odds_first_place"),
     ("odds", "betting_odds_make_playoffs", "betting_odds_make_playoffs"),
+    ("odds", "standings_probability_matrix", "standings_probability_matrix"),
     ("odds", "team_distribution_curves", "team_distribution_curves"),
     ("odds", "team_matchup_margin_curves", "team_matchup_margin_curves"),
     ("projections", "team_lineups", "team_lineups"),
