@@ -231,6 +231,11 @@
     color: var(--tnc-pending);
 }
 
+.tnc-lb-outcome-push {
+    background: var(--tnc-blue-tint);
+    color: var(--tnc-blue);
+}
+
 .tnc-card-h-bad {
     color: var(--tnc-loss);
 }
