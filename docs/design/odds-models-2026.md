@@ -1156,7 +1156,7 @@ Decisions for the owner, taken 2026-09-28:
 - **Brier score:** the average squared gap between a stated chance and the result (1 or 0); lower is better.
 - **Calibration:** whether things stated at a chance happen at that chance.
 - **Cash-out:** closing a pending bet early for an amount offered now.
-- **Clamp:** a cap on a chance before it becomes a price; today 0.1% to 99.9%.
+- **Clamp:** a cap on a chance before it becomes a price. The pipeline clamped to 0.1% to 99.9% until 2026-09-28, when the owner removed it (section 10, decision 2): a chance of exactly 0 or 1 now has no price and is not offered.
 - **Correlation:** from -1 to 1, how much two numbers rise and fall together; 0 is unrelated.
 - **Fair price:** a price with no house margin; at the model's chance the bettor expects the stake back.
 - **Futures:** bets settled at the end of the season, such as first place and make playoffs.

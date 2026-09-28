@@ -445,7 +445,7 @@ Replaces the odds half of notebook 07, reading the latest draws for the week.
 - Team O/U (line = median, push handling as today), matchup moneylines (ties as today), highest/lowest
   scorer (vectorised argmax/argmin over the sims × teams matrix), distribution curves
   (300-point grid, pdf/cdf JSON as today), matchup margin curves (`MARGIN_X = linspace(-40, 40, 161)`
-  split at 0 as today). American odds conversion as in notebook 07 (`probability_to_american_odds`, no vig), except that p is clamped to [0.001, 0.999] so the string stays numeric for Flask's `int()`.
+  split at 0 as today). American odds conversion as in notebook 07 (`probability_to_american_odds`, no vig) from the raw share of sims: a chance of exactly 0 or 1 has no price, the column is NULL and Flask does not offer the selection; there is no clamp (owner decision of 2026-09-28, `odds-models-2026.md` section 10, decision 2).
 - All rows carry `run_id` = the simulate run and `season`.
 - summary: `run_id, n_matchups, favourites: [{matchup, favourite, prob}], ou_lines: [{owner, line}], highest: [{owner, prob}] (top 3)`.
 - Acceptance: on the same draws the outputs equal the notebook's within float tolerance; the
