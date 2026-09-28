@@ -1,5 +1,9 @@
     let currentWeek = null;
     let currentPeriodData = null;
+    let pendingBets = [];
+    let settlementPreview = null;
+
+    const OUTCOME_LABELS = { won: 'Won', lost: 'Lost', push: 'Push', undecided: 'Undecided' };
 
     async function getCurrentWeek() {
         try {
@@ -132,22 +136,24 @@
         try {
             const response = await fetch(`/api/admin/pending_bets?week=${currentWeek}`);
             const bets = await response.json();
+            pendingBets = bets;
 
             if (bets.length === 0) {
                 document.getElementById('pendingBetsTable').innerHTML = '<p style="color: var(--tnc-fg-muted);">No pending bets for this week</p>';
                 return;
             }
 
-            let html = '<table><thead><tr><th>User</th><th>Description</th><th>Amount</th><th>Odds</th><th>Actions</th></tr></thead><tbody>';
+            let html = '<table class="bets-table"><thead><tr><th>User</th><th>Description</th><th>Amount</th><th>Odds</th><th>Actions</th></tr></thead><tbody>';
             bets.forEach(bet => {
                 html += `<tr>
                     <td>${bet.user_id.substring(0, 8)}...</td>
-                    <td>${bet.description}</td>
+                    <td>${escapeHtml(bet.description)}</td>
                     <td>$${bet.amount.toFixed(2)}</td>
                     <td>${bet.odds}</td>
                     <td>
                         <button class="btn btn-success btn-sm" onclick="settleBet(${bet.id}, true)">Win</button>
                         <button class="btn btn-danger btn-sm" onclick="settleBet(${bet.id}, false)">Loss</button>
+                        <button class="btn btn-outline btn-sm" onclick="voidBet(${bet.id})">Void</button>
                     </td>
                 </tr>`;
             });
@@ -199,6 +205,7 @@
             if (result.success) {
                 document.getElementById('settleMessage').innerHTML = `<div class="message message-success">Bet settled as ${won ? 'WON' : 'LOST'}!</div>`;
                 loadPendingBets();
+                loadSettlementPreview();
             } else {
                 document.getElementById('settleMessage').innerHTML = `<div class="message message-error">${result.error}</div>`;
             }
@@ -206,6 +213,150 @@
             console.error('Error settling bet:', error);
             document.getElementById('settleMessage').innerHTML = '<div class="message message-error">Error settling bet</div>';
         }
+    }
+
+    async function voidBet(betId) {
+        const bet = pendingBets.find(pending => pending.id === betId);
+        if (!confirm(`Void "${bet.description}" ($${bet.amount.toFixed(2)})? The stake goes back to the bettor and the bet stops counting.`)) {
+            return;
+        }
+
+        const message = document.getElementById('settleMessage');
+        try {
+            const response = await fetch('/api/admin/void_bet', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bet_id: betId })
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                message.innerHTML = '<div class="message message-success">Bet voided and the stake refunded</div>';
+                loadPendingBets();
+                loadSettlementPreview();
+            } else {
+                message.innerHTML = `<div class="message message-error">${escapeHtml(result.error)}</div>`;
+            }
+        } catch (error) {
+            console.error('Error voiding bet:', error);
+            message.innerHTML = '<div class="message message-error">Error voiding bet</div>';
+        }
+    }
+
+    async function loadSettlementPreview() {
+        const container = document.getElementById('settlementPreview');
+        try {
+            const response = await fetch(`/api/admin/settlement_preview?week=${currentWeek}`);
+            const preview = await response.json();
+
+            if (!preview.success) {
+                container.innerHTML = `<div class="message message-error">${escapeHtml(preview.error)}</div>`;
+                return;
+            }
+
+            settlementPreview = preview;
+            container.innerHTML = scoresStrip(preview) + outcomesTable(preview);
+        } catch (error) {
+            console.error('Error loading settlement preview:', error);
+            container.innerHTML = '<p style="color: #ff4444;">Error loading settlement preview</p>';
+        }
+    }
+
+    function scoresStrip(preview) {
+        const played = preview.scores.filter(score => score.points !== null);
+        if (played.length === 0) {
+            return `<p class="scores-strip" style="color: var(--tnc-fg-muted);">No scores published for week ${preview.week} yet</p>`;
+        }
+
+        let html = '<div class="scores-strip">';
+        preview.scores.forEach(score => {
+            const points = score.points === null ? 'no score' : score.points.toFixed(2);
+            html += `<span class="score-chip">${escapeHtml(score.team)} <strong>${points}</strong></span>`;
+        });
+        return html + '</div>';
+    }
+
+    function outcomesTable(preview) {
+        if (preview.bets.length === 0) {
+            return '<p style="color: var(--tnc-fg-muted);">No pending bets for this week</p>';
+        }
+
+        let html = '<table class="bets-table"><thead><tr><th>Bettor</th><th>Bet</th><th>Reason</th><th>Outcome</th></tr></thead><tbody>';
+        preview.bets.forEach(bet => {
+            html += `<tr>
+                <td>${escapeHtml(bet.user)}</td>
+                <td>${escapeHtml(bet.description)}</td>
+                <td>${escapeHtml(bet.reason)}</td>
+                <td><span class="status-badge ${bet.outcome}">${OUTCOME_LABELS[bet.outcome]}</span></td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+
+        if (preview.decided > 0) {
+            const noun = preview.decided === 1 ? 'bet' : 'bets';
+            html += `<button class="btn btn-success settle-outcomes" onclick="settleOutcomes(this)">Settle ${preview.decided} decided ${noun}</button>`;
+        }
+        return html;
+    }
+
+    async function settleOutcomes(button) {
+        button.disabled = true;
+        const decided = settlementPreview.bets.filter(bet => bet.outcome !== 'undecided');
+        const message = document.getElementById('outcomesMessage');
+
+        try {
+            const response = await fetch('/api/admin/settle_outcomes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    week: settlementPreview.week,
+                    bets: decided.map(bet => ({ id: bet.id, outcome: bet.outcome }))
+                })
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                message.innerHTML = settledMessage(result, decided);
+            } else {
+                message.innerHTML = `<div class="message message-error">${escapeHtml(result.error)}</div>`;
+            }
+        } catch (error) {
+            console.error('Error settling the week:', error);
+            message.innerHTML = '<div class="message message-error">Error settling bets</div>';
+        }
+
+        // Bets settled before any failure stand, so both cards reload either way.
+        loadSettlementPreview();
+        loadPendingBets();
+    }
+
+    function settledMessage(result, sent) {
+        const betsById = new Map(sent.map(bet => [bet.id, bet]));
+        let html = '';
+
+        if (result.settled.length > 0) {
+            html += `<div class="message message-success">Settled ${result.settled.length} of ${sent.length}`;
+            result.settled.forEach(id => {
+                const bet = betsById.get(id);
+                html += `<br>${escapeHtml(bet.description)} — ${OUTCOME_LABELS[bet.outcome]}`;
+            });
+            html += '</div>';
+        }
+
+        if (result.skipped.length > 0) {
+            html += `<div class="message message-error">Skipped ${result.skipped.length}`;
+            result.skipped.forEach(skip => {
+                html += `<br>${escapeHtml(betsById.get(skip.id).description)} — ${escapeHtml(skip.reason)}`;
+            });
+            html += '</div>';
+        }
+        return html;
+    }
+
+    function escapeHtml(text) {
+        return String(text ?? '').replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        }[c]));
     }
 
     document.getElementById('settleWeekForm').addEventListener('submit', async (e) => {
@@ -271,10 +422,12 @@
     async function initializeAdmin() {
         currentWeek = await getCurrentWeek();
         document.getElementById('currentWeek').textContent = currentWeek;
+        document.getElementById('settlementWeek').textContent = currentWeek;
         document.getElementById('periodWeek').value = currentWeek;
         document.getElementById('settleWeekNumber').value = currentWeek;
 
         loadBettingPeriods();
+        loadSettlementPreview();
         loadPendingBets();
     }
 

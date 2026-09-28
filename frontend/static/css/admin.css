@@ -61,6 +61,26 @@
         color: #888;
     }
 
+    .status-badge.won {
+        background: var(--tnc-win-tint);
+        color: var(--tnc-win);
+    }
+
+    .status-badge.lost {
+        background: var(--tnc-loss-tint);
+        color: var(--tnc-loss);
+    }
+
+    .status-badge.push {
+        background: var(--tnc-blue-tint);
+        color: var(--tnc-blue);
+    }
+
+    .status-badge.undecided {
+        background: var(--tnc-border-soft);
+        color: var(--tnc-fg-muted);
+    }
+
     .status-dot {
         width: 8px;
         height: 8px;
@@ -251,6 +271,30 @@
         color: #ff4444;
     }
 
+    .scores-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 20px;
+    }
+
+    .score-chip {
+        padding: 6px 12px;
+        background: var(--tnc-bg);
+        border: 1px solid var(--tnc-border);
+        border-radius: var(--tnc-r-pill);
+        font-size: 13px;
+        white-space: nowrap;
+    }
+
+    .score-chip strong {
+        font-family: var(--tnc-font-mono);
+    }
+
+    .settle-outcomes {
+        margin-top: 20px;
+    }
+
     .pipeline-weeks {
         display: flex;
         flex-wrap: wrap;
@@ -387,5 +431,24 @@
         }
         .quick-actions {
             justify-content: center;
+        }
+        .bets-table thead {
+            display: none;
+        }
+        .bets-table,
+        .bets-table tbody,
+        .bets-table tr,
+        .bets-table td {
+            display: block;
+        }
+        .bets-table tr {
+            padding: 10px 0;
+        }
+        .bets-table tr + tr {
+            border-top: 1px solid var(--tnc-border);
+        }
+        .bets-table td {
+            padding: 3px 0;
+            border-bottom: none;
         }
     }
