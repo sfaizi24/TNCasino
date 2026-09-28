@@ -16,6 +16,15 @@ from pipeline.steps.odds import ODDS_DDL
 FIXTURES = Path(__file__).parent / "fixtures" / "legacy"
 REAL_DB_DIR = DATA_DIR / "databases"
 
+
+def real_2025_originals() -> Path | None:
+    # Once migrate-legacy has run on the real databases, the untouched 2025 files live in its backup folder.
+    for folder in (REAL_DB_DIR / legacy.BACKUP_DIR_NAME, REAL_DB_DIR):
+        if (folder / "projections.db").exists():
+            return folder
+    return None
+
+
 LATER_WEEK_3_RUN = "seed_1738_20250918_100000"
 WEEK_4_RUN = "seed_1738_20250924_100000"
 
@@ -415,12 +424,12 @@ def test_missing_databases_stop_the_migration(tmp_path):
         legacy.migrate(settings)
 
 
-@pytest.mark.skipif(not (REAL_DB_DIR / "projections.db").exists(), reason="the 2025 databases are not on this machine")
+@pytest.mark.skipif(real_2025_originals() is None, reason="the 2025 databases are not on this machine")
 def test_the_real_2025_databases_migrate_without_losing_a_row(tmp_path):
     settings = Settings(season=2025, week=16, league_id="L2025", data_dir=tmp_path)
     settings.db_paths["league"].parent.mkdir()
     for name in legacy.LEGACY_DATABASES:
-        shutil.copy(REAL_DB_DIR / f"{name}.db", settings.db_paths[name])
+        shutil.copy(real_2025_originals() / f"{name}.db", settings.db_paths[name])
 
     result = legacy.migrate(settings)
 
