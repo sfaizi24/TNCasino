@@ -313,7 +313,7 @@ def insert(settings: Settings, database: str, table: str, rows: pd.DataFrame) ->
 
 @pytest.fixture
 def settings(tmp_path, monkeypatch):
-    """Empty league and projections databases, and a params directory holding only v1."""
+    """League and projections databases holding only the 2025 league, and a params directory holding only v1."""
     params_dir = tmp_path / "params"
     params_dir.mkdir()
     shutil.copy(model_params.PARAMS_DIR / "v1.json", params_dir)
@@ -327,6 +327,8 @@ def settings(tmp_path, monkeypatch):
     for database, ddl in tables.items():
         with closing(connect(settings, database)) as conn:
             conn.executescript(ddl)
+    league = pd.DataFrame([(LEAGUE_ID, "TN League 2025", "2025")], columns=["league_id", "name", "season"])
+    insert(settings, "league", "leagues", league)
     return settings
 
 

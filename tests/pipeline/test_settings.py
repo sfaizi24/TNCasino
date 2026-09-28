@@ -1,7 +1,7 @@
 import pytest
 
 from pipeline import settings as settings_module
-from pipeline.settings import Settings, SettingsError, load_settings
+from pipeline.settings import Settings, SettingsError, load_local_settings, load_settings
 
 REAL_SLEEPER_GET = settings_module.sleeper_get
 
@@ -106,6 +106,17 @@ def test_defaults_match_the_current_model(monkeypatch):
     assert settings.model_version == "v2.1"
     assert settings.seed == 1738
     assert settings.n_sims == 50_000
+
+
+def test_local_settings_take_the_environment_and_ask_sleeper_nothing(monkeypatch, tmp_path):
+    monkeypatch.setenv("PIPELINE_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PIPELINE_MODEL_VERSION", "v2")
+
+    settings = load_local_settings()
+
+    assert (settings.season, settings.week, settings.league_id) == (0, 0, "")
+    assert settings.data_dir == tmp_path
+    assert settings.model_version == "v2"
 
 
 def test_discovery_picks_the_successor_of_league_id(monkeypatch, league_env):

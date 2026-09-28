@@ -312,6 +312,8 @@ def settings(tmp_path):
 
     teams = [("4046", "KC"), ("6794", "MIN"), ("4035", "NO")]
     insert(settings, "league", "nfl_players", pd.DataFrame(teams, columns=["player_id", "team"]))
+    leagues = [(LEAGUE_ID, "TN League 2025", "2025"), ("L2024", "TN League 2024", "2024")]
+    insert(settings, "league", "leagues", pd.DataFrame(leagues, columns=["league_id", "name", "season"]))
     matchups = pd.DataFrame(
         [
             ("10_1", LEAGUE_ID, 10, 1, 120.5),
@@ -349,6 +351,19 @@ def test_team_weeks_carry_each_starters_sleeper_id_and_team_in_roster_and_slot_o
 def test_a_week_without_both_lineups_and_results_cannot_be_scored(settings):
     with pytest.raises(LookupError, match=r"weeks \[12, 13\] need both team_lineups and league L2025 matchups"):
         load_team_weeks(settings, 2025, [10, 12, 13])
+
+
+def test_a_season_the_league_step_never_mirrored_cannot_be_scored(settings):
+    with pytest.raises(LookupError, match="0 leagues for season 2023"):
+        load_team_weeks(settings, 2023, [10])
+
+
+def test_a_season_mirrored_from_two_leagues_cannot_be_scored(settings):
+    rerun = pd.DataFrame([("D2025", "TN League rerun", "2025")], columns=["league_id", "name", "season"])
+    insert(settings, "league", "leagues", rerun)
+
+    with pytest.raises(LookupError, match="2 leagues for season 2025"):
+        load_team_weeks(settings, 2025, [10])
 
 
 def test_a_simulated_week_scores_each_team_and_game_beside_what_happened():

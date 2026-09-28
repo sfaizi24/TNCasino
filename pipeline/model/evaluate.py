@@ -40,6 +40,7 @@ FROM team_lineups
 WHERE season = ?
 """
 
+SEASON_LEAGUES = "SELECT league_id FROM leagues WHERE season = ?"
 MATCHUPS = "SELECT week, roster_id, matchup_id_number, points FROM matchups WHERE league_id = ?"
 
 
@@ -175,21 +176,28 @@ def load_team_weeks(settings: Settings, season: int, weeks: list[int]) -> tuple[
     with closing(connect(settings, "projections")) as conn:
         lineups = pd.read_sql_query(LINEUPS, conn, params=(season,))
     with closing(connect(settings, "league")) as conn:
+        league_id = season_league_id(conn, season)
         teams = pd.read_sql_query("SELECT player_id AS sleeper_player_id, team AS nfl_team FROM nfl_players", conn)
-        matchups = pd.read_sql_query(MATCHUPS, conn, params=(settings.league_id,))
+        matchups = pd.read_sql_query(MATCHUPS, conn, params=(league_id,))
 
     # Migrated week 10 still holds two retired slots, "RB" and "WR", beside the canonical nine.
     lineups = lineups[lineups["week"].isin(weeks) & lineups["slot"].isin(list(SLOT_RANK))]
     matchups = matchups[matchups["week"].isin(weeks)].assign(season=season)
     missing = sorted(set(weeks) - (set(lineups["week"]) & set(matchups["week"])))
     if missing:
-        raise LookupError(
-            f"season {season} weeks {missing} need both team_lineups and league {settings.league_id} matchups"
-        )
+        raise LookupError(f"season {season} weeks {missing} need both team_lineups and league {league_id} matchups")
 
     lineups = lineups.merge(teams, on="sleeper_player_id", how="left")
     lineups = lineups.assign(slot_rank=lineups["slot"].map(SLOT_RANK))
     return lineups.sort_values(["week", "roster_id", "slot_rank"], ignore_index=True), matchups
+
+
+def season_league_id(league: sqlite3.Connection, season: int) -> str:
+    """The league the `league` step mirrored for `season`, whose matchups are that season's results."""
+    league_ids = [row[0] for row in league.execute(SEASON_LEAGUES, (season,))]
+    if len(league_ids) != 1:
+        raise LookupError(f"league.db holds {len(league_ids)} leagues for season {season}, expected one")
+    return league_ids[0]
 
 
 def leave_one_week_out(rows: pd.DataFrame) -> Iterator[tuple[tuple[int, int], pd.DataFrame, pd.DataFrame]]:

@@ -19,12 +19,18 @@ def settings(tmp_path):
     return Settings(season=2026, week=4, league_id="L2026", data_dir=tmp_path)
 
 
+@pytest.fixture
+def local_settings(tmp_path):
+    return Settings(season=0, week=0, league_id="", data_dir=tmp_path)
+
+
 @pytest.fixture(autouse=True)
-def offline_settings(monkeypatch, settings):
+def offline_settings(monkeypatch, settings, local_settings):
     def load_settings(week=None, season=None):
         return replace(settings, week=week or settings.week, season=season or settings.season)
 
     monkeypatch.setattr(cli, "load_settings", load_settings)
+    monkeypatch.setattr(cli, "load_local_settings", lambda: local_settings)
 
 
 @pytest.fixture(autouse=True)
@@ -239,17 +245,17 @@ def test_review_reject_deletes_that_sources_rows_for_the_week(settings, capsys):
     assert "python -m pipeline run --week 4 --from clean" in output
 
 
-def test_fit_model_passes_the_season_weeks_and_version(monkeypatch, settings):
+def test_fit_model_passes_the_season_weeks_and_version(monkeypatch, local_settings):
     calls = []
     monkeypatch.setitem(
         sys.modules, "pipeline.model.fit", SimpleNamespace(fit_and_write=lambda *args: calls.append(args))
     )
 
     assert cli.main(["fit-model", "--season", "2025", "--weeks", "10-16", "--out", "v2"]) == 0
-    assert calls == [(settings, 2025, [10, 11, 12, 13, 14, 15, 16], "v2", [])]
+    assert calls == [(local_settings, 2025, [10, 11, 12, 13, 14, 15, 16], "v2", [])]
 
 
-def test_fit_model_passes_the_excluded_sources(monkeypatch, settings):
+def test_fit_model_passes_the_excluded_sources(monkeypatch, local_settings):
     calls = []
     monkeypatch.setitem(
         sys.modules, "pipeline.model.fit", SimpleNamespace(fit_and_write=lambda *args: calls.append(args))
@@ -267,7 +273,7 @@ def test_fit_model_passes_the_excluded_sources(monkeypatch, settings):
         "fantasypros.com, fanduel.com",
     ]
     assert cli.main(argv) == 0
-    assert calls == [(settings, 2025, [12], "v2", ["fantasypros.com", "fanduel.com"])]
+    assert calls == [(local_settings, 2025, [12], "v2", ["fantasypros.com", "fanduel.com"])]
 
 
 @pytest.mark.parametrize(("value", "weeks"), [("12", [12]), ("10-12", [10, 11, 12]), ("7-7", [7])])
@@ -283,12 +289,12 @@ def test_week_range_rejects_anything_else(value):
     assert exited.value.code == 2
 
 
-def test_migrate_legacy_runs_the_migration(monkeypatch, settings):
+def test_migrate_legacy_runs_the_migration_on_the_local_databases(monkeypatch, local_settings):
     calls = []
     monkeypatch.setitem(sys.modules, "pipeline.legacy", SimpleNamespace(migrate=calls.append))
 
     assert cli.main(["migrate-legacy"]) == 0
-    assert calls == [settings]
+    assert calls == [local_settings]
 
 
 def test_settings_errors_exit_one_with_the_reason(monkeypatch, capsys):

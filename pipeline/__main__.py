@@ -14,7 +14,7 @@ from pipeline.runner import (
     run_steps,
     step_note,
 )
-from pipeline.settings import SettingsError, load_settings
+from pipeline.settings import SettingsError, load_local_settings, load_settings
 from pipeline.sources import SOURCE_NAMES
 from pipeline.steps import STEP_ORDER, resolve_steps
 
@@ -74,14 +74,14 @@ def fit_model_command(args: argparse.Namespace) -> int:
     # Imported on use, like the legacy migration below, so the weekly commands never depend on them.
     from pipeline.model.fit import fit_and_write
 
-    fit_and_write(load_settings(), args.season, args.weeks, args.out, args.exclude_sources)
+    fit_and_write(load_local_settings(), args.season, args.weeks, args.out, args.exclude_sources)
     return 0
 
 
 def migrate_legacy_command(args: argparse.Namespace) -> int:
     from pipeline.legacy import migrate
 
-    migrate(load_settings())
+    migrate(load_local_settings())
     return 0
 
 

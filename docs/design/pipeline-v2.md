@@ -80,7 +80,8 @@ pipeline/
     __init__.py
     params.py          load_params(version) -> dict; path helpers
     params/v1.json     today's constants (alpha, beta, pos sigma, equal weights)
-    params/v2.json     fitted parameters (WP6)
+    params/v2.json     the first fit (WP6), kept as a record
+    params/v2.1.json   fitted parameters, the default since 2026-09-27 (WP6c)
     sigma.py           sigma(mu, position, spread, params)
     sampling.py        joint player sampling: lognormal, dud mixture, copula
     fit.py             fitting from history (WP6)
@@ -103,9 +104,12 @@ Until then it must keep passing CI; do not edit it.
 ## 4. Settings
 
 `pipeline/settings.py` exposes `Settings` (frozen dataclass) and `load_settings(week=None, season=None)`.
+`fit-model` and `migrate-legacy` build theirs with `load_local_settings()` instead: the paths and defaults
+from the environment, with no season, week or league, so nothing is asked of Sleeper; `fit-model` finds the
+fitted season's league in `league.db.leagues` (amended 2026-09-27).
 
 Fields: `season: int`, `week: int`, `league_id: str`, `seed: int` (default 1738),
-`n_sims: int` (default 50_000), `model_version: str` (default `"v1"` until WP6 flips it),
+`n_sims: int` (default 50_000), `model_version: str` (default `"v2.1"` since 2026-09-27, `"v1"` before),
 `data_dir: Path` (`backend/data`), `db_paths: dict[str, Path]` (league, projections, odds, pipeline),
 `sims_dir: Path` (`backend/data/sims`), `images_dir: Path` (`backend/data/images`),
 `sleeper_username: str`.

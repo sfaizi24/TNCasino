@@ -50,14 +50,23 @@ def load_settings(week: int | None = None, season: int | None = None) -> Setting
         season = int(os.environ.get("PIPELINE_SEASON") or fetch_nfl_state()["season"])
     if week is None:
         week = int(fetch_nfl_state()["week"])
-    return Settings(
-        season=season,
-        week=week,
-        league_id=os.environ.get("PIPELINE_LEAGUE_ID") or discover_league_id(season),
-        model_version=os.environ.get("PIPELINE_MODEL_VERSION") or DEFAULT_MODEL_VERSION,
-        data_dir=Path(os.environ.get("PIPELINE_DATA_DIR") or DATA_DIR),
-        sleeper_username=os.environ.get("SLEEPER_USERNAME", ""),
-    )
+    league_id = os.environ.get("PIPELINE_LEAGUE_ID") or discover_league_id(season)
+    return Settings(season=season, week=week, league_id=league_id, **environment_fields())
+
+
+def load_local_settings() -> Settings:
+    """Settings for fit-model and migrate-legacy, which read only the local databases: the paths and defaults
+    from the environment, with no season, week or league, so nothing is asked of Sleeper."""
+    load_dotenv(PROJECT_ROOT / ".env")
+    return Settings(season=0, week=0, league_id="", **environment_fields())
+
+
+def environment_fields() -> dict:
+    return {
+        "model_version": os.environ.get("PIPELINE_MODEL_VERSION") or DEFAULT_MODEL_VERSION,
+        "data_dir": Path(os.environ.get("PIPELINE_DATA_DIR") or DATA_DIR),
+        "sleeper_username": os.environ.get("SLEEPER_USERNAME", ""),
+    }
 
 
 def discover_league_id(season: int) -> str:
