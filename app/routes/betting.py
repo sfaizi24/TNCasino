@@ -1,9 +1,11 @@
+import logging
 from datetime import UTC, datetime
 
 from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 from sqlalchemy import Integer, case, cast, desc, distinct, func
 
+from .. import ledger
 from ..database import db
 from .helpers import (
     check_betting_period_lock,
@@ -206,7 +208,7 @@ def leaderboard():
 @betting_bp.route("/api/place_bet", methods=["POST"])
 @login_required
 def place_bet():
-    from ..models import Bet, WeeklyStats
+    from ..models import Bet
 
     data = request.get_json()
     bet_type = data.get("bet_type", "moneyline")
@@ -236,22 +238,6 @@ def place_bet():
         return jsonify({"success": False, "error": "Insufficient balance"})
 
     try:
-        weekly_stat = db.session.query(WeeklyStats).filter_by(user_id=current_user.id, week=week).first()
-
-        if not weekly_stat:
-            weekly_stat = WeeklyStats(
-                user_id=current_user.id,
-                week=week,
-                starting_balance=current_user.account_balance,
-                ending_balance=current_user.account_balance,
-                pnl=0.0,
-                active_bets_amount=0.0,
-                settled_pnl=0.0,
-                bets_placed=0,
-                bets_won=0,
-            )
-            db.session.add(weekly_stat)
-
         if bet_type == "highest_scorer":
             owner = data.get("owner")
             odds = data.get("odds")
@@ -268,7 +254,6 @@ def place_bet():
             else:
                 potential_win = amount * (100 / abs(odds_num))
 
-            current_user.account_balance -= amount
             description = f"{owner}: Highest Scorer {odds}"
 
             bet = Bet(
@@ -282,18 +267,7 @@ def place_bet():
                 status="pending",
                 created_at=datetime.now(UTC),
             )
-
-            db.session.add(bet)
-            weekly_stat.bets_placed += 1
-            weekly_stat.active_bets_amount += amount
-            weekly_stat.ending_balance = current_user.account_balance
-            weekly_stat.pnl = weekly_stat.ending_balance - weekly_stat.starting_balance
-
-            db.session.commit()
-            print(
-                f"[BET SUCCESS] User {current_user.id} placed highest scorer bet: {description}, Amount: ${amount}, New balance: ${current_user.account_balance}"
-            )
-            return jsonify({"success": True, "new_balance": current_user.account_balance})
+            return _record_bet(bet)
 
         if bet_type == "lowest_scorer":
             owner = data.get("owner")
@@ -309,7 +283,6 @@ def place_bet():
             else:
                 potential_win = amount * (100 / abs(odds_num))
 
-            current_user.account_balance -= amount
             description = f"{owner}: Lowest Scorer {odds}"
 
             bet = Bet(
@@ -323,18 +296,7 @@ def place_bet():
                 status="pending",
                 created_at=datetime.now(UTC),
             )
-
-            db.session.add(bet)
-            weekly_stat.bets_placed += 1
-            weekly_stat.active_bets_amount += amount
-            weekly_stat.ending_balance = current_user.account_balance
-            weekly_stat.pnl = weekly_stat.ending_balance - weekly_stat.starting_balance
-
-            db.session.commit()
-            print(
-                f"[BET SUCCESS] User {current_user.id} placed lowest scorer bet: {description}, Amount: ${amount}, New balance: ${current_user.account_balance}"
-            )
-            return jsonify({"success": True, "new_balance": current_user.account_balance})
+            return _record_bet(bet)
 
         if bet_type == "first_seed":
             owner = data.get("owner")
@@ -350,7 +312,6 @@ def place_bet():
             else:
                 potential_win = amount * (100 / abs(odds_num))
 
-            current_user.account_balance -= amount
             description = f"{owner}: #1 Seed {odds}"
 
             bet = Bet(
@@ -364,18 +325,7 @@ def place_bet():
                 status="pending",
                 created_at=datetime.now(UTC),
             )
-
-            db.session.add(bet)
-            weekly_stat.bets_placed += 1
-            weekly_stat.active_bets_amount += amount
-            weekly_stat.ending_balance = current_user.account_balance
-            weekly_stat.pnl = weekly_stat.ending_balance - weekly_stat.starting_balance
-
-            db.session.commit()
-            print(
-                f"[BET SUCCESS] User {current_user.id} placed first seed bet: {description}, Amount: ${amount}, New balance: ${current_user.account_balance}"
-            )
-            return jsonify({"success": True, "new_balance": current_user.account_balance})
+            return _record_bet(bet)
 
         if bet_type == "ammad_playoff":
             owner = data.get("owner")
@@ -391,7 +341,6 @@ def place_bet():
             else:
                 potential_win = amount * (100 / abs(odds_num))
 
-            current_user.account_balance -= amount
             description = f"{owner}: Ammad Playoff {odds}"
 
             bet = Bet(
@@ -405,18 +354,7 @@ def place_bet():
                 status="pending",
                 created_at=datetime.now(UTC),
             )
-
-            db.session.add(bet)
-            weekly_stat.bets_placed += 1
-            weekly_stat.active_bets_amount += amount
-            weekly_stat.ending_balance = current_user.account_balance
-            weekly_stat.pnl = weekly_stat.ending_balance - weekly_stat.starting_balance
-
-            db.session.commit()
-            print(
-                f"[BET SUCCESS] User {current_user.id} placed ammad playoff bet: {description}, Amount: ${amount}, New balance: ${current_user.account_balance}"
-            )
-            return jsonify({"success": True, "new_balance": current_user.account_balance})
+            return _record_bet(bet)
 
         if bet_type == "team_ou":
             team_idx = data.get("team_idx")
@@ -436,7 +374,6 @@ def place_bet():
             line = team_data["line"]
 
             potential_win = amount
-            current_user.account_balance -= amount
             description = friendly_description(f"{owner} O/U {line:.1f}: {choice.capitalize()}")
 
             bet = Bet(
@@ -450,18 +387,7 @@ def place_bet():
                 status="pending",
                 created_at=datetime.now(UTC),
             )
-
-            db.session.add(bet)
-            weekly_stat.bets_placed += 1
-            weekly_stat.active_bets_amount += amount
-            weekly_stat.ending_balance = current_user.account_balance
-            weekly_stat.pnl = weekly_stat.ending_balance - weekly_stat.starting_balance
-
-            db.session.commit()
-            print(
-                f"[BET SUCCESS] User {current_user.id} placed team O/U bet: {description}, Amount: ${amount}, New balance: ${current_user.account_balance}"
-            )
-            return jsonify({"success": True, "new_balance": current_user.account_balance})
+            return _record_bet(bet)
 
         # Moneyline bets
         matchup_idx = data.get("matchup_idx")
@@ -501,7 +427,6 @@ def place_bet():
         else:
             potential_win = amount * (100 / abs(odds_num))
 
-        current_user.account_balance -= amount
         description = f"{matchup_display}: {team_name} {odds}"
 
         bet = Bet(
@@ -515,29 +440,33 @@ def place_bet():
             status="pending",
             created_at=datetime.now(UTC),
         )
-
-        db.session.add(bet)
-        weekly_stat.bets_placed += 1
-        weekly_stat.active_bets_amount += amount
-        weekly_stat.ending_balance = current_user.account_balance
-        weekly_stat.pnl = weekly_stat.ending_balance - weekly_stat.starting_balance
-
-        db.session.commit()
-        print(
-            f"[BET SUCCESS] User {current_user.id} placed moneyline bet: {description}, Amount: ${amount}, New balance: ${current_user.account_balance}"
-        )
-        return jsonify({"success": True, "new_balance": current_user.account_balance})
+        return _record_bet(bet)
 
     except Exception as e:
+        # Roll back before the prints below: a failed transaction cannot reload current_user.
+        db.session.rollback()
         print(f"[BET ERROR] User {current_user.id} - Exception occurred: {type(e).__name__}: {str(e)}")
         print(f"[BET ERROR] Request data was: {data}")
         print(f"[BET ERROR] User balance: {current_user.account_balance}, Bet amount: {amount}")
         import traceback
 
         traceback.print_exc()
-        db.session.rollback()
         print(f"[BET ERROR] Database rolled back for user {current_user.id}")
         return jsonify({"success": False, "error": str(e)})
+
+
+def _record_bet(bet):
+    ledger.open_week(bet.user_id, bet.week)
+    if not ledger.place(bet):
+        db.session.rollback()
+        logging.info(f"Refused bet for user {bet.user_id}: balance below the {bet.amount} stake")
+        return jsonify({"success": False, "error": "Insufficient balance"})
+
+    db.session.commit()
+    db.session.refresh(current_user)
+    new_balance = current_user.account_balance
+    logging.info(f"User {bet.user_id} placed {bet.bet_type} bet {bet.description}, new balance {new_balance}")
+    return jsonify({"success": True, "new_balance": new_balance})
 
 
 @betting_bp.route("/api/my_bets")
@@ -580,7 +509,7 @@ def get_my_bets():
 @betting_bp.route("/api/remove_bet/<int:bet_id>", methods=["DELETE"])
 @login_required
 def remove_bet(bet_id):
-    from ..models import Bet, WeeklyStats
+    from ..models import Bet
 
     try:
         bet = db.session.query(Bet).filter_by(id=bet_id, user_id=current_user.id, status="pending").first()
@@ -594,19 +523,13 @@ def remove_bet(bet_id):
                 {"success": False, "error": f"Bets are locked as of {lock_time.strftime('%Y-%m-%d %I:%M %p UTC')}"}
             )
 
-        current_user.account_balance += bet.amount
+        if not ledger.remove(bet):
+            # Settled or removed by another request since the read above.
+            db.session.rollback()
+            return jsonify({"success": False, "error": "Bet not found"})
 
-        weekly_stat = db.session.query(WeeklyStats).filter_by(user_id=current_user.id, week=bet.week).first()
-
-        if weekly_stat:
-            weekly_stat.bets_placed -= 1
-            weekly_stat.active_bets_amount -= bet.amount
-            weekly_stat.ending_balance = current_user.account_balance
-            weekly_stat.pnl = weekly_stat.ending_balance - weekly_stat.starting_balance
-
-        db.session.delete(bet)
         db.session.commit()
-
+        db.session.refresh(current_user)
         return jsonify({"success": True, "new_balance": current_user.account_balance})
 
     except Exception as e:
