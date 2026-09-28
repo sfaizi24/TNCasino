@@ -101,9 +101,11 @@
                         <td class="tnc-tab-num
                             {% if b.status == 'won' %}tnc-pos
                             {% elif b.status == 'lost' %}tnc-neg
+                            {% elif b.status == 'removed' %}tnc-acct-week-flat
                             {% endif %}">
                             {% if b.status == 'pending' %}—
                             {% elif b.status == 'won' %}+${{ "%.2f"|format(b.result) }}
+                            {% elif b.status == 'removed' %}Removed
                             {% else %}-${{ "%.2f"|format(b.amount) }}
                             {% endif %}
                         </td>

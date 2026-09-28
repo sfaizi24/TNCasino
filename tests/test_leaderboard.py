@@ -1,4 +1,5 @@
-from app.models import Bet, BettingPeriod, User, WeeklyStats
+from app.models import Bet, BetLeg, BettingPeriod, User, WeeklyStats
+from tests.conftest import RUN_ID
 
 
 def _seed_leaderboard_data(db_session):
@@ -71,7 +72,7 @@ def _seed_leaderboard_data(db_session):
         ),
         Bet(
             user_id="lb-2",
-            bet_type="team_ou",
+            bet_type="team_total",
             description="Bob loss",
             amount=100.0,
             odds="EVEN",
@@ -224,8 +225,6 @@ def test_popular_bet_stats(client, db_session, captured_templates):
     _seed_leaderboard_data(db_session)
 
     # Add extra bets with the same description to test group-by aggregation
-    from app.models import Bet
-
     extra_bets = [
         Bet(
             user_id="lb-2",
@@ -249,6 +248,16 @@ def test_popular_bet_stats(client, db_session, captured_templates):
             result=0.0,
             week=10,
         ),
+        Bet(
+            user_id="lb-3",
+            bet_type="highest_scorer",
+            description="Alice bet",
+            amount=25.0,
+            odds="+200",
+            potential_win=50.0,
+            status="removed",
+            week=10,
+        ),
     ]
     db_session.session.add_all(extra_bets)
     db_session.session.commit()
@@ -259,7 +268,7 @@ def test_popular_bet_stats(client, db_session, captured_templates):
     popular = context["popular_highest"]
 
     assert popular is not None
-    # "Alice bet" appears 3 times: 1 won + 1 lost + 1 pending
+    # "Alice bet" counts 3 times: 1 won + 1 lost + 1 pending; the removed one is left out
     assert popular.count == 3
     assert popular.wins == 1
     assert popular.losses == 1
@@ -280,3 +289,67 @@ def test_empty_leaderboard(client, db_session, captured_templates):
 
     resp = client.get("/leaderboard")
     assert resp.status_code == 200
+
+
+def test_new_bets_rank_beside_legacy_ones_and_removed_bets_are_left_out(client, db_session):
+    _seed_leaderboard_data(db_session)
+    won = Bet(
+        user_id="lb-2",
+        bet_type="highest_scorer",
+        description="Bob B: Highest Scorer +500",
+        amount=50.0,
+        odds="+500",
+        potential_win=250.0,
+        status="won",
+        result=250.0,
+        week=10,
+        run_id=RUN_ID,
+        price=500,
+        probability=0.17,
+    )
+    won.legs = [
+        BetLeg(
+            season=2026,
+            week=10,
+            market="2026-w10-highest_scorer",
+            selection="2",
+            price=500,
+            probability=0.17,
+            status="won",
+        )
+    ]
+    removed = Bet(
+        user_id="lb-3",
+        bet_type="lowest_scorer",
+        description="Carol D: Lowest Scorer +230",
+        amount=50.0,
+        odds="+230",
+        potential_win=115.0,
+        status="removed",
+        week=10,
+        run_id=RUN_ID,
+        price=230,
+        probability=0.3,
+    )
+    removed.legs = [
+        BetLeg(
+            season=2026,
+            week=10,
+            market="2026-w10-lowest_scorer",
+            selection="3",
+            price=230,
+            probability=0.3,
+            status="void",
+        )
+    ]
+    db_session.session.add_all([won, removed])
+    db_session.session.commit()
+
+    resp = client.get("/leaderboard")
+    page = resp.get_data(as_text=True)
+
+    assert resp.status_code == 200
+    assert "Bob B: Highest Scorer +500" in page  # the best odds that won
+    assert "Bob loss" in page  # a legacy row, the worst odds that lost
+    assert "Carol D: Lowest Scorer" not in page
+    assert "Most Popular Lowest Scorer" not in page

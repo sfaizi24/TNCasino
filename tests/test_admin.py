@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from app.database import db
-from app.models import BettingPeriod
+from app.models import Bet, BettingPeriod
 
 
 def test_admin_page_requires_admin(logged_in_client, user):
@@ -18,6 +18,27 @@ def test_admin_api_rejects_anonymous(client):
     resp = client.get("/api/admin/pending_bets")
     # Should redirect to login or return 401
     assert resp.status_code in (302, 401)
+
+
+def test_pending_bets_default_to_the_current_week(admin_client, admin_user, db_session):
+    db_session.session.add(BettingPeriod(week=12, lock_time=datetime.now(UTC)))
+    for week in (10, 12):
+        db_session.session.add(
+            Bet(
+                user_id=admin_user.id,
+                bet_type="moneyline",
+                description=f"Week {week} bet",
+                amount=10.0,
+                odds="+100",
+                potential_win=10.0,
+                week=week,
+            )
+        )
+    db_session.session.commit()
+
+    bets = admin_client.get("/api/admin/pending_bets").get_json()
+
+    assert [bet["description"] for bet in bets] == ["Week 12 bet"]
 
 
 def test_set_betting_period(admin_client, admin_user, db_session):

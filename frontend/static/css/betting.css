@@ -117,7 +117,8 @@
     color: var(--tnc-fg-muted);
     letter-spacing: 0.6px;
     text-transform: uppercase;
-    min-width: 32px;
+    /* Wide enough for FUTURES, so every group's chips start in one column. */
+    min-width: 46px;
     flex-shrink: 0;
     padding-top: 8px;
 }
@@ -138,6 +139,8 @@
     border: 1px solid var(--tnc-border);
     border-radius: 5px;
     padding: 3px 3px 3px 10px;
+    /* The height of a chip with its Cancel button, which a bet that can no longer be removed lacks. */
+    min-height: 34px;
     font-size: var(--tnc-fs-12);
     color: var(--tnc-fg);
     line-height: 1;
@@ -147,6 +150,7 @@
 
 .tnc-active-chip-name {
     font-weight: var(--tnc-fw-medium);
+    line-height: 1.3;
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -198,7 +202,7 @@
 
     .tnc-active-label {
         padding-top: 9px;
-        min-width: 36px;
+        min-width: 50px;
         font-size: 10.5px;
     }
 
@@ -209,6 +213,7 @@
     .tnc-active-chip {
         font-size: var(--tnc-fs-13);
         padding: 4px 4px 4px 11px;
+        min-height: 40px;
         gap: 9px;
         border-radius: 6px;
     }
@@ -221,6 +226,14 @@
         height: 30px;
         padding: 0 14px;
         font-size: var(--tnc-fs-12);
+    }
+}
+
+/* Five tabs fit across a phone only a size down from the shared tab style. */
+@media (max-width: 480px) {
+    .tnc-tabs .tnc-tab {
+        padding: 8px 4px;
+        font-size: var(--tnc-fs-11);
     }
 }
 
@@ -633,6 +646,37 @@
 
 .tnc-scorer-pick .tnc-mc-odd-prob {
     font-size: var(--tnc-fs-12);
+}
+
+.tnc-fu-head {
+    grid-column: 1 / -1;
+    margin: 10px 2px 0;
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-11);
+    font-weight: var(--tnc-fw-bold);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.tnc-fu-head:first-child {
+    margin-top: 0;
+}
+
+/* No lineup toggle sits under a futures pick, so the card pads its own foot. */
+.tnc-fu-card {
+    padding-bottom: 10px;
+}
+
+.tnc-mc-noprice {
+    display: block;
+    padding: 7px 6px;
+    border: 1.5px dashed var(--tnc-border);
+    border-radius: 5px;
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-13);
+    font-weight: var(--tnc-fw-semi);
+    line-height: 1.1;
+    text-align: center;
 }
 
 .tnc-toast {

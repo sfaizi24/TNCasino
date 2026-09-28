@@ -5,12 +5,15 @@ from datetime import UTC, datetime, timedelta
 
 from app.database import db
 from app.models import Bet, BettingPeriod, User, WeeklyStats
+from tests.conftest import RUN_ID, create_analytics_tables, seed_analytics
 
-STAKE = {"bet_type": "highest_scorer", "amount": 100, "owner": "Player A", "odds": "+100"}
+STAKE = {"market": "2026-w10-team_total-1", "selection": "under", "line": 110.5, "run_id": RUN_ID, "amount": 100}
 
 
 def _seed(app):
     with app.app_context():
+        create_analytics_tables(db.session)
+        seed_analytics(db.session)
         db.session.add_all(
             [
                 User(id="racer", username="racer", account_balance=1000.0, total_pnl=0.0),

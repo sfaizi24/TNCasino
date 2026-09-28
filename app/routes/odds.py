@@ -1,9 +1,11 @@
 import json
+import logging
 from collections import defaultdict
 
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
+from .. import markets
 from .helpers import (
     display_name_for,
     get_current_week,
@@ -27,7 +29,11 @@ def get_matchups():
         team_mapping = get_team_mapping(week)
 
         rows = query_analytics(
-            "SELECT * FROM betting_odds_matchup_ml WHERE week = :week ORDER BY matchup",
+            """
+            SELECT * FROM betting_odds_matchup_ml
+            WHERE season = (SELECT MAX(season) FROM betting_odds_matchup_ml) AND week = :week
+            ORDER BY matchup
+            """,
             {"week": week},
         )
 
@@ -48,6 +54,8 @@ def get_matchups():
                     "team2_name": team2_owner,
                     "team2_win_prob": row["team2_win_prob"],
                     "team2_ml": row["team2_ml"],
+                    "market": markets.key_for_row("moneyline", row),
+                    "run_id": row["run_id"],
                 }
             )
 
@@ -66,7 +74,11 @@ def get_team_performance():
         week = get_current_week()
 
         rows = query_analytics(
-            "SELECT * FROM betting_odds_team_ou WHERE week = :week ORDER BY owner",
+            """
+            SELECT * FROM betting_odds_team_ou
+            WHERE season = (SELECT MAX(season) FROM betting_odds_team_ou) AND week = :week
+            ORDER BY owner
+            """,
             {"week": week},
         )
 
@@ -79,6 +91,10 @@ def get_team_performance():
                     "line": row["line"],
                     "over_prob": row["over_prob"],
                     "under_prob": row["under_prob"],
+                    "market": markets.key_for_row("team_total", row),
+                    "run_id": row["run_id"],
+                    "over_odds": row["over_odds"],
+                    "under_odds": row["under_odds"],
                 }
             )
 
@@ -91,15 +107,15 @@ def get_team_performance():
         return jsonify([])
 
 
-def _scorer_query(table_name):
+def _scorer_query(market_name):
     week = get_current_week()
     rows = query_analytics(
         f"""
-        SELECT s.owner, s.probability, s.odds, ou.line AS proj_pts
-        FROM {table_name} s
+        SELECT s.season, s.week, s.team_id, s.run_id, s.owner, s.probability, s.odds, ou.line AS proj_pts
+        FROM betting_odds_{market_name} s
         LEFT JOIN betting_odds_team_ou ou
-            ON ou.owner = s.owner AND ou.week = s.week
-        WHERE s.week = :week
+            ON ou.team_id = s.team_id AND ou.season = s.season AND ou.week = s.week
+        WHERE s.season = (SELECT MAX(season) FROM betting_odds_{market_name}) AND s.week = :week
         ORDER BY s.probability DESC
         """,
         {"week": week},
@@ -110,6 +126,9 @@ def _scorer_query(table_name):
             "win_prob": round(row["probability"] * 100, 1),
             "odds": row["odds"],
             "proj_pts": round(row["proj_pts"], 1) if row["proj_pts"] is not None else None,
+            "market": markets.key_for_row(market_name, row),
+            "run_id": row["run_id"],
+            "team_id": row["team_id"],
         }
         for row in rows
     ]
@@ -118,7 +137,7 @@ def _scorer_query(table_name):
 @odds_bp.route("/api/highest_scorer")
 def get_highest_scorer():
     try:
-        return jsonify(_scorer_query("betting_odds_highest_scorer"))
+        return jsonify(_scorer_query("highest_scorer"))
     except Exception as e:
         print(f"Error getting highest scorer: {e}")
         import traceback
@@ -130,7 +149,7 @@ def get_highest_scorer():
 @odds_bp.route("/api/lowest_scorer")
 def get_lowest_scorer():
     try:
-        return jsonify(_scorer_query("betting_odds_lowest_scorer"))
+        return jsonify(_scorer_query("lowest_scorer"))
     except Exception as e:
         print(f"Error getting lowest scorer: {e}")
         import traceback
@@ -139,61 +158,47 @@ def get_lowest_scorer():
         return jsonify([])
 
 
+def _futures_rows(market_name):
+    """The latest futures run, which is the highest week published for the latest season."""
+    table = f"betting_odds_{market_name}"
+    rows = query_analytics(
+        f"""
+        SELECT season, week, team_id, run_id, owner, probability, american_odds
+        FROM {table}
+        WHERE season = (SELECT MAX(season) FROM {table})
+          AND week = (SELECT MAX(week) FROM {table} WHERE season = (SELECT MAX(season) FROM {table}))
+        ORDER BY probability DESC
+        """
+    )
+    return [
+        {
+            "owner": display_name_for(row["owner"]),
+            "win_prob": round(row["probability"] * 100, 1),
+            "odds": row["american_odds"],
+            "market": markets.key_for_row(market_name, row),
+            "run_id": row["run_id"],
+            "team_id": row["team_id"],
+            "week": row["week"],
+        }
+        for row in rows
+    ]
+
+
 @odds_bp.route("/api/first_place")
 def get_first_place():
     try:
-        week = get_current_week()
-
-        rows = query_analytics(
-            "SELECT owner, probability, american_odds FROM betting_odds_first_place WHERE week = :week ORDER BY probability DESC",
-            {"week": week},
-        )
-
-        teams = []
-        for row in rows:
-            teams.append(
-                {
-                    "owner": display_name_for(row["owner"]),
-                    "win_prob": round(row["probability"] * 100, 1),
-                    "odds": row["american_odds"],
-                }
-            )
-
-        return jsonify(teams)
-    except Exception as e:
-        print(f"Error getting first place: {e}")
-        import traceback
-
-        traceback.print_exc()
+        return jsonify(_futures_rows("first_place"))
+    except Exception:
+        logging.exception("Could not list the first-place odds")
         return jsonify([])
 
 
-@odds_bp.route("/api/ammad_playoff")
-def get_ammad_playoff():
+@odds_bp.route("/api/make_playoffs")
+def get_make_playoffs():
     try:
-        week = get_current_week()
-
-        rows = query_analytics(
-            "SELECT owner, probability, american_odds FROM betting_odds_make_playoffs WHERE week = :week ORDER BY probability DESC",
-            {"week": week},
-        )
-
-        teams = []
-        for row in rows:
-            teams.append(
-                {
-                    "owner": display_name_for(row["owner"]),
-                    "win_prob": round(row["probability"] * 100, 1),
-                    "odds": row["american_odds"],
-                }
-            )
-
-        return jsonify(teams)
-    except Exception as e:
-        print(f"Error getting ammad playoff: {e}")
-        import traceback
-
-        traceback.print_exc()
+        return jsonify(_futures_rows("make_playoffs"))
+    except Exception:
+        logging.exception("Could not list the make-playoffs odds")
         return jsonify([])
 
 

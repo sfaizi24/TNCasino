@@ -6,8 +6,8 @@ This page lists facts a refactor has to work around, grouped by area. Nothing he
 
 Problems and follow-ups found while writing these docs (2026-09-26). Check them off and link the fixing commit when they're resolved.
 
-- [ ] **Client-supplied odds.** `highest_scorer`, `lowest_scorer`, `first_seed`, and `ammad_playoff` bets store the `odds` string sent by the browser without checking it against the odds tables, so a crafted request can set any payout. `app/routes/betting.py:255`
-- [ ] **Duplicate odds rows after re-running notebook 07.** The five `betting_odds_*` tables append by `run_id` and the app doesn't filter by it. Duplicates appear on the site, and since moneyline/O/U bets select by row position (`matchup_idx`, `team_idx`), they can shift which matchup a bet lands on. Negative indexes and unknown `choice` values also aren't rejected. `app/routes/odds.py:30`, `app/routes/betting.py:420–482`, notebook 07
+- [x] **Client-supplied odds.** `highest_scorer`, `lowest_scorer`, `first_seed`, and `ammad_playoff` bets stored the `odds` string sent by the browser without checking it against the odds tables, so a crafted request could set any payout. Fixed in `2ec2042`: every bet is priced from the published row its market key and selection find, and the request supplies only the key, the selection, the line, the run id and the amount. `app/markets.py`, `app/routes/betting.py`
+- [x] **Duplicate odds rows after re-running notebook 07.** The five `betting_odds_*` tables appended by `run_id` and the app didn't filter by it. Duplicates appeared on the site, and since moneyline/O/U bets selected by row position (`matchup_idx`, `team_idx`), they could shift which matchup a bet landed on. Negative indexes and unknown `choice` values also weren't rejected. Fixed in `2ec2042`: a bet names its market by key (season, week, roster ids) instead of a row position, a malformed key or a selection outside its market is refused, and each bet records the `run_id` it was priced at and is refused when the page showed another run. Keeping a second run off the site is the pipeline's job: its `publish` step uploads only each week's latest run ([04](04-data-model.md#oddsdb--prices-and-curves)), while the notebooks' `scripts/publish.py` still copies every run (see Pipeline). `app/markets.py`, `app/routes/betting.py`
 - [x] **Balance race.** Balance updates were read-modify-write on the ORM object with no row lock, so concurrent place/remove/settle requests could overwrite each other. Fixed in `13c1cba`: each event is one transaction that opens with a conditional guard and changes money by SQL arithmetic. `app/ledger.py`
 - [ ] **Sleeper scraper uses the legacy host.** `scraper_sleeper.py` calls `api.sleeper.app/v1/projections/nfl/regular/{season}/{week}`. It still returns data (9,422 entries for 2026 week 3), but the Sleeper app itself now reads `api.sleeper.com/projections/nfl/{season}/{week}?season_type=regular&position[]=…`, which returns a list instead of a dict, nests stats under `stats`, and adds `pts_ppr`/`pts_half_ppr`/`pts_std` and a `company` field (`rotowire`). Migrate before the old host goes empty. `backend/scrapers/scraper_sleeper.py:93`
 - [ ] **Add more projection sources.** Verified 2026-09-26 as free, no login, server-rendered HTML tables (plain `requests` + BeautifulSoup, same shape as the FantasyPros scraper). Sleeper is RotoWire data, so these would be the first independent additions since FirstDown.
@@ -22,14 +22,14 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 | M | **Three team identifiers.** Tables key teams by `roster_id`/`team_id`, by `owner` (Sleeper display name), or by `team_name`. Joins translate between them in several places. | [04](04-data-model.md), `app/routes/odds.py`, notebooks 06/07/09 |
 | M | **Two week formats.** `"Week N"` text in `projections*` tables, integer everywhere else. | `backend/scrapers/database.py`, notebooks 04/05 |
 | M | **No shared "current week".** The site uses the highest unsettled `BettingPeriod`; each notebook has its own `CURRENT_WEEK` (currently 16 in 01/05/06/07 and 14 in 08/09). | `app/routes/helpers.py:57`, notebook config cells |
-| M | **Single league and season baked in.** Owner-name map for 12 specific people, `LEAGUE_ID` default, 2025 bye weeks, "ammad_playoff" bet type, 8-team playoff cutoff, fallback week 10. | `helpers.py:14`, `odds.py:20`, `scraper_sleeper_league.py:573`, `betting.py:380` |
+| M | **Single league and season baked in.** Owner-name map for 12 specific people, `LEAGUE_ID` default, 2025 bye weeks, 8-team playoff cutoff, fallback week 10. | `helpers.py:14`, `odds.py:22`, `scraper_sleeper_league.py:573`, `helpers.py:57` |
 | M | **Implicit offline→online contract.** Column names the app reads are not declared anywhere; `publish.py` copies whatever the notebooks produced, and `tests/conftest.py` re-declares the schema by hand. | `scripts/publish.py`, `tests/conftest.py` |
 
 ## Pipeline
 
 | | Item | Where |
 |---|---|---|
-| H | **Re-running notebook 07 duplicates odds rows** (append by `run_id`) unless `DELETE_WEEK` is set; the app doesn't filter by `run_id`. | notebook 07, `odds.py:30`, `odds.py:69` |
+| H | **Re-running notebook 07 duplicates odds rows** (append by `run_id`) unless `DELETE_WEEK` is set; the app doesn't filter by `run_id`, so it lists every run and quotes a bet from whichever run's row it reads first. | notebook 07, `odds.py:33`, `odds.py:78`, `markets.py:38` |
 | M | Notebooks are the orchestration layer: absolute Windows paths, per-notebook config, run by hand in order. | `backend/notebooks/01–09` |
 | M | Notebook 07 reads lineups from a **CSV** written by 06, not the database. | notebooks 06/07 |
 | M | Notebook 07 calls the live Sleeper bracket API in playoff mode, so results depend on when it runs. | notebook 07 |
@@ -57,18 +57,13 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 
 | | Item | Where |
 |---|---|---|
-| H | **Client-supplied odds.** `highest_scorer`, `lowest_scorer`, `first_seed`, `ammad_playoff` bets store the `odds` string sent by the browser without checking it against the odds tables. | `app/routes/betting.py:255` and the three branches after it |
-| H | **Index-based selections.** Moneyline and team O/U bets identify the pick by row position (`matchup_idx`, `team_idx`) in a query result; negative indexes aren't rejected, and `choice` isn't validated. | `betting.py:420–482` |
 | M | CSRF is off by default; JSON `POST`/`DELETE` endpoints (including admin) are unprotected apart from SameSite=Lax. | `app/extensions.py`, `app/__init__.py` |
-| M | `place_bet` has six near-identical branches (~330 lines). | `betting.py:206` |
-| M | Bet selections are stored only as display strings (`description`); settling a bet requires a human to read them. | `app/models.py` |
 | M | Settlement is fully manual; `settle_week` doesn't settle bets. | `admin.py:178` |
 | M | Analytics tables have no ORM models or schema checks; errors are caught and returned as `[]` with 200. | `odds.py` |
 | M | Schema changes are ad-hoc `ALTER`s run at startup; failures are logged and ignored. | `app/migrations.py` |
 | L | No ledger table: balances change in place, so money history can only be reconstructed from `bets`. | `app/ledger.py` |
-| L | Logging is `print()` + `traceback.print_exc()`. | all routes |
-| L | `/api/first_place` and `/api/ammad_playoff` have no frontend caller; `/analytics` picks its week from PNG filenames even though the page no longer shows PNGs. | `odds.py:142`, `pages.py:31` |
-| L | Admin `pending_bets` defaults to week 10. | `admin.py:89` |
+| L | Logging is mostly `print()` + `traceback.print_exc()`; `betting.py`, `account.py` and the two futures endpoints use `logging`. | `admin.py`, `odds.py`, `helpers.py:65` |
+| L | `/analytics` picks its week from PNG filenames even though the page no longer shows PNGs. | `pages.py:31` |
 
 ## Data & publishing
 
@@ -90,4 +85,4 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 
 ## Test gaps
 
-Real OAuth, `/account` + CSRF, `pages.py`, `publish.py`, notebooks, live scrapers, JavaScript, and Postgres-specific behavior are untested. See [07](07-deployment-and-ops.md#tests).
+Real OAuth, `/account/update-profile` + CSRF, `pages.py`, `publish.py`, notebooks, live scrapers, JavaScript, and Postgres-specific behavior are untested. See [07](07-deployment-and-ops.md#tests).

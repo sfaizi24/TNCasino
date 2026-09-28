@@ -39,6 +39,10 @@ class Bet(db.Model):
     description = db.Column(db.Text, nullable=False)
     amount = db.Column(db.Float, nullable=False)
     odds = db.Column(db.String, nullable=False)
+    # The published quote the bet was priced at; null on bets placed before markets existed.
+    price = db.Column(db.Integer, nullable=True)
+    probability = db.Column(db.Float, nullable=True)
+    run_id = db.Column(db.String, nullable=True)
     potential_win = db.Column(db.Float, nullable=False)
     status = db.Column(db.String, default="pending")
     result = db.Column(db.Float, default=0.0)
@@ -47,6 +51,27 @@ class Bet(db.Model):
     settled_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     user = db.relationship(User, backref="bets")
+
+
+class BetLeg(db.Model):
+    """One pick inside a bet: a market key, a selection and the quote it was priced at."""
+
+    __tablename__ = "bet_legs"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    bet_id = db.Column(db.Integer, db.ForeignKey("bets.id"), nullable=False, index=True)
+    season = db.Column(db.Integer, nullable=False)
+    week = db.Column(db.Integer, nullable=True)
+    market = db.Column(db.String, nullable=False)
+    selection = db.Column(db.String, nullable=False)
+    line = db.Column(db.Numeric(7, 2, asdecimal=False), nullable=True)
+    price = db.Column(db.Integer, nullable=False)
+    probability = db.Column(db.Float, nullable=False)
+    # pending until the bet settles, then won or lost; void when the bet is removed.
+    status = db.Column(db.String, default="pending", nullable=False)
+    settled_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    bet = db.relationship(Bet, backref="legs")
 
 
 class WeeklyStats(db.Model):

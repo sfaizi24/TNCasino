@@ -2,6 +2,9 @@ import logging
 
 from .database import db
 
+# The bet types that took their market's name; rows stored under the old names are renamed in place.
+RENAMED_BET_TYPES = {"team_ou": "team_total", "first_seed": "first_place", "ammad_playoff": "make_playoffs"}
+
 
 def run_schema_migrations():
     try:
@@ -111,6 +114,18 @@ def run_schema_migrations():
                 """)
                 )
                 logging.info("settled_pnl column added and backfilled")
+
+            float_type = "DOUBLE PRECISION" if dialect == "postgresql" else "REAL"
+            for column, column_type in (("run_id", "VARCHAR"), ("price", "INTEGER"), ("probability", float_type)):
+                if not column_exists(inspector, "bets", column):
+                    conn.execute(text(f"ALTER TABLE bets ADD COLUMN {column} {column_type}"))
+                    logging.info(f"Added bets.{column}")
+
+            for old_type, new_type in RENAMED_BET_TYPES.items():
+                conn.execute(
+                    text("UPDATE bets SET bet_type = :new_type WHERE bet_type = :old_type"),
+                    {"new_type": new_type, "old_type": old_type},
+                )
 
             if "flask_dance_oauth" in inspector.get_table_names():
                 conn.execute(text("DROP TABLE flask_dance_oauth"))
