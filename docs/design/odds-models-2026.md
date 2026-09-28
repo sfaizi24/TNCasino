@@ -28,7 +28,7 @@ end repeats the betting and statistics terms.
 ## Recommendation
 
 Build in this order; each item names its work package (§9). The owner's decisions of 2026-09-28
-(§10) change items 3 and 9: no refusal at ±5000, and cash-out at the full fair value.
+(§10) change item 3: no refusal at ±5000.
 
 1. **Structured bets (B1):** each bet stores its market and selection; Flask sets the price (doc 08 issues 1–2).
 2. **Atomic balances (B2):** every balance change is one conditional SQL update (doc 08 issue 3).
@@ -1136,8 +1136,8 @@ Decisions for the owner, taken 2026-09-28:
    sim has no price and is not offered. Rules 1 and 2 of §1.3 stand.
 3. `remove_bet` limited to the latest run's open window (§2.5). Yes: a bet can be removed for a
    full refund while the run that priced it is still the latest; once a later run has moved its
-   odds, removal gives way to cash-out at the current price. Read as 100% of fair value from the
-   latest run (§2.1), not 95%, since there is no house edge. Removed rows are kept.
+   odds, removal gives way to cash-out at 95% of fair value from the latest run (§2.1), kept
+   below the full value so that holding a bet stays attractive. Removed rows are kept.
 4. Reading game totals from ESPN, which are sportsbook numbers (§8). Open; no model idea is built
    before the new bets.
 5. Whether 2026 still locks at Thursday's kickoff. Yes, and betting reopens once the Friday rerun
