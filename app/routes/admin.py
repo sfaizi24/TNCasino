@@ -7,7 +7,7 @@ from sqlalchemy import inspect
 
 from .. import ledger
 from ..database import db
-from .helpers import admin_required, friendly_description, query_analytics
+from .helpers import admin_required, friendly_description, get_current_week, query_analytics
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -105,7 +105,7 @@ def set_betting_period():
 def get_pending_bets():
     from ..models import Bet
 
-    week = request.args.get("week", 10, type=int)
+    week = request.args.get("week", get_current_week(), type=int)
 
     try:
         bets = db.session.query(Bet).filter_by(week=week, status="pending").all()

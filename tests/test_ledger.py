@@ -3,8 +3,9 @@ from sqlalchemy import text
 from app import ledger
 from app.database import db
 from app.models import Bet, WeeklyStats
+from tests.conftest import RUN_ID
 
-STAKE = {"bet_type": "highest_scorer", "amount": 100, "owner": "Player A", "odds": "+100"}
+STAKE = {"market": "2026-w10-team_total-1", "selection": "under", "line": 110.5, "run_id": RUN_ID, "amount": 100}
 
 
 def _bet(user, amount):
@@ -70,17 +71,26 @@ def test_stake_of_the_whole_balance_is_accepted(user):
     assert _money(user)["account_balance"] == 0.0
 
 
-def test_stake_comes_off_the_stored_balance_not_the_loaded_one(logged_in_client, user, betting_period):
+def test_stake_comes_off_the_stored_balance_not_the_loaded_one(
+    logged_in_client, user, betting_period, seeded_analytics
+):
     _set_stored_balance(user, 300.0)
     assert user.account_balance == 1000.0
 
     reply = logged_in_client.post("/api/place_bet", json=STAKE).get_json()
 
-    assert reply == {"success": True, "new_balance": 200.0}
+    assert reply == {
+        "success": True,
+        "new_balance": 200.0,
+        "bet_id": 1,
+        "market": "2026-w10-team_total-1",
+        "selection": "under",
+        "price": 100,
+    }
     assert _money(user)["starting_balance"] == 300.0
 
 
-def test_stake_the_stored_balance_cannot_cover_is_refused(logged_in_client, user, betting_period):
+def test_stake_the_stored_balance_cannot_cover_is_refused(logged_in_client, user, betting_period, seeded_analytics):
     _set_stored_balance(user, 50.0)
     assert user.account_balance == 1000.0
 

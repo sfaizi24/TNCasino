@@ -1,21 +1,23 @@
 import logging
-from datetime import UTC, datetime
 
 from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 from sqlalchemy import Integer, case, cast, desc, distinct, func
 
-from .. import ledger
+from .. import ledger, markets
 from ..database import db
-from .helpers import (
-    check_betting_period_lock,
-    friendly_description,
-    get_current_week,
-    get_team_mapping,
-    query_analytics,
-)
+from ..models import Bet, BetLeg, BettingPeriod, User, WeeklyStats
+from .helpers import check_betting_period_lock, friendly_description, get_current_week, get_team_mapping
 
 betting_bp = Blueprint("betting", __name__)
+
+# How a description names each market whose selection is a team.
+MARKET_LABELS = {
+    "highest_scorer": "Highest Scorer",
+    "lowest_scorer": "Lowest Scorer",
+    "first_place": "First Place",
+    "make_playoffs": "Make Playoffs",
+}
 
 
 def _format_lock_time(lock_time):
@@ -34,8 +36,6 @@ def _format_lock_time(lock_time):
 
 @betting_bp.route("/betting")
 def betting():
-    from ..models import BettingPeriod
-
     week = get_current_week()
     period = db.session.query(BettingPeriod).filter_by(week=week).first()
 
@@ -49,8 +49,6 @@ def betting():
 
 @betting_bp.route("/leaderboard")
 def leaderboard():
-    from ..models import Bet, User, WeeklyStats
-
     current_week = get_current_week()
     selected_week = request.args.get("week", current_week, type=int)
 
@@ -172,7 +170,7 @@ def leaderboard():
                 func.sum(Bet.amount).label("total_wagered"),
                 func.max(Bet.week).label("week"),
             )
-            .filter(Bet.bet_type == bet_type)
+            .filter(Bet.bet_type == bet_type, Bet.status != "removed")
             .group_by(Bet.description)
             .order_by(desc("count"))
             .first()
@@ -180,7 +178,7 @@ def leaderboard():
         return result
 
     popular_moneyline = get_popular_bet_with_stats("moneyline")
-    popular_over_under = get_popular_bet_with_stats("team_ou")
+    popular_over_under = get_popular_bet_with_stats("team_total")
     popular_highest = get_popular_bet_with_stats("highest_scorer")
     popular_lowest = get_popular_bet_with_stats("lowest_scorer")
 
@@ -208,251 +206,92 @@ def leaderboard():
 @betting_bp.route("/api/place_bet", methods=["POST"])
 @login_required
 def place_bet():
-    from ..models import Bet
-
     data = request.get_json()
-    bet_type = data.get("bet_type", "moneyline")
     amount = float(data.get("amount", 0))
     week = get_current_week()
 
-    print(
-        f"[BET REQUEST] User: {current_user.id} ({current_user.username}), Type: {bet_type}, Amount: {amount}, Week: {week}, Balance: {current_user.account_balance}"
-    )
-    print(f"[BET REQUEST] Full data: {data}")
-
     lock_time = check_betting_period_lock(week)
     if lock_time:
-        print(f"[BET REJECTED] User {current_user.id} - Betting locked at {lock_time}")
-        return jsonify(
-            {"success": False, "error": f"Bets are locked as of {lock_time.strftime('%Y-%m-%d %I:%M %p UTC')}"}
-        )
-
+        return _refuse_locked(lock_time)
     if amount <= 0:
-        print(f"[BET REJECTED] User {current_user.id} - Invalid amount: {amount}")
-        return jsonify({"success": False, "error": "Invalid bet amount"})
-
+        return _refuse("Invalid bet amount")
     if current_user.account_balance < amount:
-        print(
-            f"[BET REJECTED] User {current_user.id} - Insufficient balance: {current_user.account_balance} < {amount}"
-        )
-        return jsonify({"success": False, "error": "Insufficient balance"})
+        return _refuse("Insufficient balance")
 
     try:
-        if bet_type == "highest_scorer":
-            owner = data.get("owner")
-            odds = data.get("odds")
+        market = markets.parse_key(data.get("market"))
+        if market.week is not None and market.week != week:
+            return _refuse("Not this week's market")
 
-            if not owner or not odds:
-                print(
-                    f"[BET REJECTED] User {current_user.id} - Highest scorer missing data: owner={owner}, odds={odds}"
-                )
-                return jsonify({"success": False, "error": "Missing required data"})
-
-            odds_num = int(odds.replace("+", ""))
-            if odds.startswith("+"):
-                potential_win = amount * (odds_num / 100)
-            else:
-                potential_win = amount * (100 / abs(odds_num))
-
-            description = f"{owner}: Highest Scorer {odds}"
-
-            bet = Bet(
-                user_id=current_user.id,
-                bet_type="highest_scorer",
-                description=description,
-                week=week,
-                amount=amount,
-                odds=odds,
-                potential_win=potential_win,
-                status="pending",
-                created_at=datetime.now(UTC),
+        selection = str(data.get("selection"))
+        quote = markets.find_quote(market, selection)
+        if _quote_moved(market, quote, data):
+            return _refuse(
+                "Odds have changed", run_id=quote.run_id, price=quote.price, odds=quote.odds, line=quote.line
             )
-            return _record_bet(bet)
+        if quote.price is None:
+            return _refuse("Not offered")
 
-        if bet_type == "lowest_scorer":
-            owner = data.get("owner")
-            odds = data.get("odds")
-
-            if not owner or not odds:
-                print(f"[BET REJECTED] User {current_user.id} - Lowest scorer missing data: owner={owner}, odds={odds}")
-                return jsonify({"success": False, "error": "Missing required data"})
-
-            odds_num = int(odds.replace("+", ""))
-            if odds.startswith("+"):
-                potential_win = amount * (odds_num / 100)
-            else:
-                potential_win = amount * (100 / abs(odds_num))
-
-            description = f"{owner}: Lowest Scorer {odds}"
-
-            bet = Bet(
-                user_id=current_user.id,
-                bet_type="lowest_scorer",
-                description=description,
-                week=week,
-                amount=amount,
-                odds=odds,
-                potential_win=potential_win,
-                status="pending",
-                created_at=datetime.now(UTC),
-            )
-            return _record_bet(bet)
-
-        if bet_type == "first_seed":
-            owner = data.get("owner")
-            odds = data.get("odds")
-
-            if not owner or not odds:
-                print(f"[BET REJECTED] User {current_user.id} - First seed missing data: owner={owner}, odds={odds}")
-                return jsonify({"success": False, "error": "Missing required data"})
-
-            odds_num = int(odds.replace("+", ""))
-            if odds.startswith("+"):
-                potential_win = amount * (odds_num / 100)
-            else:
-                potential_win = amount * (100 / abs(odds_num))
-
-            description = f"{owner}: #1 Seed {odds}"
-
-            bet = Bet(
-                user_id=current_user.id,
-                bet_type="first_seed",
-                description=description,
-                week=week,
-                amount=amount,
-                odds=odds,
-                potential_win=potential_win,
-                status="pending",
-                created_at=datetime.now(UTC),
-            )
-            return _record_bet(bet)
-
-        if bet_type == "ammad_playoff":
-            owner = data.get("owner")
-            odds = data.get("odds")
-
-            if not owner or not odds:
-                print(f"[BET REJECTED] User {current_user.id} - Ammad playoff missing data: owner={owner}, odds={odds}")
-                return jsonify({"success": False, "error": "Missing required data"})
-
-            odds_num = int(odds.replace("+", ""))
-            if odds.startswith("+"):
-                potential_win = amount * (odds_num / 100)
-            else:
-                potential_win = amount * (100 / abs(odds_num))
-
-            description = f"{owner}: Ammad Playoff {odds}"
-
-            bet = Bet(
-                user_id=current_user.id,
-                bet_type="ammad_playoff",
-                description=description,
-                week=week,
-                amount=amount,
-                odds=odds,
-                potential_win=potential_win,
-                status="pending",
-                created_at=datetime.now(UTC),
-            )
-            return _record_bet(bet)
-
-        if bet_type == "team_ou":
-            team_idx = data.get("team_idx")
-            choice = data.get("choice")
-
-            teams = query_analytics(
-                "SELECT * FROM betting_odds_team_ou WHERE week = :week ORDER BY owner",
-                {"week": week},
-            )
-
-            if team_idx >= len(teams):
-                print(f"[BET REJECTED] User {current_user.id} - Invalid team_idx: {team_idx} (max: {len(teams) - 1})")
-                return jsonify({"success": False, "error": "Invalid team"})
-
-            team_data = teams[team_idx]
-            owner = team_data["owner"]
-            line = team_data["line"]
-
-            potential_win = amount
-            description = friendly_description(f"{owner} O/U {line:.1f}: {choice.capitalize()}")
-
-            bet = Bet(
-                user_id=current_user.id,
-                bet_type="team_ou",
-                description=description,
-                week=week,
-                amount=amount,
-                odds="EVEN",
-                potential_win=potential_win,
-                status="pending",
-                created_at=datetime.now(UTC),
-            )
-            return _record_bet(bet)
-
-        # Moneyline bets
-        matchup_idx = data.get("matchup_idx")
-        team = data.get("team")
-        team_mapping = get_team_mapping(week)
-
-        matchups = query_analytics(
-            "SELECT * FROM betting_odds_matchup_ml WHERE week = :week ORDER BY matchup",
-            {"week": week},
-        )
-
-        if matchup_idx >= len(matchups):
-            print(
-                f"[BET REJECTED] User {current_user.id} - Invalid matchup_idx: {matchup_idx} (max: {len(matchups) - 1})"
-            )
-            return jsonify({"success": False, "error": "Invalid matchup"})
-
-        matchup = matchups[matchup_idx]
-
-        team1_owner = team_mapping.get(matchup["team1_id"], f"Team {matchup['team1_id']}")
-        team2_owner = team_mapping.get(matchup["team2_id"], f"Team {matchup['team2_id']}")
-        matchup_display = f"{team1_owner} vs {team2_owner}"
-
-        if team == "team1":
-            team_name = team1_owner
-            odds = matchup["team1_ml"]
-        elif team == "team2":
-            team_name = team2_owner
-            odds = matchup["team2_ml"]
-        else:
-            print(f"[BET REJECTED] User {current_user.id} - Invalid team selection: {team}")
-            return jsonify({"success": False, "error": "Invalid team"})
-
-        odds_num = int(odds)
-        if odds_num > 0:
-            potential_win = amount * (odds_num / 100)
-        else:
-            potential_win = amount * (100 / abs(odds_num))
-
-        description = f"{matchup_display}: {team_name} {odds}"
-
-        bet = Bet(
-            user_id=current_user.id,
-            bet_type="moneyline",
-            description=description,
-            week=week,
-            amount=amount,
-            odds=odds,
-            potential_win=potential_win,
-            status="pending",
-            created_at=datetime.now(UTC),
-        )
-        return _record_bet(bet)
-
-    except Exception as e:
-        # Roll back before the prints below: a failed transaction cannot reload current_user.
+        return _record_bet(_new_bet(market, selection, quote, amount, week))
+    except markets.MarketError as error:
+        return _refuse(str(error))
+    except Exception as error:
+        # Roll back before logging: a failed transaction cannot reload current_user.
         db.session.rollback()
-        print(f"[BET ERROR] User {current_user.id} - Exception occurred: {type(e).__name__}: {str(e)}")
-        print(f"[BET ERROR] Request data was: {data}")
-        print(f"[BET ERROR] User balance: {current_user.account_balance}, Bet amount: {amount}")
-        import traceback
+        logging.exception(f"Bet by user {current_user.id} failed: {data}")
+        return _refuse(str(error))
 
-        traceback.print_exc()
-        print(f"[BET ERROR] Database rolled back for user {current_user.id}")
-        return jsonify({"success": False, "error": str(e)})
+
+def _quote_moved(market, quote, data):
+    """Whether the bettor was shown another run's price, or a team total at another line."""
+    if data.get("run_id") != quote.run_id:
+        return True
+    if market.name != "team_total":
+        return False
+    try:
+        return round(float(data.get("line")), 2) != round(quote.line, 2)
+    except (TypeError, ValueError):
+        return True
+
+
+def _new_bet(market, selection, quote, amount, week):
+    leg = BetLeg(
+        season=market.season,
+        week=market.week,
+        market=market.key,
+        selection=selection,
+        line=quote.line,
+        price=quote.price,
+        probability=quote.probability,
+    )
+    return Bet(
+        user_id=current_user.id,
+        bet_type=market.name,
+        description=_describe(market, selection, quote, week),
+        week=week,
+        amount=amount,
+        odds=quote.odds,
+        price=quote.price,
+        probability=quote.probability,
+        run_id=quote.run_id,
+        potential_win=markets.potential_win(amount, quote.price),
+        legs=[leg],
+    )
+
+
+def _describe(market, selection, quote, week):
+    names = get_team_mapping(week)
+
+    def name(roster_id):
+        return names.get(roster_id, f"Team {roster_id}")
+
+    if market.name == "moneyline":
+        team1, team2 = market.teams
+        return f"{name(team1)} vs {name(team2)}: {name(int(selection))} {quote.odds}"
+    if market.name == "team_total":
+        return f"{name(market.teams[0])} O/U {quote.line:.2f}: {selection.capitalize()}"
+    team = market.teams[0] if market.teams else int(selection)
+    return f"{name(team)}: {MARKET_LABELS[market.name]} {quote.odds}"
 
 
 def _record_bet(bet):
@@ -460,20 +299,28 @@ def _record_bet(bet):
     if not ledger.place(bet):
         db.session.rollback()
         logging.info(f"Refused bet for user {bet.user_id}: balance below the {bet.amount} stake")
-        return jsonify({"success": False, "error": "Insufficient balance"})
+        return _refuse("Insufficient balance")
 
     db.session.commit()
     db.session.refresh(current_user)
     new_balance = current_user.account_balance
     logging.info(f"User {bet.user_id} placed {bet.bet_type} bet {bet.description}, new balance {new_balance}")
-    return jsonify({"success": True, "new_balance": new_balance})
+    leg = bet.legs[0]
+    return jsonify(
+        {
+            "success": True,
+            "new_balance": new_balance,
+            "bet_id": bet.id,
+            "market": leg.market,
+            "selection": leg.selection,
+            "price": bet.price,
+        }
+    )
 
 
 @betting_bp.route("/api/my_bets")
 @login_required
 def get_my_bets():
-    from ..models import Bet
-
     try:
         bets = (
             db.session.query(Bet)
@@ -481,64 +328,82 @@ def get_my_bets():
             .order_by(Bet.created_at.desc())
             .all()
         )
-
-        bets_data = []
-        for bet in bets:
-            bets_data.append(
-                {
-                    "id": bet.id,
-                    "description": friendly_description(bet.description),
-                    "amount": bet.amount,
-                    "odds": bet.odds,
-                    "potential_win": bet.potential_win,
-                    "status": bet.status,
-                    "week": bet.week,
-                }
-            )
-
-        return jsonify(bets_data)
-
-    except Exception as e:
-        print(f"Error getting bets: {e}")
-        import traceback
-
-        traceback.print_exc()
+        return jsonify([_bet_summary(bet) for bet in bets])
+    except Exception:
+        logging.exception(f"Could not list the bets of user {current_user.id}")
         return jsonify([])
+
+
+def _bet_summary(bet):
+    summary = {
+        "id": bet.id,
+        "description": friendly_description(bet.description),
+        "amount": bet.amount,
+        "odds": bet.odds,
+        "potential_win": bet.potential_win,
+        "status": bet.status,
+        "week": bet.week,
+        "bet_type": bet.bet_type,
+        "market": None,
+        "selection": None,
+        "line": None,
+        "price": bet.price,
+        "probability": bet.probability,
+        "run_id": bet.run_id,
+        "removable": check_betting_period_lock(bet.week) is None and _run_is_latest(bet),
+    }
+    if bet.legs:
+        leg = bet.legs[0]
+        summary.update(market=leg.market, selection=leg.selection, line=leg.line)
+    return summary
+
+
+def _run_is_latest(bet):
+    """Whether the bet's market still shows the run it was priced from; a legacy bet has no market to check."""
+    if not bet.legs:
+        return True
+    leg = bet.legs[0]
+    try:
+        quote = markets.find_quote(markets.parse_key(leg.market), leg.selection)
+    except markets.MarketError:
+        return False
+    return quote.run_id == bet.run_id
 
 
 @betting_bp.route("/api/remove_bet/<int:bet_id>", methods=["DELETE"])
 @login_required
 def remove_bet(bet_id):
-    from ..models import Bet
-
     try:
         bet = db.session.query(Bet).filter_by(id=bet_id, user_id=current_user.id, status="pending").first()
-
         if not bet:
-            return jsonify({"success": False, "error": "Bet not found"})
+            return _refuse("Bet not found")
 
         lock_time = check_betting_period_lock(bet.week)
         if lock_time:
-            return jsonify(
-                {"success": False, "error": f"Bets are locked as of {lock_time.strftime('%Y-%m-%d %I:%M %p UTC')}"}
-            )
+            return _refuse_locked(lock_time)
+        if not _run_is_latest(bet):
+            return _refuse("Odds have changed since this bet was placed")
 
         if not ledger.remove(bet):
             # Settled or removed by another request since the read above.
             db.session.rollback()
-            return jsonify({"success": False, "error": "Bet not found"})
+            return _refuse("Bet not found")
 
         db.session.commit()
         db.session.refresh(current_user)
         return jsonify({"success": True, "new_balance": current_user.account_balance})
-
-    except Exception as e:
-        print(f"Error removing bet: {e}")
-        import traceback
-
-        traceback.print_exc()
+    except Exception as error:
         db.session.rollback()
-        return jsonify({"success": False, "error": str(e)})
+        logging.exception(f"Could not remove bet {bet_id} for user {current_user.id}")
+        return _refuse(str(error))
+
+
+def _refuse(error, **details):
+    return jsonify({"success": False, "error": error, **details})
+
+
+def _refuse_locked(lock_time):
+    return _refuse(f"Bets are locked as of {lock_time.strftime('%Y-%m-%d %I:%M %p UTC')}")
 
 
 @betting_bp.route("/api/session-check")

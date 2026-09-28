@@ -157,67 +157,69 @@ ANALYTICS_TABLES = [
     "projections_rosters",
 ]
 
+# The pipeline run that published every seeded odds row.
+RUN_ID = "2026w10-20261110T140000"
 
-@pytest.fixture
-def analytics_tables(db_session):
+
+def create_analytics_tables(session):
     """Create analytics tables that mirror what publish.py pushes to PostgreSQL."""
     for table in ANALYTICS_TABLES:
-        db_session.session.execute(text(f"DROP TABLE IF EXISTS {table}"))
+        session.execute(text(f"DROP TABLE IF EXISTS {table}"))
 
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE betting_odds_matchup_ml (
-            run_id TEXT, week INTEGER, matchup TEXT,
+            run_id TEXT, week INTEGER, season INTEGER, matchup TEXT,
             team1_id INTEGER, team1_name TEXT, team1_win_prob REAL, team1_ml TEXT,
             team2_id INTEGER, team2_name TEXT, team2_win_prob REAL, team2_ml TEXT,
             ties INTEGER, created_at TIMESTAMP
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE betting_odds_team_ou (
-            run_id TEXT, week INTEGER, team_id INTEGER, team_name TEXT, owner TEXT,
+            run_id TEXT, week INTEGER, season INTEGER, team_id INTEGER, team_name TEXT, owner TEXT,
             line REAL, over_prob REAL, over_odds TEXT, under_prob REAL, under_odds TEXT,
             push_count INTEGER, created_at TIMESTAMP
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE betting_odds_highest_scorer (
-            run_id TEXT, week INTEGER, team_id INTEGER, team_name TEXT, owner TEXT,
+            run_id TEXT, week INTEGER, season INTEGER, team_id INTEGER, team_name TEXT, owner TEXT,
             count INTEGER, probability REAL, odds TEXT, created_at TIMESTAMP
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE betting_odds_lowest_scorer (
-            run_id TEXT, week INTEGER, team_id INTEGER, team_name TEXT, owner TEXT,
+            run_id TEXT, week INTEGER, season INTEGER, team_id INTEGER, team_name TEXT, owner TEXT,
             count INTEGER, probability REAL, odds TEXT, created_at TIMESTAMP
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE betting_odds_first_place (
-            id INTEGER PRIMARY KEY, run_id TEXT, week INTEGER,
+            id INTEGER PRIMARY KEY, run_id TEXT, week INTEGER, season INTEGER,
             team_id INTEGER, team_name TEXT, owner TEXT,
             probability REAL, american_odds TEXT, created_at TIMESTAMP
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE betting_odds_make_playoffs (
-            id INTEGER PRIMARY KEY, run_id TEXT, week INTEGER,
+            id INTEGER PRIMARY KEY, run_id TEXT, week INTEGER, season INTEGER,
             team_id INTEGER, team_name TEXT, owner TEXT,
             probability REAL, american_odds TEXT, created_at TIMESTAMP
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE team_lineups (
             roster_id INTEGER, team_name TEXT, owner TEXT, record TEXT,
@@ -227,7 +229,7 @@ def analytics_tables(db_session):
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE team_distribution_curves (
             week INTEGER, owner TEXT,
@@ -238,7 +240,7 @@ def analytics_tables(db_session):
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE team_matchup_margin_curves (
             week INTEGER, team_owner TEXT, opponent_owner TEXT,
@@ -250,7 +252,7 @@ def analytics_tables(db_session):
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE sleeper_rosters (
             roster_id INTEGER, league_id TEXT, owner_id TEXT,
@@ -263,7 +265,7 @@ def analytics_tables(db_session):
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE sleeper_users (
             user_id TEXT, username TEXT, display_name TEXT,
@@ -271,7 +273,7 @@ def analytics_tables(db_session):
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE sleeper_matchups (
             matchup_id TEXT, league_id TEXT, week INTEGER, roster_id INTEGER,
@@ -281,7 +283,7 @@ def analytics_tables(db_session):
         )
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         CREATE TABLE projections_rosters (
             roster_id INTEGER, team_name TEXT, sleeper_player_id TEXT,
@@ -291,13 +293,12 @@ def analytics_tables(db_session):
         )
     """)
     )
-    db_session.session.commit()
+    session.commit()
 
 
-@pytest.fixture
-def seeded_analytics(analytics_tables, db_session):
+def seed_analytics(session):
     """Seed analytics tables with test data for week 10."""
-    db_session.session.execute(
+    session.execute(
         text("""
         INSERT INTO sleeper_users (user_id, username, display_name)
         VALUES ('u1', 'alice', 'Alice A'),
@@ -305,7 +306,7 @@ def seeded_analytics(analytics_tables, db_session):
                ('u3', 'old-alice', 'Alice A')
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         INSERT INTO sleeper_rosters (roster_id, league_id, owner_id)
         VALUES (1, 'league1', 'u1'),
@@ -314,52 +315,59 @@ def seeded_analytics(analytics_tables, db_session):
                (100, 'old-league', 'u3')
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         INSERT INTO sleeper_matchups (league_id, week, roster_id, matchup_id_number)
         VALUES ('league1', 10, 1, 1), ('league1', 10, 2, 1)
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         INSERT INTO betting_odds_matchup_ml
-            (week, matchup, team1_id, team1_name, team1_win_prob, team1_ml,
+            (run_id, week, season, matchup, team1_id, team1_name, team1_win_prob, team1_ml,
              team2_id, team2_name, team2_win_prob, team2_ml, ties)
-        VALUES (10, 'Matchup 1', 1, 'Team1', 0.6, '-150', 2, 'Team2', 0.4, '+130', 0)
-    """)
+        VALUES (:run_id, 10, 2026, 'Matchup 1', 1, 'Team1', 0.6, '-150', 2, 'Team2', 0.4, '+130', 0)
+    """),
+        {"run_id": RUN_ID},
     )
-    db_session.session.execute(
+    session.execute(
         text("""
-        INSERT INTO betting_odds_team_ou (week, team_id, team_name, owner, line, over_prob, over_odds, under_prob, under_odds)
-        VALUES (10, 1, 'Team1', 'Alice A', 110.5, 0.55, '-120', 0.45, '+100'),
-               (10, 2, 'Team2', 'Bob B', 95.0, 0.48, '+105', 0.52, '-125')
-    """)
+        INSERT INTO betting_odds_team_ou
+            (run_id, week, season, team_id, team_name, owner, line, over_prob, over_odds, under_prob, under_odds)
+        VALUES (:run_id, 10, 2026, 1, 'Team1', 'Alice A', 110.5, 0.55, '-120', 0.45, '+100'),
+               (:run_id, 10, 2026, 2, 'Team2', 'Bob B', 95.0, 0.48, '+105', 0.52, '-125')
+    """),
+        {"run_id": RUN_ID},
     )
-    db_session.session.execute(
+    session.execute(
         text("""
-        INSERT INTO betting_odds_highest_scorer (week, team_id, owner, probability, odds)
-        VALUES (10, 1, 'Alice A', 0.35, '+185'), (10, 2, 'Bob B', 0.25, '+300')
-    """)
+        INSERT INTO betting_odds_highest_scorer (run_id, week, season, team_id, owner, probability, odds)
+        VALUES (:run_id, 10, 2026, 1, 'Alice A', 0.35, '+185'), (:run_id, 10, 2026, 2, 'Bob B', 0.25, '+300')
+    """),
+        {"run_id": RUN_ID},
     )
-    db_session.session.execute(
+    session.execute(
         text("""
-        INSERT INTO betting_odds_lowest_scorer (week, team_id, owner, probability, odds)
-        VALUES (10, 1, 'Alice A', 0.20, '+400'), (10, 2, 'Bob B', 0.30, '+230')
-    """)
+        INSERT INTO betting_odds_lowest_scorer (run_id, week, season, team_id, owner, probability, odds)
+        VALUES (:run_id, 10, 2026, 1, 'Alice A', 0.20, '+400'), (:run_id, 10, 2026, 2, 'Bob B', 0.30, '+230')
+    """),
+        {"run_id": RUN_ID},
     )
-    db_session.session.execute(
+    session.execute(
         text("""
-        INSERT INTO betting_odds_first_place (week, team_id, owner, probability, american_odds)
-        VALUES (10, 1, 'Alice A', 0.45, '-120'), (10, 2, 'Bob B', 0.30, '+150')
-    """)
+        INSERT INTO betting_odds_first_place (run_id, week, season, team_id, owner, probability, american_odds)
+        VALUES (:run_id, 10, 2026, 1, 'Alice A', 0.45, '-120'), (:run_id, 10, 2026, 2, 'Bob B', 0.30, '+150')
+    """),
+        {"run_id": RUN_ID},
     )
-    db_session.session.execute(
+    session.execute(
         text("""
-        INSERT INTO betting_odds_make_playoffs (week, team_id, owner, probability, american_odds)
-        VALUES (10, 1, 'Alice A', 0.80, '-400'), (10, 2, 'Bob B', 0.60, '-150')
-    """)
+        INSERT INTO betting_odds_make_playoffs (run_id, week, season, team_id, owner, probability, american_odds)
+        VALUES (:run_id, 10, 2026, 1, 'Alice A', 0.80, '-400'), (:run_id, 10, 2026, 2, 'Bob B', 0.60, '-150')
+    """),
+        {"run_id": RUN_ID},
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         INSERT INTO team_lineups (roster_id, owner, week, slot, player_name, position, mu, var)
         VALUES (1, 'Alice A', 10, 'QB', 'Patrick Mahomes', 'QB', 22.5, 7.0),
@@ -368,7 +376,7 @@ def seeded_analytics(analytics_tables, db_session):
                (2, 'Bob B', 10, 'QB', 'Josh Allen', 'QB', 21.0, 6.5)
     """)
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         INSERT INTO projections_rosters (roster_id, first_name, last_name, position, week, mu, var, starting_status)
         VALUES (1, 'Patrick', 'Mahomes', 'QB', 10, 22.5, 7.0, 1),
@@ -387,7 +395,7 @@ def seeded_analytics(analytics_tables, db_session):
     right_x = json.dumps([0.0, 20.0, 40.0])
     right_y = json.dumps([0.60, 0.20, 0.05])
 
-    db_session.session.execute(
+    session.execute(
         text("""
         INSERT INTO team_distribution_curves
             (week, owner, x_values, density_values, cdf_values, mean, p10, p50, p90, n_sims)
@@ -396,7 +404,7 @@ def seeded_analytics(analytics_tables, db_session):
     """),
         {"x": x_vals, "da": density_a, "ca": cdf_a, "db": density_b, "cb": cdf_b},
     )
-    db_session.session.execute(
+    session.execute(
         text("""
         INSERT INTO team_matchup_margin_curves
             (week, team_owner, opponent_owner, team_win_prob, opponent_win_prob, tie_prob,
@@ -406,7 +414,17 @@ def seeded_analytics(analytics_tables, db_session):
     """),
         {"lx": left_x, "ly": left_y, "rx": right_x, "ry": right_y},
     )
-    db_session.session.commit()
+    session.commit()
+
+
+@pytest.fixture
+def analytics_tables(db_session):
+    create_analytics_tables(db_session.session)
+
+
+@pytest.fixture
+def seeded_analytics(analytics_tables, db_session):
+    seed_analytics(db_session.session)
 
 
 @pytest.fixture

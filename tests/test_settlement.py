@@ -1,8 +1,13 @@
+import pytest
+
 from app.models import Bet, WeeklyStats
+from tests.conftest import RUN_ID
+
+HIGHEST_SCORER_BET = {"market": "2026-w10-highest_scorer", "selection": "1", "run_id": RUN_ID, "amount": 100}
 
 
-def _place_bet(db_session, user, betting_period):
-    """Helper: place a bet and matching weekly stats directly in the DB."""
+def _place_legacy_bet(db_session, user, betting_period):
+    """Store a bet as they were before markets, with no run, price or legs, and its weekly stats."""
     user.account_balance -= 100.0
     bet = Bet(
         user_id=user.id,
@@ -31,7 +36,7 @@ def _place_bet(db_session, user, betting_period):
 
 
 def test_settle_bet_won(admin_client, user, admin_user, betting_period, db_session):
-    bet, stat = _place_bet(db_session, user, betting_period)
+    bet, stat = _place_legacy_bet(db_session, user, betting_period)
 
     resp = admin_client.post(
         "/api/admin/settle_bet",
@@ -46,13 +51,14 @@ def test_settle_bet_won(admin_client, user, admin_user, betting_period, db_sessi
     db_session.session.refresh(user)
 
     assert bet.status == "won"
+    assert bet.legs == []
     assert bet.result == 200.0
     assert user.account_balance == 900.0 + 100.0 + 200.0  # refund + winnings
     assert user.total_pnl == 200.0
 
 
 def test_settle_bet_lost(admin_client, user, admin_user, betting_period, db_session):
-    bet, stat = _place_bet(db_session, user, betting_period)
+    bet, stat = _place_legacy_bet(db_session, user, betting_period)
 
     resp = admin_client.post(
         "/api/admin/settle_bet",
@@ -73,7 +79,7 @@ def test_settle_bet_lost(admin_client, user, admin_user, betting_period, db_sess
 
 
 def test_settle_won_updates_weekly_stats(admin_client, user, admin_user, betting_period, db_session):
-    bet, stat = _place_bet(db_session, user, betting_period)
+    bet, stat = _place_legacy_bet(db_session, user, betting_period)
 
     admin_client.post(
         "/api/admin/settle_bet",
@@ -93,7 +99,7 @@ def test_settle_won_updates_weekly_stats(admin_client, user, admin_user, betting
 
 
 def test_settle_lost_updates_weekly_stats(admin_client, user, admin_user, betting_period, db_session):
-    bet, stat = _place_bet(db_session, user, betting_period)
+    bet, stat = _place_legacy_bet(db_session, user, betting_period)
 
     admin_client.post(
         "/api/admin/settle_bet",
@@ -111,7 +117,7 @@ def test_settle_lost_updates_weekly_stats(admin_client, user, admin_user, bettin
 
 
 def test_settle_already_settled_bet(admin_client, user, admin_user, betting_period, db_session):
-    bet, _ = _place_bet(db_session, user, betting_period)
+    bet, _ = _place_legacy_bet(db_session, user, betting_period)
     bet.status = "won"
     db_session.session.commit()
 
@@ -153,3 +159,34 @@ def test_settle_week_marks_period_settled(admin_client, admin_user, betting_peri
 
     db_session.session.refresh(betting_period)
     assert betting_period.is_settled is True
+
+
+# The admin places these bets too, so one signed-in client books and settles them.
+
+
+@pytest.mark.parametrize(("won", "status"), [(True, "won"), (False, "lost")])
+def test_settling_a_bet_settles_its_leg_with_it(
+    admin_client, betting_period, seeded_analytics, db_session, won, status
+):
+    bet_id = admin_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()["bet_id"]
+
+    reply = admin_client.post("/api/admin/settle_bet", json={"bet_id": bet_id, "won": won}).get_json()
+
+    bet = db_session.session.get(Bet, bet_id)
+    [leg] = bet.legs
+    assert reply == {"success": True}
+    assert (bet.status, leg.status) == (status, status)
+    assert leg.settled_at is not None
+    assert leg.settled_at == bet.settled_at
+
+
+def test_a_second_settlement_leaves_the_leg_as_first_settled(
+    admin_client, betting_period, seeded_analytics, db_session
+):
+    bet_id = admin_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()["bet_id"]
+    admin_client.post("/api/admin/settle_bet", json={"bet_id": bet_id, "won": True})
+
+    reply = admin_client.post("/api/admin/settle_bet", json={"bet_id": bet_id, "won": False}).get_json()
+
+    assert reply == {"success": False, "error": "Bet already settled"}
+    assert [leg.status for leg in db_session.session.get(Bet, bet_id).legs] == ["won"]

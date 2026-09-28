@@ -7,11 +7,11 @@ on the stored values, so requests that arrive together cannot overwrite each oth
 
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .database import db
-from .models import Bet, User, WeeklyStats
+from .models import Bet, BetLeg, User, WeeklyStats
 
 
 def open_week(user_id, week):
@@ -52,10 +52,11 @@ def place(bet):
 
 
 def remove(bet):
-    withdraw = delete(Bet).where(Bet.id == bet.id, Bet.status == "pending")
+    withdraw = update(Bet).where(Bet.id == bet.id, Bet.status == "pending").values(status="removed")
     if _execute(withdraw).rowcount == 0:
         return False
 
+    _execute(update(BetLeg).where(BetLeg.bet_id == bet.id).values(status="void"))
     _execute(update(User).where(User.id == bet.user_id).values(account_balance=User.account_balance + bet.amount))
     _update_weekly_stats(
         bet,
@@ -75,14 +76,16 @@ def settle(bet, won):
         result = -bet.amount
         payout = 0.0
 
+    settled_at = datetime.now(UTC)
     close = (
         update(Bet)
         .where(Bet.id == bet.id, Bet.status == "pending")
-        .values(status=status, result=result, settled_at=datetime.now(UTC))
+        .values(status=status, result=result, settled_at=settled_at)
     )
     if _execute(close).rowcount == 0:
         return False
 
+    _execute(update(BetLeg).where(BetLeg.bet_id == bet.id).values(status=status, settled_at=settled_at))
     _execute(
         update(User)
         .where(User.id == bet.user_id)

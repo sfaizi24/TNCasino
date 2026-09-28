@@ -1,8 +1,10 @@
 import json
 
+import pytest
 from sqlalchemy import text
 
 from app.routes.helpers import get_team_mapping, query_analytics
+from tests.conftest import RUN_ID
 
 
 def test_query_analytics_returns_dicts(seeded_analytics, betting_period):
@@ -38,6 +40,9 @@ def test_get_matchups(client, seeded_analytics, betting_period):
     assert data[0]["team2_name"] == "Bob B"
     assert data[0]["team1_ml"] == "-150"
     assert data[0]["team2_ml"] == "+130"
+    assert (data[0]["team1_id"], data[0]["team2_id"]) == (1, 2)
+    assert data[0]["market"] == "2026-w10-moneyline-1v2"
+    assert data[0]["run_id"] == RUN_ID
 
 
 def test_get_team_performance(client, seeded_analytics, betting_period):
@@ -50,6 +55,11 @@ def test_get_team_performance(client, seeded_analytics, betting_period):
     assert "Bob B" in owners
     assert data[0]["line"] is not None
 
+    alice = next(d for d in data if d["team_id"] == 1)
+    assert alice["market"] == "2026-w10-team_total-1"
+    assert alice["run_id"] == RUN_ID
+    assert (alice["over_odds"], alice["under_odds"]) == ("-120", "+100")
+
 
 def test_get_highest_scorer(client, seeded_analytics, betting_period):
     resp = client.get("/api/highest_scorer")
@@ -58,6 +68,9 @@ def test_get_highest_scorer(client, seeded_analytics, betting_period):
     assert len(data) == 2
     assert data[0]["win_prob"] == 35.0
     assert data[0]["odds"] == "+185"
+    assert data[0]["team_id"] == 1
+    assert data[0]["market"] == "2026-w10-highest_scorer"
+    assert data[0]["run_id"] == RUN_ID
 
 
 def test_get_lowest_scorer(client, seeded_analytics, betting_period):
@@ -67,6 +80,9 @@ def test_get_lowest_scorer(client, seeded_analytics, betting_period):
     assert len(data) == 2
     assert data[0]["win_prob"] == 30.0
     assert data[0]["owner"] == "Bob B"
+    assert data[0]["team_id"] == 2
+    assert data[0]["market"] == "2026-w10-lowest_scorer"
+    assert data[0]["run_id"] == RUN_ID
 
 
 def test_get_first_place(client, seeded_analytics, betting_period):
@@ -76,14 +92,72 @@ def test_get_first_place(client, seeded_analytics, betting_period):
     assert len(data) == 2
     assert data[0]["owner"] == "Alice A"
     assert data[0]["odds"] == "-120"
+    assert data[0]["team_id"] == 1
+    assert data[0]["market"] == "2026-first_place"
+    assert data[0]["run_id"] == RUN_ID
+    assert data[0]["week"] == 10
 
 
-def test_get_ammad_playoff(client, seeded_analytics, betting_period):
-    resp = client.get("/api/ammad_playoff")
+def test_get_make_playoffs(client, seeded_analytics, betting_period):
+    resp = client.get("/api/make_playoffs")
     data = resp.get_json()
 
     assert len(data) == 2
     assert data[0]["win_prob"] == 80.0
+    assert data[0]["odds"] == "-400"
+    assert data[0]["team_id"] == 1
+    assert data[0]["market"] == "2026-make_playoffs-1"
+    assert data[0]["run_id"] == RUN_ID
+    assert data[0]["week"] == 10
+
+
+@pytest.mark.parametrize(
+    ("table", "url"),
+    [("betting_odds_first_place", "/api/first_place"), ("betting_odds_make_playoffs", "/api/make_playoffs")],
+)
+def test_futures_list_only_the_highest_published_week(client, seeded_analytics, betting_period, db_session, table, url):
+    db_session.session.execute(
+        text(
+            f"INSERT INTO {table} (run_id, week, season, team_id, owner, probability, american_odds) "
+            "VALUES ('2026w12-20261124T140000', 12, 2026, 1, 'Alice A', 0.55, '-122')"
+        )
+    )
+    db_session.session.commit()
+
+    data = client.get(url).get_json()
+
+    assert [(d["team_id"], d["week"], d["run_id"]) for d in data] == [(1, 12, "2026w12-20261124T140000")]
+
+
+def test_a_row_from_an_older_season_is_not_listed(client, seeded_analytics, betting_period, db_session):
+    db_session.session.execute(text("UPDATE betting_odds_highest_scorer SET season = 2025 WHERE team_id = 2"))
+    db_session.session.commit()
+
+    data = client.get("/api/highest_scorer").get_json()
+
+    assert [d["market"] for d in data] == ["2026-w10-highest_scorer"]
+    assert data[0]["team_id"] == 1
+
+
+@pytest.mark.parametrize(
+    ("table", "column", "url", "field"),
+    [
+        ("betting_odds_matchup_ml", "team1_ml", "/api/matchups", "team1_ml"),
+        ("betting_odds_team_ou", "over_odds", "/api/team_performance", "over_odds"),
+        ("betting_odds_lowest_scorer", "odds", "/api/lowest_scorer", "odds"),
+        ("betting_odds_make_playoffs", "american_odds", "/api/make_playoffs", "odds"),
+    ],
+)
+def test_a_side_without_a_price_is_listed_with_a_null_price(
+    client, seeded_analytics, betting_period, db_session, table, column, url, field
+):
+    db_session.session.execute(text(f"UPDATE {table} SET {column} = NULL"))
+    db_session.session.commit()
+
+    data = client.get(url).get_json()
+
+    assert data
+    assert [d[field] for d in data] == [None] * len(data)
 
 
 def test_get_lineup(client, seeded_analytics, betting_period):
