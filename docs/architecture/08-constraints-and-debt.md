@@ -23,7 +23,7 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 | M | **Two week formats.** `"Week N"` text in `projections*` tables, integer everywhere else. | `backend/scrapers/database.py`, notebooks 04/05 |
 | M | **No shared "current week".** The site uses the highest unsettled `BettingPeriod`; each notebook has its own `CURRENT_WEEK` (currently 16 in 01/05/06/07 and 14 in 08/09). | `app/routes/helpers.py:57`, notebook config cells |
 | M | **Single league and season baked in.** Owner-name map for 12 specific people, `LEAGUE_ID` default, 2025 bye weeks, 8-team playoff cutoff, fallback week 10. | `helpers.py:14`, `odds.py:22`, `scraper_sleeper_league.py:573`, `helpers.py:57` |
-| M | **Implicit offline→online contract.** Column names the app reads are not declared anywhere; `publish.py` copies whatever the notebooks produced, and `tests/conftest.py` re-declares the schema by hand. | `scripts/publish.py`, `tests/conftest.py` |
+| M | **Implicit offline→online contract.** Column names the app reads are not declared anywhere; `publish.py` copies whatever the notebooks produced, and `tests/conftest.py` re-declares the schema by hand. `simulation_totals` is the first published table with a declared schema; its encoding lives in `pipeline/markets.py`, which the app will import. | `scripts/publish.py`, `tests/conftest.py` |
 
 ## Pipeline
 
@@ -42,6 +42,7 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 | M | Playoff odds (09) simulate only the current week, not the remaining schedule. | notebook 09 |
 | L | Notebook 08 hardcodes 12 teams/6 matchups and fails in playoff weeks. | notebook 08 |
 | L | `simulation_runs.n_matchups` is recorded as 0. | notebook 07 |
+| L | `simulation_runs` rows recorded before `n_locked`, `window_closes_at` and `standings_through_week` existed keep the column defaults (0, NULL, 0), so a standings week of 0 can mean an old run as well as a genuine week-1 run. | `pipeline/steps/simulate.py` |
 | L | Dead code/data: `database_users.py`, empty `projections.player_stats` and its methods, stale `betting_odds_*` copies in `projections.db`, `.ipynb_checkpoints/`, empty root `odds.db`, `instance/betting_app.db`. | as listed |
 | L | `backend/` is excluded from ruff, so none of the pipeline code is linted. | `ruff.toml` |
 
@@ -69,7 +70,8 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 
 | | Item | Where |
 |---|---|---|
-| M | Publishing replaces whole tables (all weeks) every time; the analytics tables get pandas-inferred types and no keys or indexes. | `scripts/publish.py` |
+| M | Publishing replaces whole tables (all weeks) every time; the analytics tables get pandas-inferred types and no keys or indexes. The pipeline's `publish` step keeps that shape for every table but `simulation_totals`, which it appends to and never swaps ([04](04-data-model.md#publishing-map)). | `scripts/publish.py`, `pipeline/steps/publish.py` |
+| L | `simulation_totals` grows by about 2.1 MB per published run (about 105 MB a season) and is never pruned, by design: settlement and cash-out re-price a bet at the run it was placed at. | `pipeline/steps/publish.py` |
 | M | `montecarlo.db` (400+ MB) grows by ~600k rows per run and is never pruned. | notebook 07 |
 | L | `--dry-run` still creates (then drops) staging tables in production. | `publish.py` |
 
@@ -85,4 +87,4 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 
 ## Test gaps
 
-Real OAuth, `/account/update-profile` + CSRF, `pages.py`, `publish.py`, notebooks, live scrapers, JavaScript, and Postgres-specific behavior are untested. See [07](07-deployment-and-ops.md#tests).
+Real OAuth, `/account/update-profile` + CSRF, `pages.py`, `publish.py`, notebooks, live scrapers, JavaScript, and Postgres-specific behavior are untested: the app's market queries and the publish step's `simulation_totals` statements have only ever run on SQLite. See [07](07-deployment-and-ops.md#tests).
