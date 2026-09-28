@@ -5,6 +5,7 @@ from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user
 from sqlalchemy import inspect
 
+from .. import ledger
 from ..database import db
 from .helpers import admin_required, friendly_description, query_analytics
 
@@ -135,7 +136,7 @@ def get_pending_bets():
 @admin_bp.route("/api/admin/settle_bet", methods=["POST"])
 @admin_required
 def settle_bet():
-    from ..models import Bet, User, WeeklyStats
+    from ..models import Bet
 
     data = request.get_json()
     bet_id = data.get("bet_id")
@@ -150,40 +151,11 @@ def settle_bet():
         if not bet:
             return jsonify({"success": False, "error": "Bet not found"})
 
-        if bet.status != "pending":
+        if not ledger.settle(bet, won):
+            db.session.rollback()
             return jsonify({"success": False, "error": "Bet already settled"})
 
-        user = db.session.query(User).filter_by(id=bet.user_id).first()
-
-        if not user:
-            return jsonify({"success": False, "error": "User not found"})
-
-        if won:
-            payout = bet.amount + bet.potential_win
-            bet.result = bet.potential_win
-            bet.status = "won"
-        else:
-            payout = 0
-            bet.result = -bet.amount
-            bet.status = "lost"
-
-        user.account_balance += payout
-        user.total_pnl += bet.result
-
-        bet.settled_at = datetime.now(UTC)
-
-        weekly_stat = db.session.query(WeeklyStats).filter_by(user_id=bet.user_id, week=bet.week).first()
-
-        if weekly_stat:
-            weekly_stat.active_bets_amount -= bet.amount
-            weekly_stat.settled_pnl += bet.result
-            weekly_stat.ending_balance = user.account_balance
-            weekly_stat.pnl = weekly_stat.ending_balance - weekly_stat.starting_balance
-            if won:
-                weekly_stat.bets_won += 1
-
         db.session.commit()
-
         return jsonify({"success": True})
     except Exception as e:
         print(f"Error settling bet: {e}")

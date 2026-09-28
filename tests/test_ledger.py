@@ -1,0 +1,159 @@
+from sqlalchemy import text
+
+from app import ledger
+from app.database import db
+from app.models import Bet, WeeklyStats
+
+STAKE = {"bet_type": "highest_scorer", "amount": 100, "owner": "Player A", "odds": "+100"}
+
+
+def _bet(user, amount):
+    return Bet(
+        user_id=user.id,
+        bet_type="highest_scorer",
+        description="Player A: Highest Scorer +100",
+        week=10,
+        amount=amount,
+        odds="+100",
+        potential_win=amount,
+        status="pending",
+    )
+
+
+def _placed_bet(user, amount=100.0):
+    """Place a bet and hand it back detached, the way a request that read it while pending holds it."""
+    bet = _bet(user, amount)
+    ledger.open_week(user.id, bet.week)
+    assert ledger.place(bet)
+    db.session.commit()
+    db.session.refresh(bet)
+    db.session.expunge(bet)
+    return bet
+
+
+def _set_stored_balance(user, balance):
+    """Change the balance in the database only, so the user loaded in this session goes stale."""
+    db.session.execute(
+        text("UPDATE users SET account_balance = :balance WHERE id = :id"), {"balance": balance, "id": user.id}
+    )
+
+
+def _money(user):
+    week = db.session.query(WeeklyStats).filter_by(user_id=user.id, week=10).one()
+    return {
+        "account_balance": user.account_balance,
+        "total_pnl": user.total_pnl,
+        "bets": db.session.query(Bet).count(),
+        "starting_balance": week.starting_balance,
+        "ending_balance": week.ending_balance,
+        "pnl": week.pnl,
+        "active_bets_amount": week.active_bets_amount,
+        "settled_pnl": week.settled_pnl,
+        "bets_placed": week.bets_placed,
+        "bets_won": week.bets_won,
+    }
+
+
+def test_stake_one_cent_over_the_balance_changes_nothing(user):
+    _placed_bet(user, 400.0)
+    before = _money(user)
+
+    assert ledger.place(_bet(user, 600.01)) is False
+    db.session.rollback()
+
+    assert _money(user) == before
+
+
+def test_stake_of_the_whole_balance_is_accepted(user):
+    _placed_bet(user, 1000.0)
+
+    assert _money(user)["account_balance"] == 0.0
+
+
+def test_stake_comes_off_the_stored_balance_not_the_loaded_one(logged_in_client, user, betting_period):
+    _set_stored_balance(user, 300.0)
+    assert user.account_balance == 1000.0
+
+    reply = logged_in_client.post("/api/place_bet", json=STAKE).get_json()
+
+    assert reply == {"success": True, "new_balance": 200.0}
+    assert _money(user)["starting_balance"] == 300.0
+
+
+def test_stake_the_stored_balance_cannot_cover_is_refused(logged_in_client, user, betting_period):
+    _set_stored_balance(user, 50.0)
+    assert user.account_balance == 1000.0
+
+    reply = logged_in_client.post("/api/place_bet", json=STAKE).get_json()
+
+    assert reply == {"success": False, "error": "Insufficient balance"}
+    assert _money(user)["account_balance"] == 50.0
+    assert db.session.query(Bet).count() == 0
+
+
+def test_settling_twice_pays_once(user):
+    bet = _placed_bet(user)
+    assert ledger.settle(bet, won=True) is True
+    db.session.commit()
+    paid = _money(user)
+
+    assert ledger.settle(bet, won=True) is False
+    db.session.rollback()
+
+    assert paid["account_balance"] == 1100.0
+    assert _money(user) == paid
+
+
+def test_removing_twice_refunds_once(user):
+    bet = _placed_bet(user)
+    assert ledger.remove(bet) is True
+    db.session.commit()
+    refunded = _money(user)
+
+    assert ledger.remove(bet) is False
+    db.session.rollback()
+
+    assert refunded["account_balance"] == 1000.0
+    assert _money(user) == refunded
+
+
+def test_settling_a_removed_bet_pays_nothing(user):
+    bet = _placed_bet(user)
+    ledger.remove(bet)
+    db.session.commit()
+    removed = _money(user)
+
+    assert ledger.settle(bet, won=True) is False
+    db.session.rollback()
+
+    assert _money(user) == removed
+
+
+def test_removing_a_settled_bet_refunds_nothing(user):
+    bet = _placed_bet(user)
+    ledger.settle(bet, won=False)
+    db.session.commit()
+    settled = _money(user)
+
+    assert ledger.remove(bet) is False
+    db.session.rollback()
+
+    assert _money(user) == settled
+
+
+def test_second_bet_of_the_week_adds_to_the_counters(user):
+    _placed_bet(user, 100.0)
+    _placed_bet(user, 50.0)
+
+    assert _money(user) == {
+        "account_balance": 850.0,
+        "total_pnl": 0.0,
+        "bets": 2,
+        "starting_balance": 1000.0,
+        "ending_balance": 850.0,
+        "pnl": -150.0,
+        "active_bets_amount": 150.0,
+        "settled_pnl": 0.0,
+        "bets_placed": 2,
+        "bets_won": 0,
+    }

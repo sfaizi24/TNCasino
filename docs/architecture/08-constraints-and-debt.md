@@ -8,7 +8,7 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 
 - [ ] **Client-supplied odds.** `highest_scorer`, `lowest_scorer`, `first_seed`, and `ammad_playoff` bets store the `odds` string sent by the browser without checking it against the odds tables, so a crafted request can set any payout. `app/routes/betting.py:255`
 - [ ] **Duplicate odds rows after re-running notebook 07.** The five `betting_odds_*` tables append by `run_id` and the app doesn't filter by it. Duplicates appear on the site, and since moneyline/O/U bets select by row position (`matchup_idx`, `team_idx`), they can shift which matchup a bet lands on. Negative indexes and unknown `choice` values also aren't rejected. `app/routes/odds.py:30`, `app/routes/betting.py:420–482`, notebook 07
-- [ ] **Balance race.** Balance updates are read-modify-write on the ORM object with no row lock, so concurrent place/remove/settle requests can overwrite each other. `app/routes/betting.py`, `app/routes/admin.py:118`
+- [x] **Balance race.** Balance updates were read-modify-write on the ORM object with no row lock, so concurrent place/remove/settle requests could overwrite each other. Fixed in `13c1cba`: each event is one transaction that opens with a conditional guard and changes money by SQL arithmetic. `app/ledger.py`
 - [ ] **Sleeper scraper uses the legacy host.** `scraper_sleeper.py` calls `api.sleeper.app/v1/projections/nfl/regular/{season}/{week}`. It still returns data (9,422 entries for 2026 week 3), but the Sleeper app itself now reads `api.sleeper.com/projections/nfl/{season}/{week}?season_type=regular&position[]=…`, which returns a list instead of a dict, nests stats under `stats`, and adds `pts_ppr`/`pts_half_ppr`/`pts_std` and a `company` field (`rotowire`). Migrate before the old host goes empty. `backend/scrapers/scraper_sleeper.py:93`
 - [ ] **Add more projection sources.** Verified 2026-09-26 as free, no login, server-rendered HTML tables (plain `requests` + BeautifulSoup, same shape as the FantasyPros scraper). Sleeper is RotoWire data, so these would be the first independent additions since FirstDown.
   - CBS Sports: `https://www.cbssports.com/fantasy/football/stats/{POS}/{season}/{week}/projections/ppr/`, one page per position, fantasy points plus full stat line.
@@ -59,13 +59,13 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 |---|---|---|
 | H | **Client-supplied odds.** `highest_scorer`, `lowest_scorer`, `first_seed`, `ammad_playoff` bets store the `odds` string sent by the browser without checking it against the odds tables. | `app/routes/betting.py:255` and the three branches after it |
 | H | **Index-based selections.** Moneyline and team O/U bets identify the pick by row position (`matchup_idx`, `team_idx`) in a query result; negative indexes aren't rejected, and `choice` isn't validated. | `betting.py:420–482` |
-| H | Balance updates are read-modify-write without row locks; concurrent requests can race. No ledger table. | `betting.py`, `admin.py:118` |
 | M | CSRF is off by default; JSON `POST`/`DELETE` endpoints (including admin) are unprotected apart from SameSite=Lax. | `app/extensions.py`, `app/__init__.py` |
 | M | `place_bet` has six near-identical branches (~330 lines). | `betting.py:206` |
 | M | Bet selections are stored only as display strings (`description`); settling a bet requires a human to read them. | `app/models.py` |
 | M | Settlement is fully manual; `settle_week` doesn't settle bets. | `admin.py:178` |
 | M | Analytics tables have no ORM models or schema checks; errors are caught and returned as `[]` with 200. | `odds.py` |
 | M | Schema changes are ad-hoc `ALTER`s run at startup; failures are logged and ignored. | `app/migrations.py` |
+| L | No ledger table: balances change in place, so money history can only be reconstructed from `bets`. | `app/ledger.py` |
 | L | Logging is `print()` + `traceback.print_exc()`. | all routes |
 | L | `/api/first_place` and `/api/ammad_playoff` have no frontend caller; `/analytics` picks its week from PNG filenames even though the page no longer shows PNGs. | `odds.py:142`, `pages.py:31` |
 | L | Admin `pending_bets` defaults to week 10. | `admin.py:89` |

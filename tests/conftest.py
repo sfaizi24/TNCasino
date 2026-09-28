@@ -36,6 +36,22 @@ def app():
     yield app
 
 
+@pytest.fixture
+def file_backed_app(tmp_path):
+    """An app on a SQLite file, where every request gets its own connection, so requests can race."""
+    app = create_app(
+        {
+            **TEST_CONFIG,
+            "SQLALCHEMY_DATABASE_URI": f"sqlite:///{(tmp_path / 'race.db').as_posix()}",
+            # Writers queue for the lock instead of failing with "database is locked".
+            "SQLALCHEMY_ENGINE_OPTIONS": {"connect_args": {"timeout": 30}},
+        }
+    )
+    yield app
+    with app.app_context():
+        _db.engine.dispose()
+
+
 @pytest.fixture(autouse=True)
 def db_session(app):
     with app.app_context():
