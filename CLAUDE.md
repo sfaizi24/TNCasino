@@ -84,6 +84,7 @@ app/                  — Flask application package
   auth.py             — Google OAuth, login_manager, admin email allowlist
   database.py         — SQLAlchemy instance
   extensions.py       — Shared Flask extensions (CSRFProtect)
+  ledger.py           — The only code that moves money: open_week, place, remove, settle
   migrations.py       — Schema migrations (run on startup)
   models.py           — SQLAlchemy models (User, Bet, WeeklyStats, BettingPeriod)
   routes/
