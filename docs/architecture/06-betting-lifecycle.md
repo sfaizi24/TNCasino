@@ -1,6 +1,6 @@
 # 06 – Betting Lifecycle
 
-All money is fake. Every user starts with **1,000**. Code: `app/routes/betting.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/ledger.py`, `app/markets.py`.
+All money is fake. Every user starts with **1,000**. Code: `app/routes/betting.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/ledger.py`, `app/markets.py`, `app/settlement.py`.
 
 ## Betting period (one per week)
 
@@ -18,7 +18,7 @@ stateDiagram-v2
 - `lock_time` is entered in the admin form as a naive datetime and **stored as UTC**.
 - The lock is lazy: `check_betting_period_lock(week)` flips `is_locked` when it sees `now ≥ lock_time`. It is called from `place_bet`, `remove_bet`, and `my_bets` for each pending bet's `removable`; the `/betting` route itself doesn't check it.
 - **Current week** = highest-numbered unsettled period. Settling week *N* moves the site to the next unsettled period; if there is none, it falls back to week 10. Creating the week *N+1* period before settling *N* moves the site forward immediately.
-- `settle_week` **only sets `is_settled`**. It doesn't touch bets; pending bets stay pending.
+- `settle_week` **only sets `is_settled`**. It doesn't touch bets; pending bets stay pending. The admin page shows only the current week's bets, so settle them ([Settlement](#settlement)) before creating the next week's period or marking this one settled.
 
 ## Bet
 
@@ -26,11 +26,13 @@ stateDiagram-v2
 stateDiagram-v2
     [*] --> pending: place_bet<br/>(balance −= amount)
     pending --> removed: remove_bet before lock,<br/>while its run is the latest<br/>(balance += amount)
-    pending --> won: admin settle_bet(won=true)<br/>(balance += amount + potential_win)
-    pending --> lost: admin settle_bet(won=false)
+    pending --> won: admin settle_outcomes<br/>or settle_bet(won=true)<br/>(balance += amount + potential_win)
+    pending --> lost: admin settle_outcomes<br/>or settle_bet(won=false)
+    pending --> push: admin settle_outcomes,<br/>tie or score on the line<br/>(balance += amount)
+    pending --> void: admin void_bet<br/>(balance += amount)
 ```
 
-The app has no knowledge of real results. The admin looks at each pending bet (`/admin`, filtered by week, the current week by default) and clicks won or lost. A bet's legs settle with it, taking its status and `settled_at` in the same transaction.
+The app judges each weekly bet placed by market key against the league's published scores, and the admin confirms the outcomes it shows ([Settlement](#settlement)); futures and legacy bets are settled by hand as won or lost. A bet's legs settle with it, taking its status and `settled_at` in the same transaction. A push and a void both return the stake. A push is a result and stays on the record: the account page lists it as Push, and the leaderboard's popular-bet counts include it and show Push when nothing in the group won or lost. A void means the bet should never have stood, so it leaves `bets_placed` as a remove does, the account page lists it as Void, and the popular-bet counts leave it out with the removed bets.
 
 A pending bet can be removed while its week is open and its market still shows the run it was priced at. Once a new run is published for the market, `remove_bet` refuses with `"Odds have changed since this bet was placed"` and the bet rides to settlement. A legacy bet has no market to check and is removable while its week is open. `my_bets` reports the rule as each bet's `removable`, and the betting page shows the cancel button only when it is true. A removed bet keeps its row with status `removed` and its legs `void`; the account page lists it as Removed, and the leaderboard's popular-bet counts leave it out.
 
@@ -57,7 +59,7 @@ Only the latest published season is quoted. Weekly markets must be for the curre
 | `"Odds have changed"` | the row's `run_id` differs from the request's, or a team total's line is missing or differs at two decimals; the reply adds the row's `run_id`, `price`, `odds` and `line` |
 | `"Not offered"` | the side's price is null because its simulated chance is 0 or 1; the page shows "No price" there |
 
-The bet stores the table's `odds` text, `price` (the odds as an integer: `+150` is 150, `-150` is −150, even money is 100), and the row's `probability` and `run_id`. Its one `bet_legs` row records the pick as data: the key, the selection, the line, the price and the chance. The `description` keeps the old wording for the weekly markets (`Samer vs Ammad: Samer -143`, `Samer: Highest Scorer +474`), with team-total lines now at two decimals (`Samer O/U 110.63: Over`); futures read `Samer: First Place +139` and `Ammad: Make Playoffs -114`. The admin still settles by reading it.
+The bet stores the table's `odds` text, `price` (the odds as an integer: `+150` is 150, `-150` is −150, even money is 100), and the row's `probability` and `run_id`. Its one `bet_legs` row records the pick as data: the key, the selection, the line, the price and the chance. The `description` keeps the old wording for the weekly markets (`Samer vs Ammad: Samer -143`, `Samer: Highest Scorer +474`), with team-total lines now at two decimals (`Samer O/U 110.63: Over`); futures read `Samer: First Place +139` and `Ammad: Make Playoffs -114`. The admin page shows it beside each bet's outcome; only futures and legacy bets are still settled by reading it.
 
 **Legacy bets.** Bets placed before market keys existed have no legs and null `price`, `probability` and `run_id`. They keep their `description` and `odds` as the only record of the pick, show on the account page, the leaderboard and the admin page like any other bet, and settle by hand as before. Their `bet_type` was renamed once to the market names (`team_ou` → `team_total`, `first_seed` → `first_place`, `ammad_playoff` → `make_playoffs`); their descriptions keep the old wording ("#1 Seed", "Ammad Playoff").
 
@@ -69,11 +71,47 @@ The bet stores the table's `odds` text, `price` (the odds as an integer: `+150` 
 | `−X` | amount × 100 / X |
 | `EVEN` | amount |
 
-`place_bet` works it out from the bet's `price`, where even money is 100, so an even-money win pays the stake. On a win the user receives `amount + potential_win` (stake back plus profit). On a loss nothing is returned; the stake was already deducted when the bet was placed.
+`place_bet` works it out from the bet's `price`, where even money is 100, so an even-money win pays the stake. On a win the user receives `amount + potential_win` (stake back plus profit). On a loss nothing is returned; the stake was already deducted when the bet was placed. A push or a void returns the stake alone.
+
+## Settlement
+
+`app/settlement.py` judges each pending bet of a week against the league's team scores, published as `sleeper_matchups`. It never moves money or commits; the admin routes settle through the ledger. Scores and lines both carry two decimals, so every comparison is in whole cents (`round(points * 100)`), and float error never decides a push.
+
+| Market | Won | Lost | Push | Undecided |
+|---|---|---|---|---|
+| `moneyline` | the picked roster outscores the other roster in the key | the other way | equal points | either roster has no score |
+| `team_total` | `over`: points above the leg's `line`; `under`: below | the other way | points on the line | the roster has no score |
+| `highest_scorer`, `lowest_scorer` | the picked roster's points equal the week's highest (lowest) | otherwise | never | any roster of the week's league has no score |
+| `first_place`, `make_playoffs` | | | | always: settled by hand after the season |
+| a bet without legs | | | | always: settled by hand |
+| a key that fails to parse | | | | always, with the parse error as the reason |
+
+- A roster has no score when its row is missing or its `points` are exactly 0. Sleeper lists every roster of a week at 0.0 until the week is played, and no team with a lineup scores exactly zero.
+- The moneyline's other roster comes from the key, not from `matchup_id_number`.
+- A team total settles at the `line` stored on its leg, never the odds table's current line, which a later run may have moved.
+- Every roster tied on the top (or bottom) score wins in full, because the pricing counted each of them the winner.
+- A week whose `sleeper_matchups` rows come from more than one league is refused whole: `"Week 4 has scores from 2 leagues; publish only this season's league"`.
+
+Each outcome carries a reason the admin reads beside it: `Bob B 131.20 vs Alice A 110.50`, `Alice A 110.50, line 110.50`, `highest 131.20: Bob B, Carol C`, `no score for Bob B`, `futures: settle by hand`, `placed before market keys: settle by hand`.
+
+**Preview, then confirm.** The Settle Week card on `/admin` shows the week's scores as a strip, then every pending bet with its bettor, description, reason and outcome (`GET /api/admin/settlement_preview`). One button, "Settle N decided bets", sends each decided bet with the outcome the page showed (`POST /api/admin/settle_outcomes`). The route recomputes every outcome from the scores published now and settles a bet, through `ledger.settle` or `ledger.push`, only when the two agree. Each bet is its own transaction (guard, commit, next), so a failure part-way leaves the bets before it settled. The others are skipped with a reason, the page lists what settled and what was skipped, and both cards reload:
+
+| Skip reason | When |
+|---|---|
+| `"scores changed: now push"` | a publish since the preview changed the outcome (`now won`, `now lost` the same way) |
+| `"undecided"` | the bet has no outcome from the scores published now |
+| `"already settled"` | the bet is no longer pending: settled, pushed, voided or removed |
+| `"not found"` | no bet of that week has the id |
+
+**Which scores.** `sleeper_matchups` has no `run_id` and no fetch time: publish replaces it whole from the pipeline's latest league fetch, so settlement uses whatever the last publish carried, and the app cannot tell when that fetch ran. The design's open hypothesis ([odds models §6](../design/odds-models-2026.md#6-settlement-edge-cases)) is that Sleeper's stat corrections move a few starters by a point or two after Monday night. The test is to fetch week 4's matchups on Tuesday morning and again on Friday and compare `players_points`; until the answer is known, settle on Tuesday's fetch. The admin runs the league fetch and publish on Tuesday, checks the card's scores strip, which shows exactly the points the outcomes use, and then presses the button. A bet settled from Tuesday's scores is not revisited when a correction lands later.
+
+**By hand.** The Pending Bets card keeps a Win and a Loss button on every pending bet (`POST /api/admin/settle_bet`). They are how futures (after the season) and legacy bets settle, and they settle any other pending bet as won or lost too. The Void button beside them (`POST /api/admin/void_bet`, after a confirm naming the bet and its stake) refunds a bet that should never have stood: a game not played, an admin mistake.
+
+Both cards show the current week, and the page has no week switch; `settlement_preview` and `pending_bets` take `?week=N` for any other week, and `settle_outcomes` takes the week in its body.
 
 ## Accounting
 
-Three places hold money state. `app/ledger.py` is the only code that changes them, with one function per event (`open_week`, `place`, `remove`, `settle`):
+Three places hold money state. `app/ledger.py` is the only code that changes them, with one function per event (`open_week`, `place`, `remove`, `settle`, `push`, `void`):
 
 ```mermaid
 flowchart LR
@@ -101,6 +139,10 @@ flowchart LR
 | **Remove** | balance += amount | placed −1, active −= amount, ending = balance | `removed`; legs `void` |
 | **Settle won** | balance += amount + win; total_pnl += win | active −= amount, settled_pnl += win, won +1, ending = balance | `won`, result = +win; legs `won` |
 | **Settle lost** | total_pnl −= amount | active −= amount, settled_pnl −= amount, ending = balance | `lost`, result = −amount; legs `lost` |
+| **Push** | balance += amount | active −= amount, ending = balance | `push`, result = 0; legs `push` |
+| **Void** | balance += amount | placed −1, active −= amount, ending = balance | `void`, result = 0; legs `void` |
+
+A push leaves `total_pnl`, `settled_pnl`, `bets_placed` and `bets_won` as they were: the bet was placed and settled for nothing. A void takes the bet out of `bets_placed`, as a remove does, because it should never have counted. Settle, push and void set `settled_at` on the bet and its legs.
 
 `weekly_stats.pnl` includes the cost of still-open bets (balance-based), while `settled_pnl` only counts resolved bets. The leaderboard uses `users.total_pnl` for all-time and `weekly_stats.settled_pnl` for weekly rankings.
 
@@ -108,13 +150,15 @@ There is no ledger table: balances change in place, so history can only be recon
 
 ### Concurrent requests
 
-Place, remove and settle each run as one transaction that opens with a conditional guard: a statement that changes a row only while the event is still allowed. The route commits once when the guard changed a row and rolls back when it changed none:
+Place, remove, settle, push and void each run as one transaction that opens with a conditional guard: a statement that changes a row only while the event is still allowed. The route commits once when the guard changed a row and rolls back when it changed none; `settle_outcomes` does this once per bet:
 
 | Event | Guard | When it changes no row |
 |---|---|---|
 | **Place** | `UPDATE users SET account_balance = account_balance - :stake WHERE id = :user AND account_balance >= :stake` | `"Insufficient balance"` |
 | **Remove** | `UPDATE bets SET status = 'removed' WHERE id = :bet AND status = 'pending'` | `"Bet not found"` |
-| **Settle** | `UPDATE bets SET status = :status, result = :result, settled_at = :now WHERE id = :bet AND status = 'pending'` | `"Bet already settled"` |
+| **Settle** | `UPDATE bets SET status = :status, result = :result, settled_at = :now WHERE id = :bet AND status = 'pending'` | `"Bet already settled"` from `settle_bet`; `settle_outcomes` skips the bet as `"already settled"` |
+| **Push** | `UPDATE bets SET status = 'push', result = 0, settled_at = :now WHERE id = :bet AND status = 'pending'` | `settle_outcomes` skips the bet as `"already settled"` |
+| **Void** | `UPDATE bets SET status = 'void', result = 0, settled_at = :now WHERE id = :bet AND status = 'pending'` | `"Bet already settled"` from `void_bet` |
 
 The statements after the guard change the stored values by SQL arithmetic (`bets_placed = bets_placed + 1`) and read `ending_balance` and `pnl` from the user's balance by subquery, so no request writes back a number it read earlier. The effects table above therefore holds when requests arrive together: a stake never takes a balance below zero, and a bet is paid or refunded at most once. On PostgreSQL a guard that meets a row another request is changing waits for that request to finish, then re-checks its condition against the new value; SQLite runs one writer at a time.
 

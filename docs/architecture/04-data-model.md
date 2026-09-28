@@ -132,7 +132,7 @@ erDiagram
         float probability
         string run_id "simulation run the price came from"
         float potential_win
-        string status "pending | won | lost | removed"
+        string status "pending | won | lost | push | removed | void"
         float result
         int week
         timestamptz created_at
@@ -148,7 +148,7 @@ erDiagram
         numeric line "two decimals, team totals only"
         int price
         float probability
-        string status "pending | won | lost | void"
+        string status "pending | won | lost | push | void"
         timestamptz settled_at
     }
     weekly_stats {
@@ -172,7 +172,7 @@ erDiagram
     }
 ```
 
-A bet placed by market key has one `bet_legs` row recording the pick as data: the key, the selection, the line, and the price and chance it was placed at. A leg is `pending` until its bet settles, then takes the bet's `won` or `lost` and `settled_at`; the legs of a removed bet are `void`. Bets placed before market keys existed have no legs, and their `price`, `probability` and `run_id` are null. See [06](06-betting-lifecycle.md#markets) for the keys.
+A bet placed by market key has one `bet_legs` row recording the pick as data: the key, the selection, the line, and the price and chance it was placed at. A leg is `pending` until its bet closes, then takes the bet's `won`, `lost`, `push` or `void` and `settled_at`; the legs of a removed bet are `void` with no `settled_at`. A `push` returns the stake because the scores tied or landed on the line; a `void` returns it because the admin found the bet should not stand ([06](06-betting-lifecycle.md#settlement)). Bets placed before market keys existed have no legs, and their `price`, `probability` and `run_id` are null. See [06](06-betting-lifecycle.md#markets) for the keys.
 
 App tables are created by `db.create_all()` on startup and patched by `app/migrations.py` (idempotent `ALTER`s, errors logged and swallowed). There is no migration framework. `create_all` creates a missing table such as `bet_legs` but never alters one that exists, so the `bets` columns `run_id`, `price` and `probability` are added by `ALTER`s in `app/migrations.py`, which also renames the legacy bet types to their market names once (`team_ou` → `team_total`, `first_seed` → `first_place`, `ammad_playoff` → `make_playoffs`).
 

@@ -7,11 +7,13 @@ A server-rendered Flask app with vanilla-JS pages that call JSON endpoints. It o
 ```
 app/__init__.py      create_app(): config from env, extensions, blueprints, create_all + migrations
 app/auth.py          Google OAuth (Flask-Dance), Flask-Login user loader, /auth/logout
-app/ledger.py        The only code that moves money: open_week, place, remove, settle
+app/ledger.py        The only code that moves money: open_week, place, remove, settle, push, void
 app/markets.py       Market keys and their quotes: key_for_row(), parse_key(), find_quote(),
                      price_from_odds(), potential_win()
 app/models.py        User, Bet, BetLeg, WeeklyStats, BettingPeriod
 app/migrations.py    Idempotent ALTERs run on every startup
+app/settlement.py    Each pending bet's outcome from the published scores: team_scores(),
+                     outcomes_for_week(), outcome_for()
 app/routes/
   helpers.py         query_analytics(), get_current_week(), check_betting_period_lock(),
                      admin_required, owner → display-name mapping
@@ -81,6 +83,9 @@ sequenceDiagram
 | `/api/admin/set_betting_period` | POST | admin | | `betting_periods` |
 | `/api/admin/pending_bets` | GET | admin | `bets` | |
 | `/api/admin/settle_bet` | POST | admin | | `bets`, `bet_legs`, `users`, `weekly_stats` |
+| `/api/admin/settlement_preview` | GET | admin | `betting_periods` (default week), `bets`, `bet_legs`, `users`, `sleeper_matchups`, `sleeper_rosters`, `sleeper_users` | |
+| `/api/admin/settle_outcomes` | POST | admin | `bets`, `bet_legs`, `sleeper_matchups`, `sleeper_rosters`, `sleeper_users` | `bets`, `bet_legs`, `users`, `weekly_stats` |
+| `/api/admin/void_bet` | POST | admin | `bets` | `bets`, `bet_legs`, `users`, `weekly_stats` |
 | `/api/admin/settle_week` | POST | admin | | `betting_periods` |
 | `/api/admin/unlock_period` | POST | admin | | `betting_periods` |
 | `/auth/google`, `/auth/google/authorized` | GET | — | | `users` |
@@ -101,6 +106,16 @@ Every odds/analytics endpoint except the two futures endpoints uses `get_current
 A refusal is `success: false` with an `error` message. `place_bet` prices the bet from the row its `market` and `selection` find ([06](06-betting-lifecycle.md#markets)); when that row's `run_id` differs from the request's, or a team total's `line` has moved, it refuses with `"Odds have changed"` and adds the row's `run_id`, `price`, `odds` and `line`. In `my_bets`, the six fields from `market` to `run_id` are null on bets placed before market keys existed.
 
 `removable` is true while the bet's week is open and its market's row still carries the bet's `run_id`; a legacy bet has no market to check and is removable while its week is open. `remove_bet` applies the same rule, refusing a bet whose run has been replaced with `"Odds have changed since this bet was placed"`. A removed bet keeps its row, with status `removed`.
+
+### Admin endpoints
+
+| Endpoint | Request | Response |
+|---|---|---|
+| `GET /api/admin/settlement_preview` | `week` in the query, the current week by default | `success`, `week`, `scores` (each `roster_id`, `team`, `points`), `bets` (each `id`, `user`, `description`, `amount`, `odds`, `potential_win`, `market`, `selection`, `line`, `outcome`, `reason`), `decided`, `undecided` |
+| `POST /api/admin/settle_outcomes` | `week`, and `bets`: each `id` with the `outcome` the page showed | `success`, `settled` (bet ids), `skipped` (each `id`, `reason`) |
+| `POST /api/admin/void_bet` | `bet_id` | `success` |
+
+The preview lists the week's pending bets in id order. `points` is null for a roster that has not played. `user` is the bettor's first and last name, or `User #` and the first eight characters of the id when both are empty. `market`, `selection` and `line` are null on legacy bets. `outcome` is `won`, `lost`, `push` or `undecided`; `decided` counts the bets with one of the first three and `undecided` the rest. `settle_outcomes` settles a bet only when its recomputed outcome matches the one sent, and gives every other bet a skip reason ([06](06-betting-lifecycle.md#settlement)). A refusal is `success: false` with an `error`: `"Week required"` from `settle_outcomes`; `"Bet ID required"`, `"Bet not found"` and `"Bet already settled"` from `void_bet`. `settlement_preview` and `settle_outcomes` refuse a week whose scores come from more than one league.
 
 ## Page → API map
 
@@ -133,10 +148,19 @@ flowchart LR
     AN --> LO[/api/league_overview]
     AN --> PS[/api/position_strength]
 
-    AD --> ADM[/api/admin/*]
+    AD --> BPS[/api/admin/betting_periods]
+    AD --> SBP[/api/admin/set_betting_period]
+    AD --> ULP[/api/admin/unlock_period]
+    AD --> SPV[/api/admin/settlement_preview]
+    AD --> SOC[/api/admin/settle_outcomes]
+    AD --> PEN[/api/admin/pending_bets]
+    AD --> STB[/api/admin/settle_bet]
+    AD --> VDB[/api/admin/void_bet]
+    AD --> STW[/api/admin/settle_week]
 ```
 
 `/leaderboard` and `/account` are fully server-rendered with no API calls. The betting page's Futures tab lists `/api/first_place` and `/api/make_playoffs` in two groups.
 
 - **betting.js** loads the six odds endpoints in parallel, lazy-loads lineups when a card expands, and updates the balance optimistically on place/remove before reloading `my_bets`. Each card carries its row's `market` key and each pick button its `selection`; a bet marks the card side whose market and selection match its own, so a legacy bet is listed as active but marks no card. A side with a null price shows "No price" instead of a pick button, the cancel button shows only on `removable` bets, and an `"Odds have changed"` refusal reloads the tab at the new quote.
 - **analytics.js** renders five Chart.js charts from the precomputed curves (matchup distributions, margin, lineup comparison, standings, position strength). The PNG charts from the pipeline are not used on this page any more; `/analytics` only uses the PNG directory to decide which week to show.
+- **admin.js** loads the betting periods, then the Settle Week preview and the Pending Bets list for the current week. Settling the decided bets, settling one by hand and voiding one each reload both cards; after settling the decided bets they reload even when the reply is an error, because the bets settled before a failure stand. Bettors set their own names on the account page and team names come from Sleeper, so the two cards escape every name, description and reason they render.
