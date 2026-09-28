@@ -469,3 +469,18 @@ def test_only_a_pending_bet_can_be_voided(admin_client, betting_period, seeded_a
 
     assert again == {"success": False, "error": "Bet already settled"}
     assert unknown == {"success": False, "error": "Bet not found"}
+
+
+def test_the_account_page_shows_a_push_and_a_void_as_neither_won_nor_lost(
+    admin_client, betting_period, seeded_analytics, db_session
+):
+    team_total, moneyline = _place(admin_client, [TEAM_TOTAL_BET, MONEYLINE_BET])
+    set_points(db_session.session, SCORES)
+    _settle(admin_client, [{"id": team_total, "outcome": "push"}])
+    admin_client.post("/api/admin/void_bet", json={"bet_id": moneyline})
+
+    page = admin_client.get("/account").get_data(as_text=True)
+
+    assert "Push" in page
+    assert "Void" in page
+    assert "-$100.00" not in page

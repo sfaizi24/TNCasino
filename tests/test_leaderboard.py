@@ -353,3 +353,38 @@ def test_new_bets_rank_beside_legacy_ones_and_removed_bets_are_left_out(client, 
     assert "Bob loss" in page  # a legacy row, the worst odds that lost
     assert "Carol D: Lowest Scorer" not in page
     assert "Most Popular Lowest Scorer" not in page
+
+
+def _lowest_scorer_bet(user_id, description, status):
+    return Bet(
+        user_id=user_id,
+        bet_type="lowest_scorer",
+        description=description,
+        amount=50.0,
+        odds="+230",
+        potential_win=115.0,
+        status=status,
+        result=0.0,
+        week=10,
+    )
+
+
+def test_a_popular_bet_on_the_line_shows_as_a_push_and_void_bets_are_left_out(client, db_session, captured_templates):
+    _seed_leaderboard_data(db_session)
+    db_session.session.add_all(
+        [
+            _lowest_scorer_bet("lb-1", "Bob J: Lowest Scorer +230", "push"),
+            _lowest_scorer_bet("lb-3", "Bob J: Lowest Scorer +230", "push"),
+            _lowest_scorer_bet("lb-1", "Carol D: Lowest Scorer +230", "void"),
+            _lowest_scorer_bet("lb-2", "Carol D: Lowest Scorer +230", "void"),
+            _lowest_scorer_bet("lb-3", "Carol D: Lowest Scorer +230", "void"),
+        ]
+    )
+    db_session.session.commit()
+
+    page = client.get("/leaderboard").get_data(as_text=True)
+
+    popular = captured_templates[0][1]["popular_lowest"]
+    assert (popular.description, popular.count, popular.pushes) == ("Bob J: Lowest Scorer +230", 2, 2)
+    assert '<div class="tnc-lb-outcome tnc-lb-outcome-push">Push</div>' in page
+    assert "Carol D: Lowest Scorer" not in page
