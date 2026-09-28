@@ -57,17 +57,17 @@ Written by the `simulate`, `odds` and `playoffs` steps (notebooks 07 and 09 in 2
 
 | Table | Key | Written by | Contents |
 |---|---|---|---|
-| `simulation_runs` | run_id* | simulate | `season`, `week`, `seed`, `n_sims`, `model_version`, `n_teams`, `created_at`, and `draws_path`: the run's draws as Parquet under the data directory (`sims/{season}/wk{week}/{run_id}.parquet`, one row per simulation per team) |
+| `simulation_runs` | run_id* | simulate | `season`, `week`, `seed`, `n_sims`, `model_version`, `n_teams`, `created_at`; `draws_path`, the run's draws as Parquet under the data directory (`sims/{season}/wk{week}/{run_id}.parquet`, one row per simulation per team); `n_locked`, the players fixed at their real points (0 until a rerun locks the games already played); `window_closes_at`, the week's first kickoff after `created_at`, when betting on the run closes, NULL when no game is left; and `standings_through_week`, the fewest games any roster has played, so the week the standings are complete through |
 | `betting_odds_matchup_ml` | (run_id*, week*, team1_id*, team2_id*) | odds | `team{1,2}_win_prob`, `team{1,2}_ml`, `ties` |
-| `betting_odds_matchup_ou` | (run_id*, week*, team1_id*, team2_id*) | odds | Combined-score line and prices. Not published. |
+| `betting_odds_matchup_ou` | (run_id*, week*, team1_id*, team2_id*) | odds | `line` on the combined score, `over_prob`/`over_odds`, `under_prob`/`under_odds` |
 | `betting_odds_team_ou` | (run_id*, week*, team_id*) | odds | `line`, `over_prob`/`over_odds`, `under_prob`/`under_odds`, `push_count` |
 | `betting_odds_highest_scorer`, `_lowest_scorer` | (run_id*, week*, team_id*) | odds | `count`, `probability`, `odds` |
 | `team_distribution_curves` | (run_id*, week*, owner*) | odds | JSON arrays `x_values`, `density_values`, `cdf_values`; `mean`, `p10`, `p50`, `p90`, `n_sims` |
 | `team_matchup_margin_curves` | (run_id*, week*, team_owner*, opponent_owner*) | odds | Win/loss/tie probability, JSON `left_*`/`right_*` tail arrays |
 | `betting_odds_first_place`, `_make_playoffs` | id* (autoincrement), unique on (run_id, week, team_id) | playoffs | `run_id`, `week`, `team_id`, `owner`, `probability`, `american_odds`, `season` |
-| `standings_probability_matrix` | id*, unique on (run_id, week, team_id, position) | playoffs | P(team finishes in each position). Not published. |
+| `standings_probability_matrix` | id*, unique on (run_id, week, team_id, position) | playoffs | P(team finishes in each position) |
 
-The `odds` step's tables carry the `run_id` of the simulation they were priced from. Rerunning `odds` replaces that run's rows, and each new `simulate` run adds a set beside the old ones; `publish` uploads only each week's latest run (newest `created_at`, then highest `run_id`). The 2025 curves had no run id, so the migration gave them their week's odds run.
+The `odds` step's tables carry the `run_id` of the simulation they were priced from. Rerunning `odds` replaces that run's rows, and each new `simulate` run adds a set beside the old ones; `publish` uploads only each week's latest run (newest `created_at`, then highest `run_id`). The 2025 curves had no run id, so the migration gave them their week's odds run. An `odds.db` whose `simulation_runs` predates `n_locked`, `window_closes_at` and `standings_through_week` gains them, at their defaults for the runs already recorded, the next time `simulate` records a run.
 
 ## montecarlo.db — raw simulations (2025 only)
 
@@ -208,4 +208,28 @@ sequenceDiagram
     P->>PG: COMMIT
 ```
 
-Safety rails: refuses to target `users`, `bets`, `weekly_stats`, or `betting_periods`. `--dry-run` still writes the staging tables to production to validate them, then drops them instead of swapping. Postgres column types come from pandas inference, so the analytics schema in prod is whatever `to_sql` produces (no primary keys or indexes).
+Safety rails: refuses to target `users`, `bets`, `bet_legs`, `weekly_stats`, or `betting_periods`. `--dry-run` still writes the staging tables to production to validate them, then drops them instead of swapping. Postgres column types come from pandas inference, so the analytics schema in prod is whatever `to_sql` produces (no primary keys or indexes).
+
+**The pipeline's `publish` step** (`pipeline/steps/publish.py`) stages, counts and swaps the same way, with the same refusals, but uploads the current season only and, of each table with a `run_id`, each week's latest run. Its `--dry-run` writes nothing. It replaces the 13 tables above and nine more:
+
+| SQLite source | Postgres table |
+|---|---|
+| `odds.db` `betting_odds_matchup_ou`, `standings_probability_matrix` | same names |
+| `odds.db` `simulation_runs`, `calibration_metrics` | same names |
+| `projections.db` `prediction_accuracy`, `team_accuracy` | same names |
+| `pipeline.db` `pipeline_runs`, `pipeline_steps`, `source_reviews` | same names |
+
+The matchup totals and the standings matrix are published for markets the app does not offer yet, and it reads neither. `pipeline_runs` and `pipeline_steps` keep every run of the season, because the dashboard lists them all.
+
+**`simulation_totals`** is the one table the step appends to instead of replacing. It holds the full score matrix of every run the step has published this season, so a bet can always be re-priced at the run it was placed at:
+
+| Column | Type | Contents |
+|---|---|---|
+| `run_id`* | text | the simulation run |
+| `season`, `week` | integer | |
+| `created_at` | text | the run's `created_at` in `simulation_runs` |
+| `n_sims` | integer | 50,000 |
+| `roster_ids` | text | the matrix's column order, ascending: `1,2,3,4,5,6,7,8,9,10,11,12` |
+| `totals` | bytea (a BLOB in SQLite) | `pipeline.markets.encode_totals` of the matrix: float32, little-endian, one simulation's scores after another, zlib-compressed; about 2.1 MB a run |
+
+Before it stages anything, the step creates the table if it is missing, reads which of the season's runs it already holds, and inserts the matrix of every other run among the `simulation_runs` rows it is about to upload, built from that run's Parquet draws, with `INSERT ... ON CONFLICT (run_id) DO NOTHING`. A stored row is never rewritten, and a run the site shows always has its matrix, even when the swap that follows fails. A run whose draws file is missing is skipped with a warning naming it. The table is never staged or swapped, because a swap would keep only the runs of this publish, each week's latest, and drop the matrices of the earlier runs that bets were placed at; `write_tables` refuses it by name (`APPEND_ONLY_TABLES`), as it refuses the app's tables. `scripts/publish.py` neither writes nor drops it.

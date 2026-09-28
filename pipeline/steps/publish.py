@@ -1,6 +1,8 @@
-"""Publish step: upload the charts, then replace production's copy of this season's analytics and run records.
+"""Publish step: upload the charts, store each new run's score matrix, then replace production's copy of this
+season's analytics and run records.
 
-Every table is staged and row-counted before all of them are swapped in together, as scripts/publish.py did.
+Every replaced table is staged and row-counted before all of them are swapped in together, as scripts/publish.py
+did. The score matrices are only ever appended to.
 """
 
 import json
@@ -12,11 +14,14 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import Column, Integer, LargeBinary, MetaData, Table, Text, create_engine, text
 from sqlalchemy.engine import URL, Engine, make_url
 
+from pipeline import markets
 from pipeline.db import DB_NAMES
 from pipeline.runner import StepContext, StepResult, print_table, timestamp, utc_now
+from pipeline.settings import Settings
+from pipeline.steps.odds import load_draws
 
 NAME = "publish"
 DEFAULT_CHARTS_TARGET = "root@143.198.183.213:/var/lib/tncasino/analytics/"
@@ -26,10 +31,12 @@ SCP_TIMEOUT_S = 60
 TABLES = [
     ("odds", "betting_odds_matchup_ml", "betting_odds_matchup_ml"),
     ("odds", "betting_odds_team_ou", "betting_odds_team_ou"),
+    ("odds", "betting_odds_matchup_ou", "betting_odds_matchup_ou"),
     ("odds", "betting_odds_highest_scorer", "betting_odds_highest_scorer"),
     ("odds", "betting_odds_lowest_scorer", "betting_odds_lowest_scorer"),
     ("odds", "betting_odds_first_place", "betting_odds_first_place"),
     ("odds", "betting_odds_make_playoffs", "betting_odds_make_playoffs"),
+    ("odds", "standings_probability_matrix", "standings_probability_matrix"),
     ("odds", "team_distribution_curves", "team_distribution_curves"),
     ("odds", "team_matchup_margin_curves", "team_matchup_margin_curves"),
     ("projections", "team_lineups", "team_lineups"),
@@ -47,8 +54,29 @@ TABLES = [
 ]
 # Owned by the Flask app: `users` holds the site's accounts, while Sleeper's users publish as sleeper_users.
 PROTECTED_TABLES = {"users", "bets", "bet_legs", "weekly_stats", "betting_periods"}
+# Never swapped, because a swap would drop the matrices of earlier runs, and bets are re-priced at the run they
+# were placed on.
+APPEND_ONLY_TABLES = {"simulation_totals"}
 # The dashboard lists every run of the season, so these keep all their runs instead of the latest per week.
 RUN_HISTORY = {"pipeline_runs", "pipeline_steps"}
+
+# LargeBinary is a BLOB in SQLite and a bytea in PostgreSQL.
+SIMULATION_TOTALS = Table(
+    "simulation_totals",
+    MetaData(),
+    Column("run_id", Text, primary_key=True),
+    Column("season", Integer, nullable=False),
+    Column("week", Integer, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("n_sims", Integer, nullable=False),
+    Column("roster_ids", Text, nullable=False),
+    Column("totals", LargeBinary, nullable=False),
+)
+INSERT_TOTALS = text(
+    "INSERT INTO simulation_totals (run_id, season, week, created_at, n_sims, roster_ids, totals) "
+    "VALUES (:run_id, :season, :week, :created_at, :n_sims, :roster_ids, :totals) "
+    "ON CONFLICT (run_id) DO NOTHING"
+)
 
 
 class PublishError(Exception):
@@ -62,7 +90,10 @@ def run(ctx: StepContext) -> StepResult:
     settings = ctx.settings
     local = {name: ctx.db(name) for name in DB_NAMES}
     tables, skipped = read_tables(local, settings.season, settings.league_id)
-    print_table(["table", "rows"], [[name, str(len(frame))] for name, frame in tables.items()])
+    # The latest run of each week, whose score matrix is stored unless production has it already.
+    runs = tables.get("simulation_runs", pd.DataFrame())
+    counts = [[name, str(len(frame))] for name, frame in tables.items()]
+    print_table(["table", "rows"], [*counts, ["simulation_totals", str(len(runs))]])
     warnings = [f"{name} skipped: its local table does not exist yet" for name in skipped]
 
     dry_run = ctx.options.get("dry_run")
@@ -78,18 +109,25 @@ def run(ctx: StepContext) -> StepResult:
         "tables": [{"name": name, "rows": len(frame)} for name, frame in tables.items()],
         "skipped": skipped,
         "charts_uploaded": charts_uploaded,
+        "totals_stored": [],
         "elapsed_s": round(time.perf_counter() - started, 2),
         "target_host": url.host,
     }
     if dry_run:
         return StepResult(summary, warnings)
 
-    # The runner marks this step and its run finished only after we return, so production gets that record now.
-    finished = utc_now()
-    tables["pipeline_steps"] = finish_publish_row(tables["pipeline_steps"], ctx.run_id, summary, warnings, finished)
-    tables["pipeline_runs"] = finish_run_row(tables["pipeline_runs"], tables["pipeline_steps"], ctx.run_id, finished)
     engine = create_engine(url)
     try:
+        # Stored before the swap, so every run the site can price bets at already has its matrix.
+        stored, totals_warnings = store_totals(engine, settings, runs)
+        summary["totals_stored"] = stored
+        warnings += totals_warnings
+        ctx.log(f"new runs in simulation_totals: {', '.join(stored) or 'none'}")
+        # The runner marks this step and its run finished only after we return, so production gets that record now.
+        finished = utc_now()
+        steps = finish_publish_row(tables["pipeline_steps"], ctx.run_id, summary, warnings, finished)
+        tables["pipeline_steps"] = steps
+        tables["pipeline_runs"] = finish_run_row(tables["pipeline_runs"], steps, ctx.run_id, finished)
         write_tables(engine, tables)
     finally:
         engine.dispose()
@@ -189,11 +227,45 @@ def upload_charts(images_dir: Path) -> int:
     return len(names)
 
 
+def store_totals(engine: Engine, settings: Settings, runs: pd.DataFrame) -> tuple[list[str], list[str]]:
+    """Append the score matrix of each run production has not stored yet; return those runs and any warnings."""
+    stored_now = []
+    warnings = []
+    with engine.begin() as conn:
+        SIMULATION_TOTALS.create(conn, checkfirst=True)
+        query = text("SELECT run_id FROM simulation_totals WHERE season = :season")
+        stored = set(conn.execute(query, {"season": settings.season}).scalars())
+        for run in runs.to_dict("records"):
+            if run["run_id"] in stored:
+                continue
+            if not (settings.data_dir / run["draws_path"]).exists():
+                warnings.append(
+                    f"run {run['run_id']} has no draws at {run['draws_path']}, so its matrix was not stored"
+                )
+                continue
+            draws = load_draws(settings, run["draws_path"])
+            row = {
+                "run_id": run["run_id"],
+                "season": run["season"],
+                "week": run["week"],
+                "created_at": run["created_at"],
+                "n_sims": len(draws),
+                "roster_ids": ",".join(str(roster_id) for roster_id in draws.columns),
+                "totals": markets.encode_totals(draws.to_numpy()),
+            }
+            conn.execute(INSERT_TOTALS, row)
+            stored_now.append(run["run_id"])
+    return stored_now, warnings
+
+
 def write_tables(engine: Engine, tables: dict[str, pd.DataFrame]) -> None:
     """Stage every table and check its row count, then swap them all into place in one transaction."""
     protected = sorted(PROTECTED_TABLES & tables.keys())
     if protected:
         raise PublishError(f"refusing to replace tables the Flask app owns: {', '.join(protected)}")
+    append_only = sorted(APPEND_ONLY_TABLES & tables.keys())
+    if append_only:
+        raise PublishError(f"refusing to replace append-only tables: {', '.join(append_only)}")
 
     staged = []
     try:

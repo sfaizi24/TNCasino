@@ -211,11 +211,9 @@ def test_over_under_lines_sit_at_the_median_and_pushes_pay_neither_side(settings
         (1, "owner1", 100.0, 600, 0.2, "+400", 0.2, "+400"),
         (2, "owner2", 124.88, 0, 0.5, "-100", 0.5, "-100"),
     ]
-    # The combined total keeps its unrounded median (100 + 124.875), as notebook 07 priced it.
+    # The combined total's median, 224.875, is rounded to cents as well; the sums step by 0.25, so none lands on it.
     matchup_lines = read_rows(settings, "betting_odds_matchup_ou", "matchup")
-    assert pick(matchup_lines, "matchup", "line", "over_prob", "under_prob") == [
-        ("Team 1 vs Team 2", 224.875, 0.5, 0.5)
-    ]
+    assert pick(matchup_lines, "matchup", "line", "over_prob", "under_prob") == [("Team 1 vs Team 2", 224.88, 0.5, 0.5)]
 
 
 def test_moneylines_count_ties_and_list_the_lower_roster_first(settings):
