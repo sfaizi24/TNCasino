@@ -23,27 +23,35 @@ The `stats` step (`pipeline/steps/stats.py`) replaces notebook 05. For each `(sl
 
 Each `player_week_stats` row records the `model_version` that produced it.
 
-| | v1: notebook 05's formulas, frozen | v2: fitted on 2025 weeks 10–16 |
+| | v1: notebook 05's formulas, frozen | v2.1: fitted on 2025 weeks 10–16 |
 |---|---|---|
-| Sources (weight, bias) | 1, 0 for every source | ESPN 0.99, +0.61; FanDuel 1.09, +0.35; FirstDown 0.83, −0.72; Sleeper 1.09, +0.92 |
+| Sources (weight, bias) | 1, 0 for every source | Weight ESPN 0.99, FanDuel 1.08, FirstDown 0.82, Sleeper 1.11; bias per position, below |
 | σ | √((2s)² + σ_pos²); σ_pos QB 7, RB 9, WR 10, TE 8, K 4, DEF 7, default 8 | max(1, a + b·μ) per position; s is not used |
 | Dud game | None | Chance 1 / (1 + e^−(c + d·μ)) per position; a dud scores uniformly on [0, 0.25·μ] |
+| Floor | 0 at every position | −5 at DEF, 0 elsewhere ([§3](#3-simulation)) |
 | Teammates | Independent | Correlated when they play for the same NFL team ([§3](#3-simulation)) |
 
-A positive bias means the source projects too high, so v2 lowers a typical μ by 0.2–0.3 points. FantasyPros is not in v2 because its 2025 numbers were rank-implied rather than projections, and FantasySharks has no 2025 data; both count at weight 1, bias 0.
+| v2.1 bias | QB | RB | WR | TE | K | DEF |
+|---|---|---|---|---|---|---|
+| ESPN | +1.00 | +0.86 | +1.77 | +0.54 | +0.11 | −1.45 |
+| FanDuel | +0.70 | −0.24 | +0.61 | +0.34 | | |
+| FirstDown | +0.29 | −1.33 | −0.49 | −1.07 | | |
+| Sleeper | +4.41 | 0.00 | +0.89 | +0.43 | +0.47 | |
 
-Under v1, sources that disagree widen a player's distribution, and a player every source agrees on keeps the positional baseline. Under v2 the width grows with the projection instead: in 2025 the size of a player's miss tracked his μ (correlation 0.07–0.37 by position) but not the sources' disagreement (within ±0.05). A low projection also carries a real chance of a near-zero game:
+A positive bias means the source projects too high. An empty cell is a position the source projected in fewer than 3 of the weeks, or not at all, and counts as 0. With each week held out in turn, v2.1's mean μ came within 0.16 points of the mean actual score at every position, where v1's ran 1.9 points high at QB and 1.4 low at DEF. FantasyPros is not in the fit because its 2025 numbers were rank-implied rather than projections, and FantasySharks has no 2025 data; both count at weight 1, bias 0.
+
+Under v1, sources that disagree widen a player's distribution, and a player every source agrees on keeps the positional baseline. Under v2.1 the width grows with the projection instead: in 2025 the size of a player's miss tracked his μ (correlation 0.06–0.38 by position) but not the sources' disagreement (−0.09 to +0.04). A low projection also carries a real chance of a near-zero game:
 
 | Position | a | b | c | d | σ at μ = 10 | Dud chance at μ = 10 |
 |---|---|---|---|---|---|---|
-| QB | 5.71 | 0.094 | 2.68 | −0.297 | 6.6 | 0.43 |
-| RB | 3.33 | 0.323 | −0.31 | −0.186 | 6.6 | 0.10 |
-| WR | 3.61 | 0.297 | 0.28 | −0.189 | 6.6 | 0.17 |
-| TE | 1.54 | 0.544 | −0.29 | −0.173 | 7.0 | 0.12 |
-| K | −0.11 | 0.595 | −1.32 | −0.102 | 5.8 | 0.09 |
-| DEF | 2.73 | 0.599 | – | – | 8.7 | 0 |
+| QB | 4.80 | 0.160 | 2.35 | −0.302 | 6.4 | 0.34 |
+| RB | 3.03 | 0.325 | 0.14 | −0.211 | 6.3 | 0.12 |
+| WR | 3.61 | 0.308 | 0.28 | −0.197 | 6.7 | 0.16 |
+| TE | 1.43 | 0.541 | −0.26 | −0.169 | 6.8 | 0.12 |
+| K | −1.42 | 0.719 | −2.14 | 0.020 | 5.8 | 0.13 |
+| DEF | 1.50 | 0.599 | – | – | 7.5 | 0 |
 
-A QB projected for 10 is usually a backup who may not play, hence the high dud chance; at μ = 20 it is 0.04. DEF has no dud because only ESPN projects defenses and the dud fit needs two sources per player-week. How the values were fitted and how v2 compares with v1 is in [Model fitting and calibration](#model-fitting-and-calibration).
+A QB projected for 10 is usually a backup who may not play, hence the high dud chance; at μ = 20 it is 0.02. A kicker's dud chance barely moves with μ: 0.15 at μ = 20. DEF has no dud because only ESPN projects defenses and the dud fit needs two sources per player-week; its floor lets a defense score down to −5 instead. How the values were fitted, and how v2.1 compares with v1 and with v2, the first fit of the same weeks, is in [Model fitting and calibration](#model-fitting-and-calibration).
 
 ## 2. Lineups and replacement players
 
@@ -70,12 +78,12 @@ This keeps the simulated mean and standard deviation equal to m and σ while giv
 
 **Draws.** One standard normal z per starter and simulation, from `np.random.default_rng(seed)` in roster then slot order, so the same lineups and seed reproduce the same totals and reordering the starters changes them. Each z becomes points:
 
-- *No dud chance* (every player under v1, DEF under v2): f + exp(μ_ln + σ_ln·z) with m = μ − f, where f ≤ 0 is the position's floor in the version's `floor` block, 0 where the block does not list the position. The draws keep mean μ and standard deviation σ but reach down to f instead of 0.
+- *No dud chance* (every player under v1, DEF under v2 and v2.1): f + exp(μ_ln + σ_ln·z) with m = μ − f, where f ≤ 0 is the position's floor in the version's `floor` block, 0 where the block does not list the position. The draws keep mean μ and standard deviation σ but reach down to f instead of 0.
 - *Dud chance p*: with u = Φ(z), a draw with u < p is a dud scoring (u/p)·0.25·μ, uniform on [0, 0.25·μ]; any other draw takes the lognormal's quantile at (u − p)/(1 − p). The lognormal's mean is raised to m = (μ − p·0.25·μ/2)/(1 − p) so the mixture still averages μ, and σ is the standard deviation of the non-dud games.
 
 A team's score for simulation *i* is the sum of its starters' *i*-th points. The totals go to `sims/<season>/wkNN/<run_id>.parquet` for the odds step.
 
-**Teammate correlation.** When the version has a `correlation` block (v2), the z's of starters who play for the same NFL team, on any fantasy roster, are correlated before they become points: each group's normals are multiplied by the Cholesky factor of the matrix of pair correlations (QB–WR 0.22, QB–TE 0.21, QB–RB 0.07, RB–WR −0.05; any other pair 0). This Gaussian copula keeps every player's own distribution while making a QB's big game raise his receivers' odds of one. Players on different NFL teams stay independent, opponents in the same game included; v1 draws every starter independently.
+**Teammate correlation.** When the version has a `correlation` block (v2 and v2.1), the z's of starters who play for the same NFL team, on any fantasy roster, are correlated before they become points: each group's normals are multiplied by the Cholesky factor of the matrix of pair correlations (in v2.1 QB–WR 0.22, QB–TE 0.22, QB–RB 0.07, RB–WR −0.05; any other pair 0). This Gaussian copula keeps every player's own distribution while making a QB's big game raise his receivers' odds of one. Players on different NFL teams stay independent, opponents in the same game included; v1 draws every starter independently.
 
 **Matchups.** The week's pairs from `league.db.matchups`. From `playoff_week_start` on, only the rosters Sleeper gives a matchup that week, the teams still playing, are simulated.
 
@@ -107,7 +115,7 @@ Notebook 09 ranking: +1 win for the higher simulated score (an exact tie counts 
 
 A model version is a JSON file in `pipeline/model/params/`. `v1` holds notebook 05's formulas, frozen as the baseline; later versions are fitted on a season's projections and actual points, and switching between them is a setting (`PIPELINE_MODEL_VERSION`), not a code change.
 
-**Fitting** (`pipeline/model/fit.py`), for example `python -m pipeline fit-model --season 2025 --weeks 10-16 --out v2 --exclude-sources fantasypros.com`. The training rows are the matched projections of the non-excluded sources for players at QB, RB, WR, TE, K or DEF whose plain mean projection is at least 2 points, each joined to the player's PPR points in `league.db.player_stats` (no stat line means he did not play and scored 0). Each stage uses the one before it:
+**Fitting** (`pipeline/model/fit.py`), for example `python -m pipeline fit-model --season 2025 --weeks 10-16 --out v2.1 --exclude-sources fantasypros.com`. The training rows are the matched projections of the non-excluded sources for players at QB, RB, WR, TE, K or DEF whose plain mean projection is at least 2 points, each joined to the player's PPR points in `league.db.player_stats` (no stat line means he did not play and scored 0). Each stage uses the one before it:
 
 1. **Sources.** For each source and position with rows in at least 3 weeks, bias = mean(projected − actual) over those rows; a position with fewer weeks is left out of the source's `bias` and counts as 0. A source with rows in at least 3 weeks gets weight = 1 / its mean squared error once those biases are taken out, scaled so the weights average 1 and clipped to [0.25, 4]; a source with fewer weeks gets weight 1 and no bias. The bias is per position because a source can project one position too high and another too low, and one number per source then corrects one of them the wrong way.
 2. **μ** per player-week with those weights and biases, by the stats step's own formula.
@@ -127,15 +135,24 @@ A model version is a JSON file in `pipeline/model/params/`. `v1` holds notebook 
 
 The result is stored in the version's `gate` block, with v1's metrics and the game-by-game Brier difference and its standard error beside the fitted version's. A version that fails can still be adopted, but only as a deliberate choice.
 
-**v2 on 2025 weeks 10–16** (2,311 player-weeks, 84 team-weeks, 42 games, none tied):
+**v2.1 on 2025 weeks 10–16** (2,311 player-weeks, 701 of them starters, 84 team-weeks, 42 games, none tied), beside v2's stored result and v1 on the same rows:
 
 | | QB | RB | WR | TE | K | DEF | All | Teams | MAE | Brier | Brier − v1's (se) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| v2.1, 80% coverage | 0.789 | 0.778 | 0.770 | 0.780 | 0.767 | 0.751 | 0.773 | 0.798 | 20.14 | 0.2352 | −0.0013 (0.0028) |
+| v2.1, starters | 0.779 | 0.796 | 0.764 | 0.805 | 0.837 | 0.813 | 0.791 | | | | |
 | v2, 80% coverage | 0.798 | 0.750 | 0.776 | 0.766 | 0.746 | 0.617 | 0.754 | 0.786 | 20.08 | 0.2368 | +0.0004 (0.0017) |
 | v1, 80% coverage | 0.688 | 0.712 | 0.629 | 0.657 | 0.643 | 0.679 | 0.662 | 0.833 | 20.30 | 0.2365 | |
+| v1, starters | 0.792 | 0.800 | 0.771 | 0.706 | 0.694 | 0.766 | 0.765 | | | | |
 | Actual ≤ 0 | 8% | 11% | 24% | 19% | 8% | 11% | 16% | | | | |
+| Starters' actual ≤ 0 | 0% | 2% | 5% | 2% | 3% | 0% | 3% | | | | |
+| Starters | 77 | 185 | 218 | 85 | 72 | 64 | 701 | | | | |
 
-v2 passes the gate. Its player coverage rose with the zero rule: when every 0 counted as a miss, however large the player's dud chance, no model could cover more than 76% of WRs or 81% of TEs, and v2 stood at RB 0.695, WR 0.613 and TE 0.645. v1 has no dud, so its coverage is unchanged and still misses the bounds at QB, WR and TE. v2 also fixes v1's thin left tail: QB scores above 0 but below the 2.5th percentile fell from 11.6% of QB player-weeks under v1 to 2.7%. Its weak spot is DEF, which has no dud and was not gated then: 0.617 against v1's 0.679, with 26% of its actuals above the 90th percentile. At the team level v2's intervals are narrower, covering 0.786 against 0.833, both inside the bounds. Its moneylines are no better than v1's: it did worse on 20 of the 42 games and better on 22, and the mean difference of +0.0004 is well inside two standard errors (0.0034), though the old rule of a Brier score no higher than v1's counted it as a failure. `PIPELINE_MODEL_VERSION` still defaults to v1; switching is a separate decision.
+The v2 row is v2.json's stored gate block, from when the fit had one bias per source and no floor and only QB, RB, WR and TE were gated; v2.json stays as the record of the first fit, and its gate is not re-run, since the gate refits each fold with the current code and would score v2.1's method instead.
+
+v2.1 passes the gate, K and DEF included, and differs from v2 most at DEF. ESPN, the only source that projects defenses, projected them 1.45 points too low, but v2 fitted one bias per source, and ESPN's +0.61, learned mostly from its other positions, lowered its defense projections further: held out, v2's mean DEF μ was 4.54 against a mean actual of 6.60, and 26% of actuals fell above the 90th percentile. v2.1's DEF bias of −1.45 brings the mean μ to 6.61, yet on its own it moved coverage only from 0.617 to 0.622: the 11% of defenses that scored 0 or less still missed every band, and 21% of actuals now fell below the 10th percentile. The floor of −5, a point under 2025's lowest DEF score of −4, brings coverage to 0.751, with 13% of actuals below the 10th percentile and 12% above the 90th. The league's scoring lets a defense reach −11 (−4 for allowing 35 or more points, −7 for 550 or more yards), so a score under −5 is possible; the model gives it no chance, and the gate would count one as a miss.
+
+Over all eligible rows v2.1 covers 0.773, against v2's 0.754 and v1's 0.662, which misses the bounds at every position but RB. v1's shortfall is almost all its zeros, each a miss for a model without a dud: it covers 79% of the rows that scored above 0. Only 3% of starters scored 0 or less, against 16% of all rows, so on the starters the gap is smaller, 0.791 against v1's 0.765. The bias per position also takes out the QB lean: Sleeper projects QBs 4.4 points high, and held out, v2's mean QB μ ran 1.5 points above the mean actual and v1's 1.9, where v2.1's runs 0.15 above. v2.1 keeps v2's fix of v1's thin left tail: QB scores above 0 but below the 2.5th percentile are 1.8% of QB player-weeks under v2.1, 2.7% under v2 and 11.6% under v1. At the team level v2.1 covers 0.798 against v1's 0.833, both inside the bounds, with an MAE of 20.14 against 20.30. Its moneylines beat v1's on 27 of the 42 games and lost on 15, but the mean difference of −0.0013 is inside two standard errors (0.0056), so the gain is not significant. `PIPELINE_MODEL_VERSION` still defaults to v1; switching is a separate decision.
 
 **Calibration** (the `calibrate` step, `pipeline/steps/calibrate.py`) checks the model as it actually ran, season to date, without refitting. It runs right after the accuracy step ([§7](#7-prediction-accuracy)) and scores every earlier week of the season that step has graded, which it does only once every game of the week is final:
 
@@ -144,7 +161,7 @@ v2 passes the gate. Its player coverage rose with the zero rule: when every 0 co
 - *Teams:* the share of `team_accuracy` rows whose score fell inside the week's latest [p10, p90]. A team without a curve is left out, and a week whose teams all lack one is listed.
 - *Moneylines:* the Brier score of the win chances the accuracy step recorded in `team_accuracy` against the results. A tie has no result and is left out.
 
-The metrics go to `odds.db.calibration_metrics`, which is published: one row per metric and position, counts included, recorded at the run's week under the run's model version, and replaced when that week is recalibrated. The step also draws the 80% coverage by position, over every row and over the starters, as `calibration_week_N.png`. Until the accuracy step has graded a week it warns `no week graded by the accuracy step yet` and writes nothing. Run as week 17 of 2025 after the accuracy step graded weeks 10–16, it found the notebooks' distributions covered 65.5% of 2,335 player-weeks at 80% (QB 0.62, RB 0.72, WR 0.62, TE 0.65, K 0.66, DEF 0.69), 17% of which scored 0 or less, teams 85% of 60 team-weeks (week 13 has no curves), and a moneyline Brier score of 0.229 over 36 games.
+The metrics go to `odds.db.calibration_metrics`, which is published: one row per metric and position, counts included, recorded at the run's week under the run's model version, and replaced when that week is recalibrated. The step also draws the 80% coverage by position, over every row and over the starters, as `calibration_week_N.png`. Until the accuracy step has graded a week it warns `no week graded by the accuracy step yet` and writes nothing. Run as week 17 of 2025 after the accuracy step graded weeks 10–16, it found the notebooks' distributions covered 65.5% of 2,335 player-weeks at 80% (QB 0.62, RB 0.72, WR 0.62, TE 0.65, K 0.66, DEF 0.69), 17% of which scored 0 or less, and 75.6% of the 701 starters among them (QB 0.78, RB 0.79, WR 0.77, TE 0.68, K 0.71, DEF 0.72), 3% of whom scored 0 or less. Teams landed inside their [p10, p90] in 85% of 60 team-weeks (week 13 has no curves), and the moneyline Brier score was 0.229 over 36 games.
 
 ## 5. Analytics curves
 

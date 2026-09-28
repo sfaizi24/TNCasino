@@ -538,6 +538,13 @@ Amended 2026-09-27 (v2.1). The player bounds apply at all six positions, K and D
 Why: each is one of the nine starters in every lineup, and v2's DEF coverage of 0.617 went
 unflagged because the gate did not check DEF.
 
+Amended 2026-09-27 (v2.1). v2.json stays committed as the record of the first fit, its one bias
+per source repeated at each position so it loads under the amended code to the same effect, and
+v2.1 is fitted by the amended `fit-model` on the same 2025 weeks 10–16; the acceptance gate above
+applies to v2.1 in v2's place. Why: each `player_week_stats` row names the version that stored
+it, and calibrate scores the row with that version's dud and floor blocks, so a refit under the
+old name would silently rescore what the first fit produced.
+
 Known v1 findings to fix: player sigma too wide at low mu and too narrow at high mu; source
 disagreement not predictive (so `alpha` carries little information); left tail too thin.
 
