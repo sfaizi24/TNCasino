@@ -1,12 +1,18 @@
 """How a week's pending bets stand against the league's published scores.
 
 Every bet whose market key names the scores it depends on gets an outcome, won, lost, push or
-undecided, and a reason the admin reads beside it before confirming. Futures and bets placed before
-market keys are always undecided and settle by hand. Nothing here moves money or commits: the admin
-routes settle through the ledger.
+undecided, and a reason the admin reads beside it before confirming. A decided outcome comes from the
+win rule in `pipeline/markets.py`, applied to the week's scores as a one-row score matrix, so a bet
+settles by the rule its market was priced with. Futures and bets placed before market keys are always
+undecided and settle by hand. Nothing here moves money or commits: the admin routes settle through
+the ledger.
 """
 
 from dataclasses import dataclass
+
+import numpy as np
+
+from pipeline import markets as win_rules
 
 from .database import db
 from .markets import MarketError, parse_key
@@ -97,7 +103,8 @@ def _moneyline(market, leg, scores):
         return UNDECIDED, _no_score(unscored)
 
     reason = f"{picked.team} {picked.points:.2f} vs {other.team} {other.points:.2f}"
-    return _compare(_cents(picked.points), _cents(other.points)), reason
+    matrix, columns = _score_matrix(scores)
+    return _judge(win_rules.moneyline(matrix, columns[picked_id], columns[other_id])), reason
 
 
 def _team_total(market, leg, scores):
@@ -108,11 +115,8 @@ def _team_total(market, leg, scores):
 
     # The line the bet was placed at, never the odds table's current one: a later run may have moved it.
     reason = f"{team.team} {team.points:.2f}, line {leg.line:.2f}"
-    points = _cents(team.points)
-    line = _cents(leg.line)
-    if leg.selection == "over":
-        return _compare(points, line), reason
-    return _compare(line, points), reason
+    matrix, columns = _score_matrix(scores)
+    return _judge(win_rules.team_total(matrix, columns[roster_id], leg.line, leg.selection)), reason
 
 
 def _scorer(market, leg, scores):
@@ -123,18 +127,32 @@ def _scorer(market, leg, scores):
     if unscored:
         return UNDECIDED, _no_score(unscored)
 
-    cents = {roster_id: _cents(team.points) for roster_id, team in scores.items()}
     if market.name == "highest_scorer":
-        label, target = "highest", max(cents.values())
+        label, rule = "highest", win_rules.highest_scorer
     else:
-        label, target = "lowest", min(cents.values())
+        label, rule = "lowest", win_rules.lowest_scorer
 
-    # Every team on the target score wins in full: the pricing counted each of them the winner.
-    leaders = [scores[roster_id].team for roster_id, value in cents.items() if value == target]
-    reason = f"{label} {target / 100:.2f}: {', '.join(leaders)}"
-    if cents[picked_id] == target:
-        return WON, reason
-    return LOST, reason
+    matrix, columns = _score_matrix(scores)
+    winners = [scores[roster_id] for roster_id, column in columns.items() if rule(matrix, column).won[0]]
+    names = ", ".join(team.team for team in winners)
+    reason = f"{label} {winners[0].points:.2f}: {names}"
+    return _judge(rule(matrix, columns[picked_id])), reason
+
+
+def _score_matrix(scores):
+    played = sorted(roster_id for roster_id, team in scores.items() if team.points is not None)
+    # No rounding: a score and a line with the same two decimals always read back as the same float.
+    matrix = np.array([[scores[roster_id].points for roster_id in played]], dtype=np.float64)
+    columns = {roster_id: column for column, roster_id in enumerate(played)}
+    return matrix, columns
+
+
+def _judge(outcome):
+    if outcome.pushed[0]:
+        return PUSH
+    if outcome.won[0]:
+        return WON
+    return LOST
 
 
 def _team(scores, roster_id):
@@ -145,16 +163,3 @@ def _no_score(teams):
     if len(teams) > 2:
         return f"no score for {len(teams)} teams"
     return "no score for " + " and ".join(team.team for team in teams)
-
-
-def _compare(ours, theirs):
-    if ours > theirs:
-        return WON
-    if ours < theirs:
-        return LOST
-    return PUSH
-
-
-def _cents(points):
-    """Scores and lines both carry two decimals, so whole cents compare exactly where floats would not."""
-    return round(points * 100)

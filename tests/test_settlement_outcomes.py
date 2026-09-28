@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from sqlalchemy import text
 
@@ -61,13 +63,13 @@ def test_team_total_compares_the_score_with_the_line_of_the_bet(selection, point
     assert _judge(TEAM_TOTAL, selection, _scores(points), line=110.5).outcome == outcome
 
 
-def test_a_score_one_float_step_under_the_line_is_on_the_line():
-    points = 33.3 + 33.3 + 33.3 + 10.6
-    assert points < 110.5
+@pytest.mark.parametrize("selection", ["over", "under"])
+def test_a_score_on_a_line_with_no_exact_float_pushes(selection):
+    assert Decimal(110.63) != Decimal("110.63")
 
-    result = _judge(TEAM_TOTAL, "under", _scores(points), line=110.5)
+    result = _judge(TEAM_TOTAL, selection, _scores(110.63), line=110.63)
 
-    assert (result.outcome, result.reason) == (PUSH, "Alice 110.50, line 110.50")
+    assert (result.outcome, result.reason) == (PUSH, "Alice 110.63, line 110.63")
 
 
 def test_team_total_of_a_team_missing_from_the_scores_is_undecided():

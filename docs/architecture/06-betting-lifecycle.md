@@ -75,7 +75,7 @@ The bet stores the table's `odds` text, `price` (the odds as an integer: `+150` 
 
 ## Settlement
 
-`app/settlement.py` judges each pending bet of a week against the league's team scores, published as `sleeper_matchups`. It never moves money or commits; the admin routes settle through the ledger. Scores and lines both carry two decimals, so every comparison is in whole cents (`round(points * 100)`), and float error never decides a push.
+`app/settlement.py` judges each pending bet of a week against the league's team scores, published as `sleeper_matchups`. It never moves money or commits; the admin routes settle through the ledger. Every comparison goes through the win rules in `pipeline/markets.py` ([03](03-modeling-and-odds.md#4-markets)), applied to a one-row score matrix of the week's played scores, so the pipeline prices a market and the app settles it by the same rule. The rules compare floats exactly, and nothing is rounded: scores and lines both carry two decimals, and the same two-decimal value always reads back as the same float, so a score on its line is a push.
 
 | Market | Won | Lost | Push | Undecided |
 |---|---|---|---|---|
