@@ -1,6 +1,7 @@
 # Odds models for the next bet types
 
-Status: research proposal, 2026-09-28. Not approved; nothing here is built.
+Status: research proposal, 2026-09-28, with the owner's decisions of the same day recorded in §10.
+Nothing here is built.
 Owner: orchestrator session (staff engineer). Research: R2. Implementation: engineer agents, one work package each.
 
 This document proposes how to price and settle the bets the owner asked for next: parlays (one
@@ -26,7 +27,8 @@ end repeats the betting and statistics terms.
 
 ## Recommendation
 
-Build in this order; each item names its work package (§9).
+Build in this order; each item names its work package (§9). The owner's decisions of 2026-09-28
+(§10) change items 3 and 9: no refusal at ±5000, and cash-out at the full fair value.
 
 1. **Structured bets (B1):** each bet stores its market and selection; Flask sets the price (doc 08 issues 1–2).
 2. **Atomic balances (B2):** every balance change is one conditional SQL update (doc 08 issue 3).
@@ -1124,13 +1126,23 @@ Not verified:
 | Gunicorn worker count and memory | not in the repository | Read the systemd unit |
 | The admin's 2026 lock time | README line 75 describes 2025 | Ask the owner |
 
-Decisions for the owner:
+Decisions for the owner, taken 2026-09-28:
 
 1. Pin owners' kicked-off starters (§3.1), which touches pipeline-v2's lineup-snapshot non-goal.
-2. Fair prices refused beyond ±5000, or a house edge (§5).
-3. `remove_bet` limited to the latest run's open window (§2.5).
-4. Reading game totals from ESPN, which are sportsbook numbers (§8).
-5. Whether 2026 still locks at Thursday's kickoff.
+   Yes.
+2. Fair prices refused beyond ±5000, or a house edge (§5). Neither: "No cap. No house edge. Trust
+   the model." Read as: every price is the raw share of sims, with no clamp at 0.1% and no refusal
+   at ±5000, so one sim in 50,000 prices at +4999900; a selection or combination that wins in no
+   sim has no price and is not offered. Rules 1 and 2 of §1.3 stand.
+3. `remove_bet` limited to the latest run's open window (§2.5). Yes: a bet can be removed for a
+   full refund while the run that priced it is still the latest; once a later run has moved its
+   odds, removal gives way to cash-out at the current price. Read as 100% of fair value from the
+   latest run (§2.1), not 95%, since there is no house edge. Removed rows are kept.
+4. Reading game totals from ESPN, which are sportsbook numbers (§8). Open; no model idea is built
+   before the new bets.
+5. Whether 2026 still locks at Thursday's kickoff. Yes, and betting reopens once the Friday rerun
+   has published (§3.6).
+6. Scorer legs in parlays (§1.4). They stay; B8 logs refusals.
 
 ---
 
