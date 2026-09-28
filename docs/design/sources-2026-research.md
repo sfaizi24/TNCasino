@@ -27,8 +27,8 @@ Decisions that come with this:
 
 - **Future weeks.** No new free source publishes them. Keep ESPN: its future weeks are real week-by-week numbers,
   not a season average. But in the three future weeks I probed its QBs fail the r check while staying close on
-  MAD, and the stored week-4 run dropped ESPN for 9 of its 10 future weeks, simulating them on Sleeper alone. WP8b's
-  case (d) would fix that. Add FantasySharks as the second only if WP8b fixes its QB points. Section 6.
+  MAD, and the stored week-4 run dropped ESPN for 9 of its 10 future weeks, simulating them on Sleeper alone. The fix
+  belongs to WP8b: for future weeks only, judge QB on the median gap and report its r as a warning (section 6). Add FantasySharks as the second only if WP8b fixes its QB points. Section 6.
 - **Drop FantasyPros.** It averages other sites, which by web search include ESPN and numberFire (behind FanDuel),
   so the blend would count them twice. Logged out it shows 10 rows per position (the repository's fixture test
   asserts this), which fails the row-count check every week, so a full run drops it anyway. The v2.1 fit already
