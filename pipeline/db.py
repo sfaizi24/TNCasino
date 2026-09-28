@@ -49,3 +49,11 @@ def connect(settings: Settings, name: str) -> sqlite3.Connection:
 
 def ensure_run_tables(conn: sqlite3.Connection) -> None:
     conn.executescript(RUN_TABLES)
+
+
+def ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    """Add the columns (name to definition) that a copy of the table made before they existed lacks."""
+    existing = {name for (name,) in conn.execute("SELECT name FROM pragma_table_info(?)", (table,))}
+    for name, definition in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
