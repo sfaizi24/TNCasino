@@ -1,6 +1,37 @@
 const isAuth = window.isAuthenticated;
 const QUICK_STAKES = [10, 25, 50, 100];
 
+// The endpoint listing each kind of card.
+const SOURCES = {
+    ml: '/api/matchups',
+    ou: '/api/team_performance',
+    hi: '/api/highest_scorer',
+    lo: '/api/lowest_scorer',
+    fp: '/api/first_place',
+    mp: '/api/make_playoffs',
+};
+
+// The kinds of card each tab lists. Futures lists two, each under its own heading.
+const TABS = {
+    ml: [{ kind: 'ml' }],
+    ou: [{ kind: 'ou' }],
+    hi: [{ kind: 'hi' }],
+    lo: [{ kind: 'lo' }],
+    fu: [
+        { kind: 'fp', title: 'First place' },
+        { kind: 'mp', title: 'Make playoffs' },
+    ],
+};
+
+// Active bets are listed in one group per tab.
+const ACTIVE_GROUPS = [
+    { label: 'ML', types: ['moneyline'] },
+    { label: 'O/U', types: ['team_total'] },
+    { label: 'HIGH', types: ['highest_scorer'] },
+    { label: 'LOW', types: ['lowest_scorer'] },
+    { label: 'FUTURES', types: ['first_place', 'make_playoffs'] },
+];
+
 const state = {
     tab: 'ml',
     bets: [],
@@ -9,10 +40,7 @@ const state = {
     stakes: {},
     opens: {},
     lineupCache: {},
-    matchups: [],
-    ous: [],
-    hi: [],
-    lo: [],
+    rows: { ml: [], ou: [], hi: [], lo: [], fp: [], mp: [] },
 };
 
 function americanToDecimal(odds) {
@@ -34,62 +62,56 @@ function fmtPct(p) {
     return `${(p * 100).toFixed(0)}%`;
 }
 
-function classifyBet(bet) {
-    const d = bet.description || '';
-    if (d.includes('Highest Scorer')) return 'hi';
-    if (d.includes('Lowest Scorer')) return 'lo';
-    if (d.includes(' O/U ')) return 'ou';
-    return 'ml';
-}
-
-function ownerOf(bet, kind) {
-    const d = bet.description || '';
-    if (kind === 'hi' || kind === 'lo') return d.split(':')[0].trim();
-    if (kind === 'ou') return d.split(' O/U ')[0].trim();
-    const after = (d.split(':')[1] || '').trim();
-    const lastSpace = after.lastIndexOf(' ');
-    return lastSpace > 0 ? after.substring(0, lastSpace).trim() : after;
-}
-
-function findCardForBet(bet) {
-    const kind = classifyBet(bet);
-    if (kind === 'hi') {
-        const owner = ownerOf(bet, 'hi');
-        const idx = state.hi.findIndex(s => s.owner === owner);
-        return idx >= 0 ? { kind, idx } : null;
-    }
-    if (kind === 'lo') {
-        const owner = ownerOf(bet, 'lo');
-        const idx = state.lo.findIndex(s => s.owner === owner);
-        return idx >= 0 ? { kind, idx } : null;
+// The selections a card offers, each with its price and its chance as a fraction.
+function sidesOf(kind, row) {
+    if (kind === 'ml') {
+        return [
+            { selection: String(row.team1_id), label: row.team1_name, odds: row.team1_ml, chance: row.team1_win_prob },
+            { selection: String(row.team2_id), label: row.team2_name, odds: row.team2_ml, chance: row.team2_win_prob },
+        ];
     }
     if (kind === 'ou') {
-        const owner = ownerOf(bet, 'ou');
-        const idx = state.ous.findIndex(o => o.owner === owner);
-        return idx >= 0 ? { kind, idx } : null;
+        return [
+            { selection: 'over', label: 'Over', odds: row.over_odds, chance: row.over_prob },
+            { selection: 'under', label: 'Under', odds: row.under_odds, chance: row.under_prob },
+        ];
     }
-    const matchupKey = (bet.description || '').split(':')[0].trim();
-    const idx = state.matchups.findIndex(
-        m => `${m.team1_name} vs ${m.team2_name}` === matchupKey
-    );
-    return idx >= 0 ? { kind, idx } : null;
+    const selection = kind === 'mp' ? 'yes' : String(row.team_id);
+    return [{ selection, odds: row.odds, chance: row.win_prob / 100 }];
 }
 
-function placedBetsForCard(kind, idx) {
-    return state.bets.filter(bet => {
-        const card = findCardForBet(bet);
-        return card && card.kind === kind && card.idx === idx;
-    });
+// Every scorer or first-place card shares one market, so a bet marks the card that offers its selection.
+function buildCard(kind, row, idx) {
+    const key = `${kind}-${idx}`;
+    const sides = sidesOf(kind, row);
+    const selections = sides.map(side => side.selection);
+    return {
+        kind,
+        row,
+        key,
+        sides,
+        pick: state.picks[key],
+        open: state.opens[key],
+        placed: state.bets.filter(bet => bet.market === row.market && selections.includes(bet.selection)),
+    };
 }
 
-function isMlSidePlaced(bet, side, matchup) {
-    const picked = ownerOf(bet, 'ml');
-    return side === 'team1' ? picked === matchup.team1_name : picked === matchup.team2_name;
+function cardForKey(key) {
+    const [kind, idx] = key.split('-');
+    return { kind, row: state.rows[kind][Number(idx)] };
 }
 
-function isOuSidePlaced(bet, side) {
-    const tail = (bet.description || '').split(':')[1] || '';
-    return side === (/Over/i.test(tail) ? 'over' : 'under');
+function pickedOdds(key) {
+    const { kind, row } = cardForKey(key);
+    return sidesOf(kind, row).find(side => side.selection === state.picks[key]).odds;
+}
+
+function ownersOf(kind, row) {
+    return kind === 'ml' ? [row.team1_name, row.team2_name] : [row.owner];
+}
+
+function isFuture(kind) {
+    return kind === 'fp' || kind === 'mp';
 }
 
 function chevronSvg() {
@@ -104,7 +126,7 @@ function renderPlacedStrip(bets) {
                 <div class="tnc-mc-placed-row">
                     <span class="tnc-mc-placed-tag">Bet Placed</span>
                     <span class="tnc-mc-placed-info tnc-tab-num"><strong>${fmtMoney(b.amount)}</strong></span>
-                    <button class="tnc-mc-placed-rm" data-action="cancel" data-bet-id="${b.id}">Cancel bet</button>
+                    ${b.removable ? `<button class="tnc-mc-placed-rm" data-action="cancel" data-bet-id="${b.id}">Cancel bet</button>` : ''}
                 </div>
             `).join('')}
         </div>
@@ -177,154 +199,168 @@ function renderShowButton(open, solo) {
     return `<button class="tnc-mc-show" data-action="show">${chevronSvg()}${label}</button>`;
 }
 
-function renderMatchupCard(m, idx) {
-    const key = `ml-${idx}`;
-    const placed = placedBetsForCard('ml', idx);
-    const hasBet = placed.length > 0;
-    const pick = state.picks[key];
-    const open = state.opens[key];
+// Futures run to the end of the season, so their cards show no week's lineup.
+function renderLineupToggle(card) {
+    if (isFuture(card.kind)) return '';
+    const solo = card.kind !== 'ml';
+    const lineups = card.open ? renderLineups(ownersOf(card.kind, card.row), solo) : '';
+    return renderShowButton(card.open, solo) + lineups;
+}
 
-    const odds1 = parseInt(m.team1_ml, 10);
-    const odds2 = parseInt(m.team2_ml, 10);
+function renderPickButton(card, side, content, extraClass = '') {
+    if (side.odds == null) return '<span class="tnc-mc-noprice">No price</span>';
 
-    const sideHtml = (side, name, odds, prob) => {
-        const placedHere = hasBet && isMlSidePlaced(placed[0], side, m);
-        const cls = ['tnc-mc-odd', 'tnc-mc-odd-inline'];
-        if (pick === side) cls.push('is-on');
-        if (placedHere) cls.push('is-placed');
-        return `
-            <div class="tnc-mc-side">
-                <div class="tnc-mc-name">${name}</div>
-                <button class="${cls.join(' ')}" data-action="pick" data-side="${side}"${hasBet ? ' disabled' : ''}>
-                    <span class="tnc-mc-odd-num tnc-tab-num">${fmtOdds(odds)}</span>
-                    <span class="tnc-mc-odd-prob tnc-tab-num">${fmtPct(prob)}</span>
-                </button>
-            </div>
-        `;
-    };
+    const classes = ['tnc-mc-odd', 'tnc-mc-odd-inline'];
+    if (extraClass) classes.push(extraClass);
+    if (card.pick === side.selection) classes.push('is-on');
+    if (card.placed.some(bet => bet.selection === side.selection)) classes.push('is-placed');
 
-    const stakeOdds = pick === 'team1' ? odds1 : odds2;
-    const stakeHtml = pick && !hasBet ? renderStakeSection(key, stakeOdds) : '';
-
+    const totalAttrs = card.kind === 'ou' ? ` data-line="${card.row.line.toFixed(2)}" data-run-id="${card.row.run_id}"` : '';
+    const disabled = card.placed.length ? ' disabled' : '';
     return `
-        <div class="tnc-mc${hasBet ? ' has-bet' : ''}${open ? ' is-open' : ''}" data-key="${key}">
-            ${renderPlacedStrip(placed)}
-            <div class="tnc-mc-teams">
-                ${sideHtml('team1', m.team1_name, odds1, m.team1_win_prob)}
-                <div class="tnc-mc-vs">VS</div>
-                ${sideHtml('team2', m.team2_name, odds2, m.team2_win_prob)}
-            </div>
-            ${stakeHtml}
-            ${renderShowButton(open, false)}
-            ${open ? renderLineups([m.team1_name, m.team2_name], false) : ''}
+        <button class="${classes.join(' ')}" data-action="pick" data-selection="${side.selection}"${totalAttrs}${disabled}>
+            ${content}
+        </button>
+    `;
+}
+
+function renderMatchupPicks(card) {
+    const renderSide = side => `
+        <div class="tnc-mc-side">
+            <div class="tnc-mc-name">${side.label}</div>
+            ${renderPickButton(card, side, `
+                <span class="tnc-mc-odd-num tnc-tab-num">${fmtOdds(side.odds)}</span>
+                <span class="tnc-mc-odd-prob tnc-tab-num">${fmtPct(side.chance)}</span>
+            `)}
+        </div>
+    `;
+    const [team1, team2] = card.sides;
+    return `
+        <div class="tnc-mc-teams">
+            ${renderSide(team1)}
+            <div class="tnc-mc-vs">VS</div>
+            ${renderSide(team2)}
         </div>
     `;
 }
 
-function renderOuCard(o, idx) {
-    const key = `ou-${idx}`;
-    const placed = placedBetsForCard('ou', idx);
-    const hasBet = placed.length > 0;
-    const pick = state.picks[key];
-    const open = state.opens[key];
-
-    const buttonHtml = (which, label) => {
-        const placedHere = hasBet && isOuSidePlaced(placed[0], which);
-        const cls = ['tnc-mc-odd', 'tnc-mc-odd-inline'];
-        if (pick === which) cls.push('is-on');
-        if (placedHere) cls.push('is-placed');
-        return `
-            <button class="${cls.join(' ')}" data-action="pick" data-side="${which}"${hasBet ? ' disabled' : ''}>
-                <span class="tnc-mc-odd-label">${label}</span>
-                <span class="tnc-mc-odd-num tnc-tab-num">${o.line.toFixed(1)}</span>
-            </button>
-        `;
-    };
-
-    const stakeHtml = pick && !hasBet ? renderStakeSection(key, 100) : '';
-
+function renderTotalPicks(card) {
+    const line = card.row.line.toFixed(2);
+    const buttons = card.sides.map(side => renderPickButton(card, side, `
+        <span class="tnc-mc-odd-label">${side.label}</span>
+        <span class="tnc-mc-odd-num tnc-tab-num">${line}</span>
+        <span class="tnc-mc-odd-prob tnc-tab-num">${fmtOdds(side.odds)}</span>
+    `));
     return `
-        <div class="tnc-mc${hasBet ? ' has-bet' : ''}${open ? ' is-open' : ''}" data-key="${key}">
-            ${renderPlacedStrip(placed)}
-            <div class="tnc-mc-name tnc-ou-name-solo">${o.owner}</div>
-            <div class="tnc-ou-buttons">
-                ${buttonHtml('over', 'Over')}
-                ${buttonHtml('under', 'Under')}
-            </div>
-            ${stakeHtml}
-            ${renderShowButton(open, true)}
-            ${open ? renderLineups([o.owner], true) : ''}
+        <div class="tnc-mc-name tnc-ou-name-solo">${card.row.owner}</div>
+        <div class="tnc-ou-buttons">${buttons.join('')}</div>
+    `;
+}
+
+function renderScorerPicks(card) {
+    const [side] = card.sides;
+    const proj = card.row.proj_pts != null ? `${card.row.proj_pts.toFixed(1)} pts` : '—';
+    return `
+        <div class="tnc-mc-name tnc-ou-name-solo">${card.row.owner}</div>
+        ${renderPickButton(card, side, `
+            <span class="tnc-mc-odd-num tnc-tab-num">${fmtOdds(side.odds)}</span>
+            <span class="tnc-mc-odd-prob tnc-tab-num">${fmtPct(side.chance)}</span>
+            <span class="tnc-mc-odd-prob tnc-tab-num">${proj}</span>
+        `, 'tnc-scorer-pick')}
+    `;
+}
+
+function renderFuturePicks(card) {
+    const [side] = card.sides;
+    const yes = card.kind === 'mp' ? '<span class="tnc-mc-odd-label">Yes</span>' : '';
+    return `
+        <div class="tnc-mc-name tnc-ou-name-solo">${card.row.owner}</div>
+        ${renderPickButton(card, side, `
+            ${yes}
+            <span class="tnc-mc-odd-num tnc-tab-num">${fmtOdds(side.odds)}</span>
+            <span class="tnc-mc-odd-prob tnc-tab-num">${fmtPct(side.chance)}</span>
+        `, 'tnc-scorer-pick')}
+    `;
+}
+
+function renderPicks(card) {
+    if (card.kind === 'ml') return renderMatchupPicks(card);
+    if (card.kind === 'ou') return renderTotalPicks(card);
+    if (card.kind === 'hi' || card.kind === 'lo') return renderScorerPicks(card);
+    return renderFuturePicks(card);
+}
+
+function renderCard(kind, row, idx) {
+    const card = buildCard(kind, row, idx);
+    const hasBet = card.placed.length > 0;
+    const classes = ['tnc-mc'];
+    if (isFuture(kind)) classes.push('tnc-fu-card');
+    if (hasBet) classes.push('has-bet');
+    if (card.open) classes.push('is-open');
+    return `
+        <div class="${classes.join(' ')}" data-key="${card.key}" data-market="${row.market}">
+            ${renderPlacedStrip(card.placed)}
+            ${renderPicks(card)}
+            ${card.pick && !hasBet ? renderStakeSection(card.key, pickedOdds(card.key)) : ''}
+            ${renderLineupToggle(card)}
         </div>
     `;
 }
 
-function renderScorerCard(s, idx, kind) {
-    const key = `${kind}-${idx}`;
-    const placed = placedBetsForCard(kind, idx);
-    const hasBet = placed.length > 0;
-    const picked = !!state.picks[key];
-    const open = state.opens[key];
-
-    const odds = parseInt(s.odds, 10);
-    const prob = (s.win_prob || 0) / 100;
-    const proj = (s.proj_pts != null) ? `${s.proj_pts.toFixed(1)} pts` : '—';
-
-    const cls = ['tnc-mc-odd', 'tnc-mc-odd-inline', 'tnc-scorer-pick'];
-    if (picked) cls.push('is-on');
-    if (hasBet) cls.push('is-placed');
-
-    const stakeHtml = picked && !hasBet ? renderStakeSection(key, odds) : '';
-
-    return `
-        <div class="tnc-mc${hasBet ? ' has-bet' : ''}${open ? ' is-open' : ''}" data-key="${key}">
-            ${renderPlacedStrip(placed)}
-            <div class="tnc-mc-name tnc-ou-name-solo">${s.owner}</div>
-            <button class="${cls.join(' ')}" data-action="pick"${hasBet ? ' disabled' : ''}>
-                <span class="tnc-mc-odd-num tnc-tab-num">${fmtOdds(odds)}</span>
-                <span class="tnc-mc-odd-prob tnc-tab-num">${fmtPct(prob)}</span>
-                <span class="tnc-mc-odd-prob tnc-tab-num">${proj}</span>
-            </button>
-            ${stakeHtml}
-            ${renderShowButton(open, true)}
-            ${open ? renderLineups([s.owner], true) : ''}
-        </div>
-    `;
+// The card side a bet backs. A bet placed before markets existed has no market and matches none.
+function sideForBet(bet) {
+    for (const kind of Object.keys(state.rows)) {
+        for (const row of state.rows[kind]) {
+            if (row.market !== bet.market) continue;
+            const side = sidesOf(kind, row).find(s => s.selection === bet.selection);
+            if (side) return { kind, row, side };
+        }
+    }
+    return null;
 }
 
-function shortChipLabel(bet, kind) {
-    const d = bet.description || '';
-    if (kind === 'ml') return ownerOf(bet, 'ml');
-    if (kind === 'hi' || kind === 'lo') return ownerOf(bet, kind);
-    const m = d.match(/^(.*?) O\/U ([\d.]+): (Over|Under)$/);
-    return m ? `${m[1]} ${m[3][0]} ${m[2]}` : d;
+// A chip names the pick and leaves the market to its group, except in Futures, whose group holds two.
+function chipLabel(bet) {
+    const match = sideForBet(bet);
+    if (!match) return bet.description.replace(` ${bet.odds}`, '');
+    const { kind, row, side } = match;
+    if (kind === 'ml') return side.label;
+    if (kind === 'ou') return `${row.owner} ${side.label[0]} ${bet.line.toFixed(2)}`;
+    if (kind === 'fp') return `${row.owner} to finish first`;
+    if (kind === 'mp') return `${row.owner} to make playoffs`;
+    return row.owner;
+}
+
+function renderActiveChip(bet) {
+    const cancel = bet.removable
+        ? `<button class="tnc-active-chip-rm" data-action="cancel" data-bet-id="${bet.id}">Cancel</button>`
+        : '';
+    return `
+        <span class="tnc-active-chip">
+            <span class="tnc-active-chip-name">${chipLabel(bet)}</span>
+            <span class="tnc-active-chip-odds tnc-tab-num">${fmtOdds(bet.odds)}</span>
+            <span class="tnc-active-chip-stake tnc-tab-num">${fmtMoney(bet.amount)}</span>
+            ${cancel}
+        </span>
+    `;
 }
 
 function renderActiveBets() {
     const container = document.getElementById('activeBets');
-    if (!state.bets.length) {
+    const groups = ACTIVE_GROUPS
+        .map(group => ({ label: group.label, bets: state.bets.filter(bet => group.types.includes(bet.bet_type)) }))
+        .filter(group => group.bets.length);
+    if (!groups.length) {
         container.innerHTML = '';
         return;
     }
-    const groups = { ml: [], ou: [], hi: [], lo: [] };
-    state.bets.forEach(b => groups[classifyBet(b)].push(b));
-
-    const labels = { ml: 'ML', ou: 'O/U', hi: 'HIGH', lo: 'LOW' };
-    const visible = ['ml', 'ou', 'hi', 'lo'].filter(k => groups[k].length);
-
     container.innerHTML = `
         <div class="tnc-active">
-            ${visible.map(k => `
+            ${groups.map(group => `
                 <div class="tnc-active-group">
-                    <span class="tnc-active-label">${labels[k]}</span>
+                    <span class="tnc-active-label">${group.label}</span>
                     <div class="tnc-active-chips">
-                        ${groups[k].map(b => `
-                            <span class="tnc-active-chip">
-                                <span class="tnc-active-chip-name">${shortChipLabel(b, k)}</span>
-                                <span class="tnc-active-chip-odds tnc-tab-num">${fmtOdds(b.odds)}</span>
-                                <span class="tnc-active-chip-stake tnc-tab-num">${fmtMoney(b.amount)}</span>
-                                <button class="tnc-active-chip-rm" data-action="cancel" data-bet-id="${b.id}">Cancel</button>
-                            </span>
-                        `).join('')}
+                        ${group.bets.map(renderActiveChip).join('')}
                     </div>
                 </div>
             `).join('')}
@@ -332,26 +368,19 @@ function renderActiveBets() {
     `;
 }
 
+function renderList({ kind, title }) {
+    const heading = title ? `<h2 class="tnc-fu-head">${title}</h2>` : '';
+    return heading + state.rows[kind].map((row, idx) => renderCard(kind, row, idx)).join('');
+}
+
 function renderGrid() {
     const grid = document.getElementById('grid');
-    const tab = state.tab;
-    const data = tab === 'ml' ? state.matchups
-        : tab === 'ou' ? state.ous
-        : tab === 'hi' ? state.hi
-        : state.lo;
-
-    if (!data.length) {
+    const lists = TABS[state.tab].filter(list => state.rows[list.kind].length);
+    if (!lists.length) {
         grid.innerHTML = '<p class="tnc-mc-loading">No bets available right now.</p>';
         return;
     }
-
-    if (tab === 'ml') {
-        grid.innerHTML = data.map((m, i) => renderMatchupCard(m, i)).join('');
-    } else if (tab === 'ou') {
-        grid.innerHTML = data.map((o, i) => renderOuCard(o, i)).join('');
-    } else {
-        grid.innerHTML = data.map((s, i) => renderScorerCard(s, i, tab)).join('');
-    }
+    grid.innerHTML = lists.map(renderList).join('');
 }
 
 function render() {
@@ -378,24 +407,9 @@ function toast(message, type = 'success') {
     }, 2400);
 }
 
-async function loadMatchups() {
-    const r = await fetch('/api/matchups');
-    state.matchups = await r.json();
-}
-
-async function loadOus() {
-    const r = await fetch('/api/team_performance');
-    state.ous = await r.json();
-}
-
-async function loadHi() {
-    const r = await fetch('/api/highest_scorer');
-    state.hi = await r.json();
-}
-
-async function loadLo() {
-    const r = await fetch('/api/lowest_scorer');
-    state.lo = await r.json();
+async function loadRows(kind) {
+    const r = await fetch(SOURCES[kind]);
+    state.rows[kind] = await r.json();
 }
 
 async function loadBets() {
@@ -415,60 +429,31 @@ async function loadLineup(owner) {
     state.lineupCache[owner] = await r.json();
 }
 
-function parseKey(key) {
-    const [kind, idxStr] = key.split('-');
-    return { kind, idx: parseInt(idxStr, 10) };
-}
-
-function ownersForKey(key) {
-    const { kind, idx } = parseKey(key);
-    if (kind === 'ml') {
-        const m = state.matchups[idx];
-        return [m.team1_name, m.team2_name];
-    }
-    if (kind === 'ou') return [state.ous[idx].owner];
-    return [(kind === 'hi' ? state.hi : state.lo)[idx].owner];
-}
-
-function oddsForKey(key) {
-    const { kind, idx } = parseKey(key);
-    if (kind === 'ml') {
-        const m = state.matchups[idx];
-        return parseInt(state.picks[key] === 'team1' ? m.team1_ml : m.team2_ml, 10);
-    }
-    if (kind === 'ou') return 100;
-    return parseInt((kind === 'hi' ? state.hi : state.lo)[idx].odds, 10);
+// A newer run is live: show its prices, and drop the picks made on the old ones.
+async function reloadTab() {
+    const kinds = TABS[state.tab].map(list => list.kind);
+    await Promise.all([...kinds.map(loadRows), loadBets()]);
+    state.picks = {};
+    state.stakes = {};
+    render();
 }
 
 function payloadForKey(key, amount) {
-    const { kind, idx } = parseKey(key);
-    if (kind === 'ml') {
-        return { matchup_idx: idx, team: state.picks[key], amount };
-    }
-    if (kind === 'ou') {
-        return { bet_type: 'team_ou', team_idx: idx, choice: state.picks[key], amount };
-    }
-    const s = (kind === 'hi' ? state.hi : state.lo)[idx];
-    const betType = kind === 'hi' ? 'highest_scorer' : 'lowest_scorer';
-    return { bet_type: betType, owner: s.owner, odds: s.odds, amount };
+    const { row } = cardForKey(key);
+    return { market: row.market, selection: state.picks[key], line: row.line ?? null, run_id: row.run_id, amount };
 }
 
 function handlePick(card, btn) {
     const key = card.dataset.key;
-    const { kind } = parseKey(key);
-    if (kind === 'hi' || kind === 'lo') {
-        state.picks[key] = state.picks[key] ? null : true;
-    } else {
-        const side = btn.dataset.side;
-        state.picks[key] = state.picks[key] === side ? null : side;
-    }
+    const selection = btn.dataset.selection;
+    state.picks[key] = state.picks[key] === selection ? null : selection;
     renderGrid();
 }
 
 function updatePayoutInPlace(card) {
     const key = card.dataset.key;
     const stake = Number(state.stakes[key]) || 0;
-    const odds = oddsForKey(key);
+    const odds = pickedOdds(key);
     const payoutEl = card.querySelector('.tnc-mc-payout');
     const placeBtn = card.querySelector('.tnc-mc-place');
 
@@ -529,6 +514,7 @@ async function handlePlace(card) {
         } else {
             setBalance(oldBalance);
             toast(result.error || 'Failed to place bet', 'error');
+            if (result.error === 'Odds have changed') await reloadTab();
         }
     } catch (e) {
         console.error('Error placing bet', e);
@@ -568,8 +554,8 @@ async function handleShow(card) {
     state.opens[key] = !state.opens[key];
 
     if (state.opens[key]) {
-        const owners = ownersForKey(key);
-        const missing = owners.filter(o => !state.lineupCache[o]);
+        const { kind, row } = cardForKey(key);
+        const missing = ownersOf(kind, row).filter(o => !state.lineupCache[o]);
         if (missing.length) {
             renderGrid();
             try {
@@ -622,7 +608,7 @@ function bindEvents() {
 
 async function init() {
     bindEvents();
-    await Promise.all([loadMatchups(), loadOus(), loadHi(), loadLo()]);
+    await Promise.all(Object.keys(SOURCES).map(loadRows));
     if (isAuth) await loadBets();
     render();
 }
