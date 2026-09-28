@@ -204,7 +204,9 @@ Local SQLite under `backend/data/databases/` (gitignored):
 
 Raw simulation draws go to Parquet, not SQLite:
 `backend/data/sims/{season}/wk{week:02d}/{run_id}.parquet` with columns `sim_id int32`,
-`roster_id int16`, `total_points float32` (50k × 12 rows). `montecarlo.db` is retired.
+`roster_id int16`, `total_points float32` (50k × 12 rows). `montecarlo.db` is retired. Production
+keeps the draws of every published run too, as one compressed score matrix per run in
+`simulation_totals`, which only the publish step writes (section 8, publish).
 
 Typing rules for every table the pipeline creates: `season INTEGER` and `week INTEGER` columns,
 never `"Week 4"` strings. The Sleeper mirror tables in `league.db` (`leagues`, `users`, `rosters`,
@@ -252,6 +254,12 @@ per week, only the rows of the latest `run_id` (by `created_at`) so production s
 set per week. Publish also filters every table to the current season (`season = ?` where the
 column exists, else `league_id = ?` where it exists, else the whole table), matching the
 single-season behaviour Flask expects.
+
+Publish also uploads `betting_odds_matchup_ou` and `standings_probability_matrix`, which Flask does
+not read yet, so they are not in the table above. `simulation_totals` is the one production table
+publish appends to instead of replacing: it keeps the score matrix of every run published this
+season, not only each week's latest, so Flask can re-price a bet at the run it was placed at
+(`odds-models-2026.md` section 1.5, now implemented; its columns are in section 8, publish).
 
 ---
 
@@ -435,8 +443,13 @@ Replaces the sampling half of notebook 07.
   else the remaining mass maps through the lognormal quantile with the non-dud mean adjusted so the
   overall mean stays mu. `p_dud = 0` when `dud` is null (pure lognormal, today's behaviour).
   Lognormal params as notebook 07 `lognormal_params`.
-- Writes Parquet draws and `simulation_runs(run_id PK, season, week, seed, n_sims, model_version, n_teams, draws_path, created_at)`.
-- summary: `run_id, n_sims, seed, model_version, teams: [{owner, mean, p10, p50, p90}], elapsed_s`.
+- Writes Parquet draws and `simulation_runs(run_id PK, season, week, seed, n_sims, model_version, n_teams, draws_path, created_at, n_locked, window_closes_at, standings_through_week)`:
+  `n_locked` is the number of `locked_points` players; `window_closes_at` the week's first
+  `nfl_schedules` kickoff after `created_at`, compared as datetimes (NULL, with a warning, when no
+  game is left); `standings_through_week` the fewest games played (`wins + losses + ties`) across
+  the league's `rosters`, the number the playoffs step compares with `week - 1`. An older table
+  gains the three columns, at their defaults, before the next run is recorded.
+- summary: `run_id, n_sims, seed, model_version, n_locked, window_closes_at, standings_through_week, teams: [{owner, mean, p10, p50, p90}], elapsed_s`.
 - Acceptance: with `v1` params and seed 1738 the per-team means match notebook 07 within 0.5%;
   runtime < 30 s; correlation test: two same-team QB/WR draws have sample correlation within 0.03 of the table.
 
@@ -474,12 +487,25 @@ frozen table has rows for the week; owners in odds tables resolve to `users`.
 
 ### publish (WP8a)
 Port of `scripts/publish.py` (staging + swap) into a step, with the filters of section 6.1
-(latest run per week, current season), plus `pipeline_runs`, `pipeline_steps`, `source_reviews`,
+(latest run per week, current season), plus `betting_odds_matchup_ou`,
+`standings_probability_matrix`, `pipeline_runs`, `pipeline_steps`, `source_reviews`,
 `calibration_metrics`, `prediction_accuracy`, `team_accuracy`, `simulation_runs`.
 `PROTECTED_TABLES` stays. Chart upload: `scp backend/data/images/*.png` to
 `PUBLISH_CHARTS_TARGET` (default `root@143.198.183.213:/var/lib/tncasino/analytics/`) unless
 `--no-charts`.
-- summary: `tables: [{name, rows}], charts_uploaded, elapsed_s, target_host`.
+- Score matrices (`odds-models-2026.md` section 1.5): before the swap, every run in the
+  `simulation_runs` rows about to be uploaded that production does not hold yet is appended to
+  `simulation_totals(run_id PK, season, week, created_at, n_sims, roster_ids, totals)`. `totals` is
+  `pipeline.markets.encode_totals` of the run's Parquet draws as an `n_sims × n_teams` matrix,
+  columns in ascending roster id order (`roster_ids`, comma-separated), about 2.1 MB; it is a
+  `LargeBinary`, bytea in PostgreSQL and a BLOB in SQLite. The insert is `INSERT ... ON CONFLICT
+  (run_id) DO NOTHING` after one `SELECT` of the season's stored run ids, so a stored run is never
+  re-read or rewritten. A run whose draws file is missing is skipped with a warning.
+  `APPEND_ONLY_TABLES` holds the table's name and `write_tables` refuses it, so it is never
+  staged, swapped or dropped and every published run of the season keeps its matrix. A dry run
+  writes nothing, this table included.
+- summary: `tables: [{name, rows}], skipped, charts_uploaded, totals_stored, elapsed_s, target_host`;
+  `totals_stored` lists the runs whose matrices this publish stored.
 
 ---
 

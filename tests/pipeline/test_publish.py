@@ -1,23 +1,36 @@
 import json
 import re
 import subprocess
+from dataclasses import replace
 from datetime import UTC, datetime
 
+import numpy as np
 import pandas as pd
 import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import StatementError
 
+from pipeline import markets
 from pipeline.db import DB_NAMES, connect, ensure_run_tables
 from pipeline.runner import StepContext
 from pipeline.settings import Settings
-from pipeline.steps import publish
+from pipeline.steps import publish, simulate
 from pipeline.steps.publish import PublishError, read_tables, write_tables
 
 RUN_ID = "2026w04-20260926T140000"
 EARLIER_RUN_ID = "2026w04-20260926T100000"
 LAST_SEASON_RUN_ID = "2025w16-20251217T160000"
 FINISHED = datetime(2026, 9, 26, 14, 0, 47, tzinfo=UTC)
+
+WEEK_3_SIMULATION = "2026w03-20260916T030000"
+WEEK_4_SIMULATION = "2026w04-20260923T030000"
+WEEK_4_RERUN = "2026w04-20260925T030000"
+# Four sims of three teams, in the order simulate met the rosters; production stores them by ascending roster id.
+SIMULATED_ROSTERS = [3, 1, 2]
+SCORES = np.array(
+    [[120.0, 101.25, 88.5], [99.5, 95.0, 110.75], [105.0, 130.5, 70.25], [111.25, 88.0, 92.0]], dtype=np.float32
+)
+STORED_TOTALS = [[101.25, 88.5, 120.0], [95.0, 110.75, 99.5], [130.5, 70.25, 105.0], [88.0, 92.0, 111.25]]
 
 
 @pytest.fixture
@@ -138,6 +151,29 @@ def create_every_table(local):
     """Give every published table a local table, so that a publish has nothing to skip."""
     for database, source, _ in publish.TABLES:
         local[database].execute(f"CREATE TABLE IF NOT EXISTS {source} (week INTEGER)")
+
+
+def add_simulation(settings, odds, run_id, week, created_at):
+    """Save a run's draws and record it as the simulate step does; returns where the draws went."""
+    draws_path = simulate.save_draws(replace(settings, week=week), run_id, SCORES, SIMULATED_ROSTERS)
+    odds.execute(simulate.SIMULATION_RUNS_DDL)
+    run = {
+        "run_id": run_id,
+        "season": 2026,
+        "week": week,
+        "seed": 1738,
+        "n_sims": len(SCORES),
+        "model_version": "v2.2",
+        "n_teams": len(SIMULATED_ROSTERS),
+        "draws_path": draws_path,
+        "created_at": created_at,
+    }
+    add_rows(odds, "simulation_runs", [run])
+    return draws_path
+
+
+def stored_run_ids(target):
+    return sorted(row["run_id"] for row in target_rows(target, "simulation_totals"))
 
 
 def add_chart(settings, name):
@@ -282,6 +318,23 @@ def test_tables_without_created_at_take_run_times_from_simulation_runs(local):
     assert tables["simulation_runs"]["run_id"].tolist() == ["a"]
 
 
+@pytest.mark.parametrize("table", ["betting_odds_matchup_ou", "standings_probability_matrix"])
+def test_matchup_totals_and_the_standings_matrix_publish_their_latest_run(local, target, table):
+    add_rows(
+        local["odds"],
+        table,
+        [
+            {"season": 2026, "week": 4, "run_id": "a", "created_at": "2026-09-23 03:01:00"},
+            {"season": 2026, "week": 4, "run_id": "b", "created_at": "2026-09-25 03:01:00"},
+        ],
+    )
+
+    tables, _ = read_tables(local, 2026, "L2026")
+    write_tables(target, tables)
+
+    assert [row["run_id"] for row in target_rows(target, table)] == ["b"]
+
+
 def test_the_flask_users_table_is_never_replaced(local, target):
     with target.begin() as conn:
         conn.execute(text("CREATE TABLE users (id INTEGER, email TEXT)"))
@@ -299,6 +352,15 @@ def test_the_flask_users_table_is_never_replaced(local, target):
 def test_write_tables_refuses_the_tables_flask_owns(target, name):
     with pytest.raises(PublishError, match=name):
         write_tables(target, {"sleeper_users": pd.DataFrame({"user_id": ["u1"]}), name: pd.DataFrame({"id": [1]})})
+
+    assert table_names(target) == set()
+
+
+def test_write_tables_refuses_to_replace_the_stored_score_matrices(target):
+    tables = {"sleeper_users": pd.DataFrame({"user_id": ["u1"]}), "simulation_totals": pd.DataFrame({"run_id": ["a"]})}
+
+    with pytest.raises(PublishError, match="refusing to replace append-only tables: simulation_totals"):
+        write_tables(target, tables)
 
     assert table_names(target) == set()
 
@@ -351,6 +413,94 @@ def test_a_table_missing_locally_is_skipped_with_a_warning(settings, local, targ
     assert step["status"] == "warn"
 
 
+def test_a_new_run_stores_its_score_matrix_by_ascending_roster_id(settings, local, target):
+    add_simulation(settings, local["odds"], WEEK_4_SIMULATION, 4, "2026-09-23T03:01:00+00:00")
+    add_runs(local["pipeline"])
+
+    result = run_publish(settings, no_charts=True)
+
+    assert result.summary["totals_stored"] == [WEEK_4_SIMULATION]
+    [row] = target_rows(target, "simulation_totals")
+    assert {column: value for column, value in row.items() if column != "totals"} == {
+        "run_id": WEEK_4_SIMULATION,
+        "season": 2026,
+        "week": 4,
+        "created_at": "2026-09-23T03:01:00+00:00",
+        "n_sims": 4,
+        "roster_ids": "1,2,3",
+    }
+    assert markets.decode_totals(row["totals"], n_sims=4, n_teams=3).tolist() == STORED_TOTALS
+
+
+def test_a_second_publish_leaves_a_stored_matrix_as_it_was(settings, local, target):
+    add_simulation(settings, local["odds"], WEEK_4_SIMULATION, 4, "2026-09-23T03:01:00+00:00")
+    add_runs(local["pipeline"])
+    run_publish(settings, no_charts=True)
+    first_publish = target_rows(target, "simulation_totals")
+    # Different draws under the same run id would show in the matrix if it were ever written again.
+    simulate.save_draws(settings, WEEK_4_SIMULATION, SCORES + 1, SIMULATED_ROSTERS)
+
+    result = run_publish(settings, no_charts=True)
+
+    assert result.summary["totals_stored"] == []
+    assert target_rows(target, "simulation_totals") == first_publish
+
+
+def test_only_runs_production_has_not_stored_are_read(monkeypatch, settings, local, target):
+    add_simulation(settings, local["odds"], WEEK_3_SIMULATION, 3, "2026-09-16T03:01:00+00:00")
+    add_simulation(settings, local["odds"], WEEK_4_SIMULATION, 4, "2026-09-23T03:01:00+00:00")
+    add_runs(local["pipeline"])
+    run_publish(settings, no_charts=True)
+    rerun_path = add_simulation(settings, local["odds"], WEEK_4_RERUN, 4, "2026-09-25T03:01:00+00:00")
+    original_load_draws = publish.load_draws
+    reads = []
+
+    def recording_load_draws(run_settings, draws_path):
+        reads.append(draws_path)
+        return original_load_draws(run_settings, draws_path)
+
+    monkeypatch.setattr(publish, "load_draws", recording_load_draws)
+
+    result = run_publish(settings, no_charts=True)
+
+    assert reads == [rerun_path]
+    assert result.summary["totals_stored"] == [WEEK_4_RERUN]
+    # The rerun replaces week 4's first run everywhere except here, where bets placed on the first run are re-priced.
+    assert stored_run_ids(target) == [WEEK_3_SIMULATION, WEEK_4_SIMULATION, WEEK_4_RERUN]
+    assert [row["run_id"] for row in target_rows(target, "simulation_runs")] == [WEEK_3_SIMULATION, WEEK_4_RERUN]
+
+
+def test_a_run_whose_draws_are_gone_is_skipped_with_a_warning(settings, local, target):
+    draws_path = add_simulation(settings, local["odds"], WEEK_4_SIMULATION, 4, "2026-09-23T03:01:00+00:00")
+    (settings.data_dir / draws_path).unlink()
+    create_every_table(local)
+    add_runs(local["pipeline"])
+
+    result = run_publish(settings, no_charts=True)
+
+    assert result.warnings == [f"run {WEEK_4_SIMULATION} has no draws at {draws_path}, so its matrix was not stored"]
+    assert result.summary["totals_stored"] == []
+    assert stored_run_ids(target) == []
+    assert [row["run_id"] for row in target_rows(target, "simulation_runs")] == [WEEK_4_SIMULATION]
+    _, step = current_run_rows(target)
+    assert step["status"] == "warn"
+
+
+def test_a_matrix_stays_stored_when_the_swap_after_it_fails(monkeypatch, settings, local, target):
+    add_simulation(settings, local["odds"], WEEK_4_SIMULATION, 4, "2026-09-23T03:01:00+00:00")
+    add_runs(local["pipeline"])
+
+    def failing_swap(engine, tables):
+        raise PublishError("the swap failed")
+
+    monkeypatch.setattr(publish, "write_tables", failing_swap)
+
+    with pytest.raises(PublishError, match="the swap failed"):
+        run_publish(settings, no_charts=True)
+    assert stored_run_ids(target) == [WEEK_4_SIMULATION]
+    assert table_names(target) == {"simulation_totals"}
+
+
 def test_no_staging_table_is_left_after_a_publish(local, target):
     add_rows(local["league"], "users", [{"user_id": "u1"}])
 
@@ -378,6 +528,7 @@ def test_a_failed_publish_drops_its_staging_tables_and_keeps_the_live_ones(targe
 
 def test_a_dry_run_prints_the_counts_and_writes_nothing(settings, local, target_path, scp_calls, capsys):
     add_rows(local["league"], "users", [{"user_id": "u1"}, {"user_id": "u2"}])
+    add_simulation(settings, local["odds"], WEEK_4_SIMULATION, 4, "2026-09-23T03:01:00+00:00")
     add_runs(local["pipeline"])
     add_chart(settings, "chart.png")
 
@@ -386,9 +537,11 @@ def test_a_dry_run_prints_the_counts_and_writes_nothing(settings, local, target_
     assert not target_path.exists()
     assert scp_calls == []
     assert {"name": "sleeper_users", "rows": 2} in result.summary["tables"]
+    assert result.summary["totals_stored"] == []
     assert result.warnings[-1].startswith("dry run: nothing was written")
     output = capsys.readouterr().out
     assert re.search(r"^sleeper_users +2$", output, re.MULTILINE)
+    assert re.search(r"^simulation_totals +1$", output, re.MULTILINE)
     assert output.isascii()
 
 

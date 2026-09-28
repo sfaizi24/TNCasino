@@ -292,11 +292,10 @@ a worker could cache 2.4 MB per run instead if memory is tight.
 
 Publish inserts each week's latest run with `INSERT ... ON CONFLICT (run_id) DO NOTHING` before it
 swaps in the other tables, so a published run always has its matrix. The table must never be
-swapped, because a swap would throw away the season's earlier matrices. Publish already has a
-guard of that kind: it refuses to replace any table in `PROTECTED_TABLES` (pipeline/steps/publish.py
-line 49). That set is commented as the Flask app's tables, so B3 either adds `simulation_totals`
-to it with a comment, or gives it a second, append-only set. Every published run of the season is
-kept, because settlement and cash-out re-price at the run a bet was placed at.
+swapped, because a swap would throw away the season's earlier matrices. Since B3 (2026-09-28)
+publish refuses to stage any table in `APPEND_ONLY_TABLES`, a second guard beside
+`PROTECTED_TABLES`, and `simulation_totals` is its one member. Every published run of the season
+is kept, because settlement and cash-out re-price at the run a bet was placed at.
 
 **`pipeline/markets.py`**, the win rules in one place:
 
@@ -1033,14 +1032,17 @@ first, because every later package stores or reads it.
   published tables by key and never reads a price from the browser; unknown keys, selections and
   negative indexes are rejected (today only `idx >= len` is checked, betting.py lines 430 and 476);
   first place and make playoffs get a page. Driving risk: six bet types and their page code change
-  at once, and bets placed under the old scheme must still settle.
+  at once, and bets placed under the old scheme must still settle. Shipped 2026-09-28 (merge
+  4234525).
 - **B2.** Conditional updates for placing, removing and settling, with concurrency tests. Driving
-  risk: it touches every money path at once.
+  risk: it touches every money path at once. Shipped 2026-09-28 (13c1cba, merge 9554aaa).
 - **B3.** `pipeline/markets.py`, the odds step moved onto it, and `simulation_totals` written at
   publish. Driving risk: the refactored odds step must reproduce the frozen week-4 tables exactly.
+  Shipped 2026-09-28 (merge 669368d); the rebuilt step reproduced the week-4 tables cell for cell.
 - **B4.** Publish `betting_odds_matchup_ou` and `standings_probability_matrix`, round matchup lines
   to cents, and add `n_locked`, `window_closes_at` and `standings_through_week` to
-  `simulation_runs`. Driving risk: changing the staging-and-swap set.
+  `simulation_runs`. Driving risk: changing the staging-and-swap set. Shipped 2026-09-28 (merge
+  669368d).
 - **B5.** Locks from final games at league points, owners' kicked-off starters pinned, refusal
   while a game is in progress, accuracy and calibrate on `n_locked = 0`, and the runbook
   corrections of §3.2. Driving risk: pinning edge cases (a pinned starter no source projects, an
@@ -1185,8 +1187,8 @@ Decisions for the owner, taken 2026-09-28:
 - **Ratio:** joint chance over product; what a product-priced parlay returns per $1 on average.
 - **Run, sim:** one execution of the simulate step, and one of its 50,000 simulated weeks.
 - **Same-game parlay:** a parlay with two or more legs from one matchup.
-- **Score matrix:** a run's 50,000 × 12 table of team scores, one row per sim, to be published as
-  `simulation_totals` (B3).
+- **Score matrix:** a run's 50,000 × 12 table of team scores, one row per sim, published as
+  `simulation_totals` since B3.
 - **Seed:** (1) the random seed, 1738, that makes a run repeatable; (2) a team's final
   regular-season place, 1 to 12, which an *exact seed* bet picks.
 - **Spread:** a bet that a team wins by more than a margin, or loses by less.
