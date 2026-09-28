@@ -85,7 +85,7 @@ Runs Flask on `0.0.0.0:5000` against whatever `DATABASE_URL` is set. The local `
 | `lint` | `ruff check .`, `ruff format --check .` |
 | `test` | `pip install -r requirements.txt`, `python -m pytest --tb=short` |
 
-`ruff.toml` excludes `backend/` entirely (line length 120), so scrapers and notebooks are never linted. Nothing deploys automatically.
+`ruff.toml` excludes `backend/` entirely (line length 120), so scrapers and notebooks are never linted. The lint job installs the ruff version pinned in `requirements.txt`, because a newer ruff formats the code fences in Markdown and fails on the design docs; `requirements.txt` also keeps pandas below 3 and SQLAlchemy below 2.1, the versions the pipeline is tested on. Nothing deploys automatically.
 
 ## Tests
 

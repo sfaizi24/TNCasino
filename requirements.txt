@@ -7,11 +7,11 @@ flask-wtf
 werkzeug
 
 # Database
-sqlalchemy
+sqlalchemy<2.1  # 2.1 and pandas 3 change how driver errors surface; the pipeline is tested on 2.0
 psycopg2-binary
 
 # Data processing
-pandas
+pandas<3
 scipy
 matplotlib
 seaborn
@@ -31,5 +31,5 @@ requests
 python-dotenv
 
 # Dev tools
-ruff
+ruff==0.15.7  # CI must format exactly like the local hook
 pytest
