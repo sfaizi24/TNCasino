@@ -13,7 +13,7 @@ flowchart LR
         M[(montecarlo.db · 411 MB)]
     end
     subgraph PG["Production PostgreSQL"]
-        APPT[App tables<br/>users, bets,<br/>weekly_stats, betting_periods]
+        APPT[App tables<br/>users, bets, bet_legs,<br/>weekly_stats, betting_periods]
         ANT[Analytics tables<br/>13 published tables]
     end
     L -- "4 tables (3 renamed)" --> ANT
@@ -105,6 +105,7 @@ One database holds both halves.
 erDiagram
     users ||--o{ bets : places
     users ||--o{ weekly_stats : has
+    bets ||--o{ bet_legs : holds
     betting_periods ||..o{ bets : "same week (no FK)"
 
     users {
@@ -123,15 +124,31 @@ erDiagram
     bets {
         int id PK
         string user_id FK
-        string bet_type
+        string bet_type "market name, e.g. moneyline"
         text description
         float amount
         string odds "American, e.g. -150 or EVEN"
+        int price "odds as an integer, even money is 100"
+        float probability
+        string run_id "simulation run the price came from"
         float potential_win
-        string status "pending | won | lost"
-        string result
+        string status "pending | won | lost | removed"
+        float result
         int week
         timestamptz created_at
+        timestamptz settled_at
+    }
+    bet_legs {
+        int id PK
+        int bet_id FK
+        int season
+        int week "null for futures"
+        string market "key, e.g. 2026-w04-moneyline-1v4"
+        string selection "roster id, over, under or yes"
+        numeric line "two decimals, team totals only"
+        int price
+        float probability
+        string status "pending | won | lost | void"
         timestamptz settled_at
     }
     weekly_stats {
@@ -155,7 +172,9 @@ erDiagram
     }
 ```
 
-App tables are created by `db.create_all()` on startup and patched by `app/migrations.py` (idempotent `ALTER`s, errors logged and swallowed). There is no migration framework.
+A bet placed by market key has one `bet_legs` row recording the pick as data: the key, the selection, the line, and the price and chance it was placed at. A leg is `pending` until its bet settles, then takes the bet's `won` or `lost` and `settled_at`; the legs of a removed bet are `void`. Bets placed before market keys existed have no legs, and their `price`, `probability` and `run_id` are null. See [06](06-betting-lifecycle.md#markets) for the keys.
+
+App tables are created by `db.create_all()` on startup and patched by `app/migrations.py` (idempotent `ALTER`s, errors logged and swallowed). There is no migration framework. `create_all` creates a missing table such as `bet_legs` but never alters one that exists, so the `bets` columns `run_id`, `price` and `probability` are added by `ALTER`s in `app/migrations.py`, which also renames the legacy bet types to their market names once (`team_ou` → `team_total`, `first_seed` → `first_place`, `ammad_playoff` → `make_playoffs`).
 
 The analytics tables have **no foreign keys to the app tables or each other**. The app joins them by `week`, `owner`, `team_id`/`roster_id`, or `team_name`, depending on the table.
 
