@@ -1,3 +1,6 @@
+from functools import partial
+
+import pytest
 from sqlalchemy import text
 
 from app import ledger
@@ -6,6 +9,13 @@ from app.models import Bet, WeeklyStats
 from tests.conftest import RUN_ID
 
 STAKE = {"market": "2026-w10-team_total-1", "selection": "under", "line": 110.5, "run_id": RUN_ID, "amount": 100}
+
+EVENTS = {
+    "settle": partial(ledger.settle, won=True),
+    "push": ledger.push,
+    "void": ledger.void,
+    "remove": ledger.remove,
+}
 
 
 def _bet(user, amount):
@@ -149,6 +159,59 @@ def test_removing_a_settled_bet_refunds_nothing(user):
     db.session.rollback()
 
     assert _money(user) == settled
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("push", "push"),
+        ("settle", "push"),
+        ("push", "settle"),
+        ("void", "void"),
+        ("settle", "void"),
+        ("void", "settle"),
+        ("push", "void"),
+        ("remove", "void"),
+        ("void", "remove"),
+    ],
+)
+def test_an_event_on_a_bet_that_is_no_longer_pending_changes_nothing(user, first, second):
+    bet = _placed_bet(user)
+    assert EVENTS[first](bet) is True
+    db.session.commit()
+    closed = _money(user)
+
+    assert EVENTS[second](bet) is False
+    db.session.rollback()
+
+    assert _money(user) == closed
+
+
+@pytest.mark.parametrize(("event", "bets_placed"), [("push", 2), ("void", 1)])
+def test_push_and_void_refund_the_stake_and_only_a_push_still_counts_as_placed(user, event, bets_placed):
+    earlier = _placed_bet(user)
+    ledger.settle(earlier, won=True)
+    db.session.commit()
+    bet = _placed_bet(user, 50.0)
+
+    assert EVENTS[event](bet) is True
+    db.session.commit()
+
+    assert _money(user) == {
+        "account_balance": 1100.0,
+        "total_pnl": 100.0,
+        "bets": 2,
+        "starting_balance": 1000.0,
+        "ending_balance": 1100.0,
+        "pnl": 100.0,
+        "active_bets_amount": 0.0,
+        "settled_pnl": 100.0,
+        "bets_placed": bets_placed,
+        "bets_won": 1,
+    }
+    closed = db.session.get(Bet, bet.id)
+    assert (closed.status, closed.result) == (event, 0.0)
+    assert closed.settled_at is not None
 
 
 def test_second_bet_of_the_week_adds_to_the_counters(user):

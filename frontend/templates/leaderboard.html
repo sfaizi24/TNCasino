@@ -56,6 +56,7 @@
 {% macro popular_bet(bet, label) %}
 {% if bet[2] %}{% set outcome = 'Won' %}{% set outcome_class = 'tnc-lb-outcome-won' %}
 {% elif bet[3] %}{% set outcome = 'Lost' %}{% set outcome_class = 'tnc-lb-outcome-lost' %}
+{% elif bet[7] %}{% set outcome = 'Push' %}{% set outcome_class = 'tnc-lb-outcome-push' %}
 {% else %}{% set outcome = 'Pending' %}{% set outcome_class = 'tnc-lb-outcome-pending' %}
 {% endif %}
 <div class="tnc-lb-bet">

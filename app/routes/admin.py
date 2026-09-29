@@ -1,12 +1,15 @@
 import json
+import logging
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
 from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user
 from sqlalchemy import inspect
 
-from .. import ledger
+from .. import ledger, settlement
 from ..database import db
+from ..models import Bet
 from .helpers import admin_required, friendly_description, get_current_week, query_analytics
 
 admin_bp = Blueprint("admin", __name__)
@@ -103,8 +106,6 @@ def set_betting_period():
 @admin_bp.route("/api/admin/pending_bets", methods=["GET"])
 @admin_required
 def get_pending_bets():
-    from ..models import Bet
-
     week = request.args.get("week", get_current_week(), type=int)
 
     try:
@@ -136,8 +137,6 @@ def get_pending_bets():
 @admin_bp.route("/api/admin/settle_bet", methods=["POST"])
 @admin_required
 def settle_bet():
-    from ..models import Bet
-
     data = request.get_json()
     bet_id = data.get("bet_id")
     won = data.get("won", False)
@@ -164,6 +163,133 @@ def settle_bet():
         traceback.print_exc()
         db.session.rollback()
         return jsonify({"success": False, "error": str(e)})
+
+
+@admin_bp.route("/api/admin/settlement_preview", methods=["GET"])
+@admin_required
+def settlement_preview():
+    week = request.args.get("week", get_current_week(), type=int)
+
+    try:
+        scores = settlement.team_scores(week)
+        outcomes = settlement.outcomes_for_week(week, scores)
+        rows = [_preview_row(result) for result in outcomes]
+    except settlement.SettlementError as error:
+        return jsonify({"success": False, "error": str(error)})
+    except Exception as error:
+        db.session.rollback()
+        logging.exception(f"Could not preview the settlement of week {week}")
+        return jsonify({"success": False, "error": str(error)})
+
+    decided = sum(1 for result in outcomes if result.outcome != settlement.UNDECIDED)
+    return jsonify(
+        {
+            "success": True,
+            "week": week,
+            "scores": [asdict(score) for score in scores.values()],
+            "bets": rows,
+            "decided": decided,
+            "undecided": len(outcomes) - decided,
+        }
+    )
+
+
+def _preview_row(result):
+    bet = result.bet
+    name = " ".join(part for part in (bet.user.first_name, bet.user.last_name) if part)
+    row = {
+        "id": bet.id,
+        "user": name or f"User #{bet.user_id[:8]}",
+        "description": friendly_description(bet.description),
+        "amount": bet.amount,
+        "odds": bet.odds,
+        "potential_win": bet.potential_win,
+        "market": None,
+        "selection": None,
+        "line": None,
+        "outcome": result.outcome,
+        "reason": result.reason,
+    }
+    if bet.legs:
+        leg = bet.legs[0]
+        row.update(market=leg.market, selection=leg.selection, line=leg.line)
+    return row
+
+
+@admin_bp.route("/api/admin/settle_outcomes", methods=["POST"])
+@admin_required
+def settle_outcomes():
+    data = request.get_json()
+    week = data.get("week")
+    if not week:
+        return jsonify({"success": False, "error": "Week required"})
+
+    settled = []
+    skipped = []
+    try:
+        scores = settlement.team_scores(week)
+        current = {result.bet.id: result for result in settlement.outcomes_for_week(week, scores)}
+        for shown in data.get("bets", []):
+            reason = _settle_as_shown(current.get(shown["id"]), shown, week)
+            if reason is None:
+                settled.append(shown["id"])
+            else:
+                skipped.append({"id": shown["id"], "reason": reason})
+    except settlement.SettlementError as error:
+        return jsonify({"success": False, "error": str(error)})
+    except Exception as error:
+        # Bets settled before the failure were committed one by one and stand.
+        db.session.rollback()
+        logging.exception(f"Settling week {week} stopped after settling bets {settled}")
+        return jsonify({"success": False, "error": str(error)})
+
+    logging.info(f"Settled week {week} bets {settled}, skipped {skipped}")
+    return jsonify({"success": True, "settled": settled, "skipped": skipped})
+
+
+def _settle_as_shown(result, shown, week):
+    """Settle one bet in its own transaction if its outcome is still the one shown; return why not, or None."""
+    if result is None:
+        bet = db.session.get(Bet, shown["id"])
+        return "already settled" if bet is not None and bet.week == week else "not found"
+    if result.outcome == settlement.UNDECIDED:
+        return "undecided"
+    if result.outcome != shown["outcome"]:
+        return f"scores changed: now {result.outcome}"
+
+    if result.outcome == settlement.PUSH:
+        closed = ledger.push(result.bet)
+    else:
+        closed = ledger.settle(result.bet, won=result.outcome == settlement.WON)
+    if not closed:
+        db.session.rollback()
+        return "already settled"
+    db.session.commit()
+    return None
+
+
+@admin_bp.route("/api/admin/void_bet", methods=["POST"])
+@admin_required
+def void_bet():
+    bet_id = request.get_json().get("bet_id")
+    if not bet_id:
+        return jsonify({"success": False, "error": "Bet ID required"})
+
+    try:
+        bet = db.session.get(Bet, bet_id)
+        if bet is None:
+            return jsonify({"success": False, "error": "Bet not found"})
+        if not ledger.void(bet):
+            db.session.rollback()
+            return jsonify({"success": False, "error": "Bet already settled"})
+        db.session.commit()
+    except Exception as error:
+        db.session.rollback()
+        logging.exception(f"Could not void bet {bet_id}")
+        return jsonify({"success": False, "error": str(error)})
+
+    logging.info(f"Voided bet {bet_id}")
+    return jsonify({"success": True})
 
 
 @admin_bp.route("/api/admin/settle_week", methods=["POST"])

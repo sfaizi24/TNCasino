@@ -169,8 +169,9 @@ def leaderboard():
                 func.sum(case((Bet.status == "pending", 1), else_=0)).label("pending"),
                 func.sum(Bet.amount).label("total_wagered"),
                 func.max(Bet.week).label("week"),
+                func.sum(case((Bet.status == "push", 1), else_=0)).label("pushes"),
             )
-            .filter(Bet.bet_type == bet_type, Bet.status != "removed")
+            .filter(Bet.bet_type == bet_type, Bet.status.notin_(("removed", "void")))
             .group_by(Bet.description)
             .order_by(desc("count"))
             .first()

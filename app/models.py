@@ -67,7 +67,7 @@ class BetLeg(db.Model):
     line = db.Column(db.Numeric(7, 2, asdecimal=False), nullable=True)
     price = db.Column(db.Integer, nullable=False)
     probability = db.Column(db.Float, nullable=False)
-    # pending until the bet settles, then won or lost; void when the bet is removed.
+    # pending until the bet settles, then won, lost or push; void when the bet is removed or voided.
     status = db.Column(db.String, default="pending", nullable=False)
     settled_at = db.Column(db.DateTime(timezone=True), nullable=True)
 

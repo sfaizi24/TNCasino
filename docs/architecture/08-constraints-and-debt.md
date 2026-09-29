@@ -59,12 +59,14 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 | | Item | Where |
 |---|---|---|
 | M | CSRF is off by default; JSON `POST`/`DELETE` endpoints (including admin) are unprotected apart from SameSite=Lax. | `app/extensions.py`, `app/__init__.py` |
-| M | Settlement is fully manual; `settle_week` doesn't settle bets. | `admin.py:178` |
+| M | Weekly bets placed by market key settle from the published scores since `c735899` (admin page `cf1db58`), after the admin previews and confirms them. `sleeper_matchups` has no fetch time, so nothing stops a settle on a mid-week publish's partial scores, and whether Sleeper's stat corrections move scores after Tuesday's fetch is an untested hypothesis; a settled bet is not revisited when a correction lands ([06](06-betting-lifecycle.md#settlement)). Futures and bets placed before market keys still settle by hand, and `settle_week` still settles no bets. | `app/settlement.py`, `app/routes/admin.py` |
 | M | Analytics tables have no ORM models or schema checks; errors are caught and returned as `[]` with 200. | `odds.py` |
 | M | Schema changes are ad-hoc `ALTER`s run at startup; failures are logged and ignored. | `app/migrations.py` |
 | L | No ledger table: balances change in place, so money history can only be reconstructed from `bets`. | `app/ledger.py` |
-| L | Logging is mostly `print()` + `traceback.print_exc()`; `betting.py`, `account.py` and the two futures endpoints use `logging`. | `admin.py`, `odds.py`, `helpers.py:65` |
+| L | Logging is mostly `print()` + `traceback.print_exc()`; `betting.py`, `account.py`, the two futures endpoints and the three settlement endpoints use `logging`. | `admin.py`, `odds.py`, `helpers.py:65` |
 | L | `/analytics` picks its week from PNG filenames even though the page no longer shows PNGs. | `pages.py:31` |
+| L | The admin page has no week switch. Its settlement and pending-bets cards follow the current week, which moves on once the next week's period exists or this one is marked settled; bets still pending from an earlier week can then be settled only by calling the admin API with that week. | `frontend/static/js/admin.js` |
+| L | The admin page scrolls sideways at phone width: at a 375 px viewport the Current Betting Periods table stretches `.admin-grid`'s `1fr` column to 390 px and the page to 404 px. The settlement and pending-bets cards sit outside the grid and fit. The B7 browser check found this and left it. | `frontend/static/css/admin.css` |
 
 ## Data & publishing
 
