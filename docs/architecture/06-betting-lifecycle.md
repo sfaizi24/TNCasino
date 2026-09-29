@@ -1,6 +1,6 @@
 # 06 – Betting Lifecycle
 
-All money is fake. Every user starts with **1,000**. Code: `app/routes/betting.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/windows.py`, `app/ledger.py`, `app/markets.py`, `app/settlement.py`, `app/cashout.py`.
+All money is fake. Every user starts with **1,000**. Code: `app/routes/betting.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/windows.py`, `app/ledger.py`, `app/markets.py`, `app/parlays.py`, `app/matrices.py`, `app/settlement.py`, `app/cashout.py`.
 
 ## Betting period (one per week)
 
@@ -40,16 +40,16 @@ The window comes from the runs: Wednesday's run closes at Thursday's kickoff, th
 stateDiagram-v2
     [*] --> pending: place_bet<br/>(balance −= amount)
     pending --> removed: remove_bet while the window is open<br/>and its run is the latest<br/>(balance += amount)
-    pending --> won: admin settle_outcomes<br/>or settle_bet(won=true)<br/>(balance += amount + potential_win)
+    pending --> won: admin settle_outcomes<br/>or settle_bet(won=true)<br/>(balance += amount + potential_win;<br/>a parlay with pushed legs pays its adjusted potential_win)
     pending --> lost: admin settle_outcomes<br/>or settle_bet(won=false)
     pending --> push: admin settle_outcomes,<br/>tie or score on the line<br/>(balance += amount)
     pending --> void: admin void_bet<br/>(balance += amount)
     pending --> cashed_out: cash_out while the window is open<br/>and a newer run has moved the odds<br/>(balance += offer)
 ```
 
-The app judges each weekly bet placed by market key against the league's published scores, and the admin confirms the outcomes it shows ([Settlement](#settlement)); futures and legacy bets are settled by hand as won or lost. A bet's legs settle with it, taking its status and `settled_at` in the same transaction. A push and a void both return the stake. A push is a result and stays on the record: the account page lists it as Push, and the leaderboard's popular-bet counts include it and show Push when nothing in the group won or lost. A void means the bet should never have stood, so it leaves `bets_placed` as a remove does, the account page lists it as Void, and the popular-bet counts leave it out with the removed bets.
+The app judges each weekly bet placed by market key against the league's published scores, and the admin confirms the outcomes it shows ([Settlement](#settlement)); futures and legacy bets are settled by hand as won or lost. A bet's legs settle with it in the same transaction, taking its `settled_at` and its status, except a parlay settled from the preview, whose legs each take their own outcome. A push and a void both return the stake. A push is a result and stays on the record: the account page lists it as Push, and the leaderboard's popular-bet counts include it and show Push when nothing in the group won or lost. A void means the bet should never have stood, so it leaves `bets_placed` as a remove does, the account page lists it as Void, and the popular-bet counts leave it out with the removed bets.
 
-A pending bet can be removed while its week's window is open and its market still shows the run it was priced at. Once a new run is published for the market, `remove_bet` refuses with `"Odds have changed since this bet was placed"`, and removal gives way to cash-out. A legacy bet has no market to check and is removable while the window is open. `my_bets` reports the rule as each bet's `removable`, and the betting page shows the cancel button only when it is true. A removed bet keeps its row with status `removed` and its legs `void`; the account page lists it as Removed, and the leaderboard's popular-bet counts leave it out.
+A pending bet can be removed while its week's window is open and its market, or every leg's market for a parlay, still shows the run it was priced at. Once a new run is published for one of them, `remove_bet` refuses with `"Odds have changed since this bet was placed"`, and removal gives way to cash-out. A legacy bet has no market to check and is removable while the window is open. `my_bets` reports the rule as each bet's `removable`, and the betting page shows the cancel button only when it is true. A removed bet keeps its row with status `removed` and its legs `void`; the account page lists it as Removed, and the leaderboard's popular-bet counts leave it out.
 
 ### Cash-out
 
@@ -71,7 +71,7 @@ The 5% margin covers news the latest run has not seen and keeps holding a bet th
 | Refusal | When |
 |---|---|
 | `"Bet not found"` | the bet is not the user's or not pending, or another request closed it first |
-| `"No offer for this bet"` | the bet has no legs (a legacy bet) or more than one, or its market key fails to parse |
+| `"No offer for this bet"` | the bet has no legs (a legacy bet) or more than one (a parlay), or its market key fails to parse |
 | `"Betting is paused until the odds update"`, `"Betting is closed for week 4"` | the window is not open; the admin's lock reads as closed |
 | `"Odds have not changed since this bet was placed; remove it instead"` | the latest run is the bet's own |
 | `"No offer until the next run: the standings are behind"` | futures: the run's `standings_through_week` is below the current week − 1 |
@@ -107,6 +107,36 @@ The bet stores the table's `odds` text, `price` (the odds as an integer: `+150` 
 
 **Legacy bets.** Bets placed before market keys existed have no legs and null `price`, `probability` and `run_id`. They keep their `description` and `odds` as the only record of the pick, show on the account page, the leaderboard and the admin page like any other bet, and settle by hand as before. Their `bet_type` was renamed once to the market names (`team_ou` → `team_total`, `first_seed` → `first_place`, `ammad_playoff` → `make_playoffs`); their descriptions keep the old wording ("#1 Seed", "Ammad Playoff").
 
+#### Parlays
+
+A parlay is one bet on two to four of the current week's picks, and it wins only if every leg wins. Its legs come from the four weekly markets, `moneyline`, `team_total`, `highest_scorer` and `lowest_scorer`; futures are refused. `app/parlays.py` prices the legs together at the joint chance, the share of the week's latest run's sims in which every leg wins, read from that run's `simulation_totals` matrix through each market's win rule (`app/matrices.py`, cached per worker). The run is the window's `run_id`, and every leg's own quote must come from it.
+
+```
+joint  = share of the run's sims in which every leg wins
+odds   = odds_from_probability(joint)          fair American odds, rounded as the pipeline rounds
+price  = price_from_odds(odds)
+payout = potential_win(amount, price)
+```
+
+On the seeded test run, roster 1 beats roster 2 in 11 of 20 sims and tops its 110.5 line in 9, and does both in 7: the parlay is 35% at `+186`, where the two singles at -150 and -120 multiply to 33%. There is no cap and no house edge ([design decision 2](../design/odds-models-2026.md#10-evidence)): a parlay that wins in one sim of 50,000 is offered at +4999900, and one that wins in every sim or in none has no price and is not offered.
+
+`POST /api/parlay_quote` prices the legs for the page's slip and moves no money; `place_bet` with a `legs` list of two or more prices them again and places the parlay. A `legs` list of one entry is a single. Both first need the window open, then refuse, in this order, with the refusal's `rule` and the market keys at fault in `legs`:
+
+| Refusal | `rule` | When |
+|---|---|---|
+| `"Odds have changed"` | `odds_changed` | the request's `run_id` is not the window's: the page showed another run's prices, so every leg is named |
+| `"A parlay has 2 to 4 legs"` | `size` | fewer than two legs or more than four, or `legs` is not a list |
+| `"Unknown market"`, `"Unknown selection"`, `"Not this week's market"`, `"Futures cannot be parlayed"` | `leg` | a leg's key fails to parse or finds no row, names another week, or is a futures market; every faulty leg is named under the first one's text |
+| `"Two legs from one market"` | `same_market` | two legs share a key: both sides of a matchup, a team's over and under, two highest-scorer picks. They could only win together on a tie |
+| `"Odds have changed"` | `odds_changed` | a leg's row is at another run than the window's, or a team total's line is missing or differs at two decimals |
+| `"Not offered"` | `no_price` | a leg's price is null (the leg is named), or the run's matrix is not stored (none is) |
+| `"Not offered: the simulations cannot price this parlay"` | `impossible` | the legs win together in every sim or in none |
+| `"A leg adds nothing to this parlay"` | `redundant` | without the leg the others win in exactly as many sims: "Alice A is the highest scorer" already wins "Alice A beats Bob B", so the pair would pay what the single pays. Every such leg is named |
+
+An `"Odds have changed"` reply adds the window's `run_id`, so the page reloads the tab and quotes again. A quote refused as `same_market`, `impossible` or `redundant` writes one `parlay_refusals` row ([04](04-data-model.md#postgresql-production)): the user, week and run, the legs as the page sent them in JSON, and the rule. Malformed legs, moved odds and missing prices are not logged, and neither are refusals at placement, which follows a quote. Nothing reads the log yet; it is for the owner's SQL after weeks 5 and 6, to decide whether scorer legs stay in parlays ([design §1.4](../design/odds-models-2026.md#14-which-legs-belong)).
+
+A placed parlay is a `bets` row with `bet_type` `parlay`, the joint `odds`, `price` and `probability`, the run's `run_id` and the `potential_win` of the joint price, and one `bet_legs` row per leg holding the leg's own single price, chance and line. Its `description` joins the legs' single descriptions with ` + `: `Alice A vs Bob B: Alice A -150 + Alice A O/U 110.50: Over`. It is removable while every leg's market still shows the bet's run. It has no cash-out: `cashout.py` offers nothing on a bet with more than one leg, so a parlay is removed or rides to settlement ([Settlement](#settlement)). The leaderboard counts it like any bet, except the popular-bet groups, which are the four single markets.
+
 ### Payout math
 
 | Odds | `potential_win` (profit) |
@@ -138,6 +168,20 @@ The bet stores the table's `odds` text, `price` (the odds as an integer: `+150` 
 
 Each outcome carries a reason the admin reads beside it: `Bob B 131.20 vs Alice A 110.50`, `Alice A 110.50, line 110.50`, `highest 131.20: Bob B, Carol C`, `no score for Bob B`, `futures: settle by hand`, `placed before market keys: settle by hand`.
 
+**Parlays** settle all or nothing, leg by leg, each leg judged by its market's rule above ([design §1.6](../design/odds-models-2026.md#16-settling-a-parlay)). A pushed leg drops out, and the legs left standing are paid on the run the parlay was placed at, never the latest:
+
+| Legs | Outcome | Reason | Pays |
+|---|---|---|---|
+| any leg undecided | undecided | `2 of 3 legs decided` | |
+| any leg lost | lost | `lost: ` and each lost leg's reason, joined with `; ` | |
+| every leg won | won | `won, 3 legs` | the stored `potential_win` |
+| some pushed, two or more won | won | `won, 1 leg pushed: pays 66.67 on the rest` | the won legs re-priced at their joint chance on the placement run's matrix (`score_matrix(bet.run_id)`), at their stored lines |
+| some pushed, one won | won | `won, 2 legs pushed: pays 83.33 on the rest` | that leg's stored single `price` |
+| every leg pushed | push | `push: every leg on its line` | the stake back |
+| some pushed, and the placement run's matrix is not stored | undecided | `placement run's matrix not stored: settle by hand` | |
+
+The re-priced win replaces `bets.potential_win` when the bet settles, and each leg takes its own `won`, `lost` or `push`.
+
 **Preview, then confirm.** The Settle Week card on `/admin` shows the week's scores as a strip, then every pending bet with its bettor, description, reason and outcome (`GET /api/admin/settlement_preview`). One button, "Settle N decided bets", sends each decided bet with the outcome the page showed (`POST /api/admin/settle_outcomes`). The route recomputes every outcome from the scores published now and settles a bet, through `ledger.settle` or `ledger.push`, only when the two agree. Each bet is its own transaction (guard, commit, next), so a failure part-way leaves the bets before it settled. The others are skipped with a reason, the page lists what settled and what was skipped, and both cards reload:
 
 | Skip reason | When |
@@ -151,7 +195,7 @@ Each outcome carries a reason the admin reads beside it: `Bob B 131.20 vs Alice 
 
 **Which scores.** `sleeper_matchups` has no `run_id` and no fetch time: publish replaces it whole from the pipeline's latest league fetch, so settlement uses whatever the last publish carried, and the app cannot tell when that fetch ran. The design's open hypothesis ([odds models §6](../design/odds-models-2026.md#6-settlement-edge-cases)) is that Sleeper's stat corrections move a few starters by a point or two after Monday night. The test is to fetch week 4's matchups on Tuesday morning and again on Friday and compare `players_points`; until the answer is known, settle on Tuesday's fetch. The admin runs the league fetch and publish on Tuesday, checks the card's scores strip, which shows exactly the points the outcomes use, and then presses the button. A bet settled from Tuesday's scores is not revisited when a correction lands later.
 
-**By hand.** The Pending Bets card keeps a Win and a Loss button on every pending bet (`POST /api/admin/settle_bet`). They are how futures (after the season) and legacy bets settle, and they settle any other pending bet as won or lost too. The Void button beside them (`POST /api/admin/void_bet`, after a confirm naming the bet and its stake) refunds a bet that should never have stood: a game not played, an admin mistake.
+**By hand.** The Pending Bets card keeps a Win and a Loss button on every pending bet (`POST /api/admin/settle_bet`). They are how futures (after the season) and legacy bets settle, and they settle any other pending bet as won or lost too. On a parlay, Win pays the stored joint `potential_win` and gives every leg the bet's status; it does not re-price pushed legs, so parlays settle through the preview. The Void button beside them (`POST /api/admin/void_bet`, after a confirm naming the bet and its stake) refunds a bet that should never have stood: a game not played, an admin mistake.
 
 Both cards show the current week, and the page has no week switch; `settlement_preview` and `pending_bets` take `?week=N` for any other week, and `settle_outcomes` takes the week in its body.
 
@@ -183,8 +227,8 @@ flowchart LR
 | First bet of the week | | row created, `starting_balance` = current balance | |
 | **Place** | balance −= amount | placed +1, active += amount, ending = balance | insert `pending`, with a `pending` leg |
 | **Remove** | balance += amount | placed −1, active −= amount, ending = balance | `removed`; legs `void` |
-| **Settle won** | balance += amount + win; total_pnl += win | active −= amount, settled_pnl += win, won +1, ending = balance | `won`, result = +win; legs `won` |
-| **Settle lost** | total_pnl −= amount | active −= amount, settled_pnl −= amount, ending = balance | `lost`, result = −amount; legs `lost` |
+| **Settle won** | balance += amount + win; total_pnl += win | active −= amount, settled_pnl += win, won +1, ending = balance | `won`, result = +win; legs `won`. A parlay from the preview: win is its adjusted win, written to `potential_win`, and each leg takes its own outcome |
+| **Settle lost** | total_pnl −= amount | active −= amount, settled_pnl −= amount, ending = balance | `lost`, result = −amount; legs `lost`, or each its own on a parlay from the preview |
 | **Push** | balance += amount | active −= amount, ending = balance | `push`, result = 0; legs `push` |
 | **Void** | balance += amount | placed −1, active −= amount, ending = balance | `void`, result = 0; legs `void` |
 | **Cash out** | balance += offer; total_pnl += offer − amount | the bet's week: active −= amount, ending = balance; the cash-out week: settled_pnl += offer − amount, ending = balance | `cashed_out`, result = offer − amount, `cash_out_amount` = offer, `cash_out_run_id`, `cashed_out_at`; legs `cashed_out` |
@@ -203,7 +247,7 @@ Place, remove, settle, push, void and cash out each run as one transaction that 
 |---|---|---|
 | **Place** | `UPDATE users SET account_balance = account_balance - :stake WHERE id = :user AND account_balance >= :stake` | `"Insufficient balance"` |
 | **Remove** | `UPDATE bets SET status = 'removed' WHERE id = :bet AND status = 'pending'` | `"Bet not found"` |
-| **Settle** | `UPDATE bets SET status = :status, result = :result, settled_at = :now WHERE id = :bet AND status = 'pending'` | `"Bet already settled"` from `settle_bet`; `settle_outcomes` skips the bet as `"already settled"` |
+| **Settle** | `UPDATE bets SET status = :status, result = :result, settled_at = :now WHERE id = :bet AND status = 'pending'`, also setting `potential_win` for a parlay whose pushed legs changed its win | `"Bet already settled"` from `settle_bet`; `settle_outcomes` skips the bet as `"already settled"` |
 | **Push** | `UPDATE bets SET status = 'push', result = 0, settled_at = :now WHERE id = :bet AND status = 'pending'` | `settle_outcomes` skips the bet as `"already settled"` |
 | **Void** | `UPDATE bets SET status = 'void', result = 0, settled_at = :now WHERE id = :bet AND status = 'pending'` | `"Bet already settled"` from `void_bet` |
 | **Cash out** | `UPDATE bets SET status = 'cashed_out', result = :result, cash_out_amount = :offer, cash_out_run_id = :run_id, cashed_out_at = :now, settled_at = :now WHERE id = :bet AND status = 'pending'` | `"Bet not found"` |
