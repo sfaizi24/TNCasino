@@ -1,7 +1,7 @@
 from functools import partial
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app import ledger
 from app.database import db
@@ -21,8 +21,11 @@ EVENTS = {
 }
 
 
-def _bet(user, amount):
-    leg = BetLeg(season=2026, week=10, market="2026-w10-highest_scorer", selection="1", price=100, probability=0.5)
+def _leg(market="2026-w10-highest_scorer", selection="1"):
+    return BetLeg(season=2026, week=10, market=market, selection=selection, price=100, probability=0.5)
+
+
+def _bet(user, amount, legs=None):
     return Bet(
         user_id=user.id,
         bet_type="highest_scorer",
@@ -32,13 +35,13 @@ def _bet(user, amount):
         odds="+100",
         potential_win=amount,
         status="pending",
-        legs=[leg],
+        legs=legs or [_leg()],
     )
 
 
-def _placed_bet(user, amount=100.0):
+def _placed_bet(user, amount=100.0, legs=None):
     """Place a bet and hand it back detached, the way a request that read it while pending holds it."""
-    bet = _bet(user, amount)
+    bet = _bet(user, amount, legs)
     ledger.open_week(user.id, bet.week)
     assert ledger.place(bet)
     db.session.commit()
@@ -336,3 +339,65 @@ def test_cash_out_records_the_offer_on_the_bet_and_closes_its_legs(user):
     assert cashed_out.cashed_out_at is not None
     assert cashed_out.settled_at == cashed_out.cashed_out_at
     assert [(leg.status, leg.settled_at) for leg in cashed_out.legs] == [("cashed_out", cashed_out.cashed_out_at)]
+
+
+def _placed_parlay(user):
+    """A $100 three-leg parlay that pays $100, placed and detached, with its leg ids in placement order."""
+    legs = [_leg(), _leg("2026-w10-moneyline-1v2", "1"), _leg("2026-w10-team_total-1", "over")]
+    bet = _placed_bet(user, legs=legs)
+    leg_ids = db.session.scalars(select(BetLeg.id).where(BetLeg.bet_id == bet.id).order_by(BetLeg.id)).all()
+    return bet, leg_ids
+
+
+def _leg_statuses(bet):
+    legs = db.session.query(BetLeg).filter_by(bet_id=bet.id).order_by(BetLeg.id)
+    return [(leg.status, leg.settled_at) for leg in legs]
+
+
+def test_a_win_at_an_adjusted_potential_win_pays_and_records_it(user):
+    bet, _ = _placed_parlay(user)
+
+    assert ledger.settle(bet, won=True, potential_win=66.67) is True
+    db.session.commit()
+
+    settled = db.session.get(Bet, bet.id)
+    assert (settled.status, settled.potential_win, settled.result) == ("won", 66.67, 66.67)
+    assert _money(user) == {
+        "account_balance": 1066.67,
+        "total_pnl": 66.67,
+        "bets": 1,
+        "starting_balance": 1000.0,
+        "ending_balance": 1066.67,
+        "pnl": pytest.approx(66.67),
+        "active_bets_amount": 0.0,
+        "settled_pnl": 66.67,
+        "bets_placed": 1,
+        "bets_won": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("won", "statuses"),
+    [(True, ["won", "push", "won"]), (False, ["won", "push", "lost"])],
+)
+def test_each_leg_takes_its_own_status_when_given(user, won, statuses):
+    bet, leg_ids = _placed_parlay(user)
+
+    assert ledger.settle(bet, won=won, leg_statuses=dict(zip(leg_ids, statuses, strict=True))) is True
+    db.session.commit()
+
+    settled_at = db.session.get(Bet, bet.id).settled_at
+    assert _leg_statuses(bet) == [(status, settled_at) for status in statuses]
+
+
+@pytest.mark.parametrize(("won", "status", "balance"), [(True, "won", 1100.0), (False, "lost", 900.0)])
+def test_by_default_every_leg_takes_the_bets_status_and_the_bet_pays_its_potential_win(user, won, status, balance):
+    bet, _ = _placed_parlay(user)
+
+    assert ledger.settle(bet, won=won) is True
+    db.session.commit()
+
+    settled = db.session.get(Bet, bet.id)
+    assert (settled.status, settled.potential_win) == (status, 100.0)
+    assert [leg_status for leg_status, _ in _leg_statuses(bet)] == [status, status, status]
+    assert _money(user)["account_balance"] == balance

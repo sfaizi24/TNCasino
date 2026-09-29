@@ -207,12 +207,13 @@ def _preview_row(result):
         "market": None,
         "selection": None,
         "line": None,
+        "legs": [{"market": leg.market, "selection": leg.selection, "line": leg.line} for leg in bet.legs],
         "outcome": result.outcome,
         "reason": result.reason,
     }
-    if bet.legs:
-        leg = bet.legs[0]
-        row.update(market=leg.market, selection=leg.selection, line=leg.line)
+    # A parlay's picks are its legs; only a single bet is one market and selection.
+    if len(bet.legs) == 1:
+        row.update(row["legs"][0])
     return row
 
 
@@ -258,9 +259,14 @@ def _settle_as_shown(result, shown, week):
         return f"scores changed: now {result.outcome}"
 
     if result.outcome == settlement.PUSH:
-        closed = ledger.push(result.bet)
+        closed = ledger.push(result.bet, leg_statuses=result.leg_statuses)
     else:
-        closed = ledger.settle(result.bet, won=result.outcome == settlement.WON)
+        closed = ledger.settle(
+            result.bet,
+            won=result.outcome == settlement.WON,
+            potential_win=result.potential_win,
+            leg_statuses=result.leg_statuses,
+        )
     if not closed:
         db.session.rollback()
         return "already settled"

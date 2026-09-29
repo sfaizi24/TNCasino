@@ -2,7 +2,8 @@ import pytest
 from sqlalchemy import text
 
 from app import ledger
-from app.models import Bet, User, WeeklyStats
+from app.database import db
+from app.models import Bet, BetLeg, User, WeeklyStats
 from tests.conftest import RUN_ID, set_points
 
 HIGHEST_SCORER_BET = {"market": "2026-w10-highest_scorer", "selection": "1", "run_id": RUN_ID, "amount": 100}
@@ -270,6 +271,7 @@ def test_a_preview_row_shows_the_bet_as_it_was_placed(admin_client, user, bettin
             "market": "2026-w10-team_total-1",
             "selection": "under",
             "line": 110.5,
+            "legs": [{"market": "2026-w10-team_total-1", "selection": "under", "line": 110.5}],
             "outcome": "push",
             "reason": "Alice A 110.50, line 110.50",
         },
@@ -283,10 +285,92 @@ def test_a_preview_row_shows_the_bet_as_it_was_placed(admin_client, user, bettin
             "market": None,
             "selection": None,
             "line": None,
+            "legs": [],
             "outcome": "undecided",
             "reason": "placed before market keys: settle by hand",
         },
     ]
+
+
+def _place_parlay(user):
+    """Bob B to win at +130 and Alice A under 110.50 at +100, as one $100 parlay at +300."""
+    legs = [
+        BetLeg(season=2026, week=10, market=MONEYLINE_BET["market"], selection="2", price=130, probability=0.4),
+        BetLeg(
+            season=2026,
+            week=10,
+            market=TEAM_TOTAL_BET["market"],
+            selection="under",
+            line=110.5,
+            price=100,
+            probability=0.45,
+        ),
+    ]
+    parlay = Bet(
+        user_id=user.id,
+        bet_type="parlay",
+        description="Alice A vs Bob B: Bob B +130 + Alice A O/U 110.50: Under",
+        week=10,
+        amount=100.0,
+        odds="+300",
+        price=300,
+        probability=0.25,
+        run_id=RUN_ID,
+        potential_win=300.0,
+        legs=legs,
+    )
+    ledger.open_week(user.id, 10)
+    assert ledger.place(parlay)
+    db.session.commit()
+    return parlay.id
+
+
+def test_a_parlays_preview_row_lists_its_legs_in_place_of_one_market(
+    admin_client, admin_user, betting_period, seeded_analytics, db_session
+):
+    parlay = _place_parlay(admin_user)
+    set_points(db_session.session, SCORES)
+
+    [row] = _preview(admin_client)["bets"]
+
+    assert row == {
+        "id": parlay,
+        "user": "Admin User",
+        "description": "Alice A vs Bob B: Bob B +130 + Alice A O/U 110.50: Under",
+        "amount": 100.0,
+        "odds": "+300",
+        "potential_win": 300.0,
+        "market": None,
+        "selection": None,
+        "line": None,
+        "legs": [
+            {"market": "2026-w10-moneyline-1v2", "selection": "2", "line": None},
+            {"market": "2026-w10-team_total-1", "selection": "under", "line": 110.5},
+        ],
+        "outcome": "won",
+        "reason": "won, 1 leg pushed: pays 130.00 on the rest",
+    }
+
+
+def test_settling_a_parlay_with_a_pushed_leg_pays_the_rest_and_settles_each_leg_as_it_stood(
+    admin_client, admin_user, betting_period, seeded_analytics, db_session
+):
+    parlay = _place_parlay(admin_user)
+    set_points(db_session.session, SCORES)
+
+    reply = _settle(admin_client, _decided(_preview(admin_client)))
+
+    bet = db_session.session.get(Bet, parlay)
+    week = db_session.session.query(WeeklyStats).filter_by(user_id=admin_user.id, week=10).one()
+    db_session.session.refresh(admin_user)
+    assert reply == {"success": True, "settled": [parlay], "skipped": []}
+    assert (bet.status, bet.potential_win, bet.result) == ("won", 130.0, 130.0)
+    assert sorted((leg.market, leg.status) for leg in bet.legs) == [
+        ("2026-w10-moneyline-1v2", "won"),
+        ("2026-w10-team_total-1", "push"),
+    ]
+    assert (admin_user.account_balance, admin_user.total_pnl) == (1130.0, 130.0)
+    assert (week.bets_won, week.settled_pnl, week.active_bets_amount) == (1, 130.0, 0.0)
 
 
 def test_the_preview_leaves_out_settled_bets_and_other_weeks(admin_client, betting_period, seeded_analytics):
@@ -403,10 +487,10 @@ def test_bets_settled_before_a_failure_stand_and_the_rest_stay_pending(
     set_points(db_session.session, SCORES)
     settle = ledger.settle
 
-    def settle_until_lowest(bet, won):
+    def settle_until_lowest(bet, won, **outcome):
         if bet.id == lowest:
             raise RuntimeError("connection lost")
-        return settle(bet, won)
+        return settle(bet, won, **outcome)
 
     monkeypatch.setattr(ledger, "settle", settle_until_lowest)
 

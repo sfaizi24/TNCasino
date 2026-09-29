@@ -4,8 +4,9 @@ Every bet whose market key names the scores it depends on gets an outcome, won, 
 undecided, and a reason the admin reads beside it before confirming. A decided outcome comes from the
 win rule in `pipeline/markets.py`, applied to the week's scores as a one-row score matrix, so a bet
 settles by the rule its market was priced with. Futures and bets placed before market keys are always
-undecided and settle by hand. Nothing here moves money or commits: the admin routes settle through
-the ledger.
+undecided and settle by hand. A parlay is judged leg by leg and settles all or nothing; its pushed legs
+drop out and the rest are re-priced on the matrix of the run it was placed at. Nothing here moves money
+or commits: the admin routes settle through the ledger.
 """
 
 from dataclasses import dataclass
@@ -14,8 +15,10 @@ import numpy as np
 
 from pipeline import markets as win_rules
 
+from . import parlays
 from .database import db
-from .markets import MarketError, parse_key
+from .markets import MarketError, parse_key, potential_win, price_from_odds
+from .matrices import MissingMatrix, leg_outcome, score_matrix
 from .models import Bet
 from .routes.helpers import get_team_mapping, query_analytics
 
@@ -41,6 +44,8 @@ class BetOutcome:
     bet: Bet
     outcome: str
     reason: str
+    potential_win: float | None = None  # set when pushed legs changed what the parlay pays
+    leg_statuses: dict | None = None  # leg id → won | lost | push, set for parlays
 
 
 def team_scores(week):
@@ -73,22 +78,69 @@ def outcomes_for_week(week, scores):
 def outcome_for(bet, scores):
     if not bet.legs:
         return BetOutcome(bet, UNDECIDED, "placed before market keys: settle by hand")
+    if len(bet.legs) > 1:
+        return _parlay(bet, scores)
 
     [leg] = bet.legs
+    return BetOutcome(bet, *_judge_leg(leg, scores))
+
+
+def _judge_leg(leg, scores):
     try:
         market = parse_key(leg.market)
     except MarketError as error:
-        return BetOutcome(bet, UNDECIDED, str(error))
+        return UNDECIDED, str(error)
 
     if market.name == "moneyline":
-        outcome, reason = _moneyline(market, leg, scores)
-    elif market.name == "team_total":
-        outcome, reason = _team_total(market, leg, scores)
-    elif market.name in ("highest_scorer", "lowest_scorer"):
-        outcome, reason = _scorer(market, leg, scores)
+        return _moneyline(market, leg, scores)
+    if market.name == "team_total":
+        return _team_total(market, leg, scores)
+    if market.name in ("highest_scorer", "lowest_scorer"):
+        return _scorer(market, leg, scores)
+    return UNDECIDED, "futures: settle by hand"
+
+
+def _parlay(bet, scores):
+    judged = [(leg, *_judge_leg(leg, scores)) for leg in bet.legs]
+    decided = sum(1 for _, outcome, _ in judged if outcome != UNDECIDED)
+    if decided < len(judged):
+        return BetOutcome(bet, UNDECIDED, f"{decided} of {len(judged)} legs decided")
+
+    statuses = {leg.id: outcome for leg, outcome, _ in judged}
+    lost = [reason for _, outcome, reason in judged if outcome == LOST]
+    if lost:
+        return BetOutcome(bet, LOST, "lost: " + "; ".join(lost), leg_statuses=statuses)
+
+    standing = [leg for leg, outcome, _ in judged if outcome == WON]
+    return _parlay_without_losses(bet, standing, statuses)
+
+
+def _parlay_without_losses(bet, standing, statuses):
+    pushed = len(bet.legs) - len(standing)
+    if not pushed:
+        return BetOutcome(bet, WON, f"won, {len(standing)} legs", leg_statuses=statuses)
+    if not standing:
+        return BetOutcome(bet, PUSH, "push: every leg on its line", leg_statuses=statuses)
+
+    try:
+        win = _win_on(bet, standing)
+    except MissingMatrix:
+        return BetOutcome(bet, UNDECIDED, "placement run's matrix not stored: settle by hand")
+    legs_pushed = "1 leg" if pushed == 1 else f"{pushed} legs"
+    reason = f"won, {legs_pushed} pushed: pays {win:.2f} on the rest"
+    return BetOutcome(bet, WON, reason, potential_win=win, leg_statuses=statuses)
+
+
+def _win_on(bet, legs):
+    """What the parlay pays on the legs left standing: a lone leg's own price, or the rest re-priced at placement."""
+    if len(legs) == 1:
+        price = legs[0].price
     else:
-        outcome, reason = UNDECIDED, "futures: settle by hand"
-    return BetOutcome(bet, outcome, reason)
+        matrix = score_matrix(bet.run_id)
+        outcomes = [leg_outcome(parse_key(leg.market), leg.selection, leg.line, matrix) for leg in legs]
+        _, odds = parlays.joint_price(outcomes)
+        price = price_from_odds(odds)
+    return round(potential_win(bet.amount, price), 2)
 
 
 def _moneyline(market, leg, scores):
