@@ -49,7 +49,15 @@ TABLE_MAP = [
 ]
 
 # Tables protected from DROP: owned by the Flask ORM, plus the pipeline's append-only score matrices
-PROTECTED_TABLES = {"users", "bets", "bet_legs", "weekly_stats", "betting_periods", "simulation_totals"}
+PROTECTED_TABLES = {
+    "users",
+    "bets",
+    "bet_legs",
+    "weekly_stats",
+    "betting_periods",
+    "parlay_refusals",
+    "simulation_totals",
+}
 
 
 def read_sqlite_table(db_path, table_name):
