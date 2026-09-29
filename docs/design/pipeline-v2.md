@@ -320,7 +320,7 @@ is the worst check status (`ok` < `warn` < `fail`).
 | position_agreement | match rows to Sleeper `nfl_players` by normalised (first, last) [+ team]; share of matched rows whose position differs from Sleeper's `position` | > 2% fail; > 0.5% warn |
 | duplicate_positions | same (first, last) under two positions within the source | > 2 players fail; > 0 warn |
 | position_counts | rows per position inside ranges QB 20–50, RB 40–130, WR 50–170, TE 20–90, K 15–40, DEF 20–36 (K/DEF absent is allowed only for sources that never provide them) | outside fail |
-| value_agreement | per position, Pearson r and median absolute difference vs the Sleeper projection on matched players | QB/RB/WR/TE: r < 0.85 or MAD > 4.0 fail; K/DEF: warn only |
+| value_agreement | per position, Pearson r and median absolute difference vs the Sleeper projection on matched players | QB/RB/WR/TE: r < 0.85 or MAD > 4.0 fail; K/DEF: warn only. For a future week (the playoffs step's scrapes) QB's low r only warns and its MAD decides: later-week QB projections sit so close together that ESPN's r fell to 0.6 to 0.8 while its median gap to Sleeper stayed near 1.7 (2026-09-29). |
 | team_codes | share of rows whose team is unrecognised after normalisation | > 5% fail; > 0 warn |
 | week_stamp | the payload's own week (query echo, `scoringPeriodId`, selected option, segment) equals the requested week | mismatch fail; `n/a` for sources without one |
 | freshness | share of matched players with identical points to the same source's previous week | > 90% fail |
