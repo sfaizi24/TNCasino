@@ -34,6 +34,7 @@ const ACTIVE_GROUPS = [
 
 const state = {
     tab: 'ml',
+    window: null,
     bets: [],
     balance: window.userBalance || 0,
     picks: {},
@@ -60,6 +61,28 @@ function fmtOdds(odds) {
 
 function fmtPct(p) {
     return `${(p * 100).toFixed(0)}%`;
+}
+
+// A kickoff or publish time in the visitor's own zone: "Thu 8:15 PM".
+function fmtWhen(iso) {
+    return new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+}
+
+function bettingOpen() {
+    return state.window !== null && state.window.state === 'open';
+}
+
+function windowText() {
+    const w = state.window;
+    if (!w) return '';
+    if (w.state === 'open') return `Odds updated ${fmtWhen(w.run_created_at)}. Betting closes ${fmtWhen(w.closes_at)}.`;
+    if (w.state === 'paused') return `Betting paused since ${fmtWhen(w.closes_at)}, until the odds update.`;
+    return `Betting is closed for week ${w.week}.`;
+}
+
+// The server refuses a place or cancel outside the window; disabling the button just says why up front.
+function closedAttrs() {
+    return bettingOpen() ? '' : ` disabled title="${windowText()}"`;
 }
 
 // The selections a card offers, each with its price and its chance as a fraction.
@@ -126,7 +149,7 @@ function renderPlacedStrip(bets) {
                 <div class="tnc-mc-placed-row">
                     <span class="tnc-mc-placed-tag">Bet Placed</span>
                     <span class="tnc-mc-placed-info tnc-tab-num"><strong>${fmtMoney(b.amount)}</strong></span>
-                    ${b.removable ? `<button class="tnc-mc-placed-rm" data-action="cancel" data-bet-id="${b.id}">Cancel bet</button>` : ''}
+                    ${b.removable ? `<button class="tnc-mc-placed-rm" data-action="cancel" data-bet-id="${b.id}"${closedAttrs()}>Cancel bet</button>` : ''}
                 </div>
             `).join('')}
         </div>
@@ -156,7 +179,7 @@ function renderStakeSection(key, odds) {
                     <input class="tnc-mc-input" data-action="stake" placeholder="Stake" inputmode="decimal" value="${stake}">
                     <span class="tnc-mc-payout tnc-tab-num"${payout > 0 ? '' : ' style="display:none;"'}>${payout > 0 ? `Pays out ${fmtMoney(payout)}` : ''}</span>
                 </div>
-                <button class="tnc-mc-place" data-action="place"${stakeNum > 0 ? '' : ' disabled'}>Place Bet</button>
+                <button class="tnc-mc-place" data-action="place"${stakeNum > 0 ? '' : ' disabled'}${closedAttrs()}>Place Bet</button>
             </div>
         </div>
     `;
@@ -333,7 +356,7 @@ function chipLabel(bet) {
 
 function renderActiveChip(bet) {
     const cancel = bet.removable
-        ? `<button class="tnc-active-chip-rm" data-action="cancel" data-bet-id="${bet.id}">Cancel</button>`
+        ? `<button class="tnc-active-chip-rm" data-action="cancel" data-bet-id="${bet.id}"${closedAttrs()}>Cancel</button>`
         : '';
     return `
         <span class="tnc-active-chip">
@@ -383,7 +406,15 @@ function renderGrid() {
     grid.innerHTML = lists.map(renderList).join('');
 }
 
+function renderWindow() {
+    const el = document.getElementById('bettingWindow');
+    if (!state.window) return;
+    el.textContent = windowText();
+    el.className = `tnc-window is-${state.window.state}`;
+}
+
 function render() {
+    renderWindow();
     renderActiveBets();
     renderGrid();
 }
@@ -412,6 +443,11 @@ async function loadRows(kind) {
     state.rows[kind] = await r.json();
 }
 
+async function loadWindow() {
+    const r = await fetch('/api/betting_window');
+    state.window = await r.json();
+}
+
 async function loadBets() {
     if (!isAuth) return;
     try {
@@ -429,12 +465,18 @@ async function loadLineup(owner) {
     state.lineupCache[owner] = await r.json();
 }
 
-// A newer run is live: show its prices, and drop the picks made on the old ones.
+// A newer run is live: show its prices and its window, and drop the picks made on the old ones.
 async function reloadTab() {
     const kinds = TABS[state.tab].map(list => list.kind);
-    await Promise.all([...kinds.map(loadRows), loadBets()]);
+    await Promise.all([...kinds.map(loadRows), loadWindow(), loadBets()]);
     state.picks = {};
     state.stakes = {};
+    render();
+}
+
+// A refusal may mean a kickoff passed while the page sat open: show the window the server saw.
+async function reloadWindow() {
+    await Promise.all([loadWindow(), loadBets()]);
     render();
 }
 
@@ -466,7 +508,7 @@ function updatePayoutInPlace(card) {
             payoutEl.style.display = 'none';
         }
     }
-    if (placeBtn) placeBtn.disabled = !(stake > 0);
+    if (placeBtn) placeBtn.disabled = !(stake > 0) || !bettingOpen();
 }
 
 function handleStakeInput(card, input) {
@@ -515,6 +557,7 @@ async function handlePlace(card) {
             setBalance(oldBalance);
             toast(result.error || 'Failed to place bet', 'error');
             if (result.error === 'Odds have changed') await reloadTab();
+            else await reloadWindow();
         }
     } catch (e) {
         console.error('Error placing bet', e);
@@ -541,6 +584,7 @@ async function handleCancel(betId) {
         } else {
             setBalance(oldBalance);
             toast(result.error || 'Failed to remove bet', 'error');
+            await reloadWindow();
         }
     } catch (e) {
         console.error('Error removing bet', e);
@@ -584,7 +628,7 @@ function bindEvents() {
 
     document.body.addEventListener('click', e => {
         const target = e.target.closest('[data-action]');
-        if (!target) return;
+        if (!target || target.disabled) return;
         const action = target.dataset.action;
         if (action === 'cancel') {
             handleCancel(parseInt(target.dataset.betId, 10));
@@ -592,7 +636,6 @@ function bindEvents() {
         }
         const card = target.closest('.tnc-mc');
         if (!card) return;
-        if (target.disabled) return;
         if (action === 'pick') handlePick(card, target);
         else if (action === 'quick') handleQuick(card, parseInt(target.dataset.amount, 10));
         else if (action === 'place') handlePlace(card);
@@ -608,7 +651,7 @@ function bindEvents() {
 
 async function init() {
     bindEvents();
-    await Promise.all(Object.keys(SOURCES).map(loadRows));
+    await Promise.all([...Object.keys(SOURCES).map(loadRows), loadWindow()]);
     if (isAuth) await loadBets();
     render();
 }
