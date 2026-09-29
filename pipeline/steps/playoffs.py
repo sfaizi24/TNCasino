@@ -96,7 +96,7 @@ class SimulatedWeek:
 @dataclass
 class ProjectedWeek:
     sources: list[str]  # websites whose projections the week's player stats use
-    failures: dict[str, str]  # website -> its failed checks, for each source dropped this run
+    failures: dict[str, str]  # website -> its failed checks and their details, for each source dropped this run
     n_players: int
     warnings: list[str]
 
@@ -237,7 +237,7 @@ def simulate_future_weeks(
         )
 
     for (website, failed_checks), weeks in dropped_weeks.items():
-        warnings.append(f"dropped {website} for weeks {', '.join(weeks)}: {failed_checks} failed")
+        warnings.append(f"dropped {website} for weeks {', '.join(weeks)}: {failed_checks}")
     return scores, entries, warnings
 
 
@@ -268,14 +268,14 @@ def project_week(
         failures = {}
         sleeper_rows = []
         for source in sources:
-            rows, report, _ = scrape.scrape_source(week_ctx, source, sleeper_players, sleeper_rows)
+            rows, report, _ = scrape.scrape_source(week_ctx, source, sleeper_players, sleeper_rows, future_week=True)
             delete_source_projections(conn, settings.season, week, source.website)
             if report.status == "fail":
                 failed = [check for check in report.checks if check.status == "fail"]
+                details = "; ".join(f"{check.name}: {check.detail}" for check in failed)
                 if source.name == "sleeper":
-                    details = "; ".join(f"{check.name}: {check.detail}" for check in failed)
                     raise RuntimeError(f"{source.website} failed its checks for week {week}: {details}")
-                failures[source.website] = ", ".join(check.name for check in failed)
+                failures[source.website] = details
                 continue
             scrape.insert_projections(conn, rows)
             if source.name == "sleeper":
