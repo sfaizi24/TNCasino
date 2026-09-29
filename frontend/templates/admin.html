@@ -25,6 +25,7 @@
                 <span>Loading...</span>
             </span>
             <span class="lock-countdown" id="lockCountdown"></span>
+            <span class="lock-countdown" id="windowLine"></span>
         </div>
     </div>
     <div class="quick-actions" id="quickActions">
@@ -44,7 +45,7 @@
             <div class="form-group">
                 <label class="form-label">Lock Date & Time (UTC)</label>
                 <input type="datetime-local" class="form-input" id="periodLockTime" required>
-                <small style="color: var(--tnc-fg-muted); display: block; margin-top: 4px;">Note: All times are in UTC (Coordinated Universal Time)</small>
+                <small style="color: var(--tnc-fg-muted); display: block; margin-top: 4px;">The lock is the hard close and the kill switch, in UTC. Set it at the week's last window close, Sunday's first kickoff (week 4: 2026-10-04 13:30), never Thursday's: between runs the betting window closes and reopens on its own.</small>
             </div>
             <button type="submit" class="btn">Set Lock Time</button>
         </form>
