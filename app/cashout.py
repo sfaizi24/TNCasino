@@ -91,16 +91,17 @@ def _weekly_probability(bet, market, leg, window_of, matrix_of):
 
 
 def _futures_probability(bet, market, leg, window_of):
-    current_week = get_current_week()
-    _require_open(window_of(current_week))
+    window = window_of(get_current_week())
+    _require_open(window)
     try:
         quote = find_quote(market, leg.selection)
     except MarketError:
         raise NoOffer(CANNOT_PRICE) from None
     _require_newer_run(bet, quote.run_id)
 
-    runs = query_analytics(STANDINGS_SQL, {"run_id": quote.run_id})
-    if not runs or runs[0]["standings_through_week"] < current_week - 1:
+    # The week's simulation run is what the playoffs step ran on, whether or not it ran alone.
+    runs = query_analytics(STANDINGS_SQL, {"run_id": window.run_id})
+    if not runs or runs[0]["standings_through_week"] < window.week - 1:
         raise NoOffer("No offer until the next run: the standings are behind")
     return quote.probability, quote.run_id
 
