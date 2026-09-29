@@ -1,4 +1,4 @@
-from datetime import UTC
+from datetime import UTC, datetime
 from functools import wraps
 
 from flask import flash, redirect, url_for
@@ -68,27 +68,16 @@ def get_current_week():
     return 10
 
 
-def check_betting_period_lock(week):
-    from datetime import datetime
-
-    from ..models import BettingPeriod
-
-    period = db.session.query(BettingPeriod).filter_by(week=week).first()
-
-    if not period:
-        return None
-
+def check_betting_period_lock(period):
+    """The period's lock time once the admin's lock has closed it, locking it for good when the time has passed."""
     lock_time = period.lock_time
     if lock_time.tzinfo is None:
         lock_time = lock_time.replace(tzinfo=UTC)
 
-    if period.is_locked or datetime.now(UTC) >= lock_time:
-        if not period.is_locked:
-            period.is_locked = True
-            db.session.commit()
-        return period.lock_time
-
-    return None
+    if not period.is_locked and datetime.now(UTC) >= lock_time:
+        period.is_locked = True
+        db.session.commit()
+    return period.lock_time if period.is_locked else None
 
 
 def admin_required(f):

@@ -150,6 +150,10 @@ def settle_bet():
         if not bet:
             return jsonify({"success": False, "error": "Bet not found"})
 
+        # Only the preview judges a parlay leg by leg, dropping pushed legs and re-pricing the rest.
+        if len(bet.legs) > 1:
+            return jsonify({"success": False, "error": "Parlays settle from the Settle Week card"})
+
         if not ledger.settle(bet, won):
             db.session.rollback()
             return jsonify({"success": False, "error": "Bet already settled"})
@@ -336,43 +340,30 @@ def unlock_period():
 
     data = request.get_json()
     week = data.get("week")
-
-    print(f"[UNLOCK] Request received for week: {week}")
-    print(f"[UNLOCK] Request data: {data}")
-    print(f"[UNLOCK] Current user: {current_user.email if current_user.is_authenticated else 'Not authenticated'}")
-    print(f"[UNLOCK] Is admin: {getattr(current_user, 'is_admin', False)}")
-
     if not week:
-        print("[UNLOCK] Error: Week not provided")
         return jsonify({"success": False, "error": "Week required"})
+
+    lock_time = datetime.now(UTC) + timedelta(days=7)
+    if data.get("lock_time") is not None:
+        try:
+            lock_time = datetime.strptime(data["lock_time"], "%Y-%m-%dT%H:%M").replace(tzinfo=UTC)
+        except ValueError:
+            return jsonify({"success": False, "error": "Invalid lock time"})
 
     try:
         period = db.session.query(BettingPeriod).filter_by(week=week).first()
-
-        if not period:
-            print(f"[UNLOCK] Error: Betting period not found for week {week}")
+        if period is None:
             return jsonify({"success": False, "error": "Betting period not found"})
-
-        print(
-            f"[UNLOCK] Found period: week={period.week}, is_locked={period.is_locked}, is_settled={period.is_settled}, lock_time={period.lock_time}"
-        )
-
         period.is_locked = False
-        new_lock_time = datetime.now(UTC) + timedelta(days=7)
-        period.lock_time = new_lock_time
-
+        period.lock_time = lock_time
         db.session.commit()
-
-        print(f"[UNLOCK] Successfully unlocked week {week}, new lock_time set to {new_lock_time}")
-
-        return jsonify({"success": True})
-    except Exception as e:
-        print(f"[UNLOCK] Error unlocking period: {e}")
-        import traceback
-
-        traceback.print_exc()
+    except Exception as error:
         db.session.rollback()
-        return jsonify({"success": False, "error": str(e)})
+        logging.exception(f"Could not unlock week {week}")
+        return jsonify({"success": False, "error": str(error)})
+
+    logging.info(f"{current_user.email} unlocked week {week} until {lock_time:%Y-%m-%d %H:%M} UTC")
+    return jsonify({"success": True})
 
 
 @admin_bp.route("/admin/pipeline")

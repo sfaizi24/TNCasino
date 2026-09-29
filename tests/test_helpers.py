@@ -31,7 +31,7 @@ def test_check_lock_returns_none_for_unlocked_future_period(db_session):
     db_session.session.add(period)
     db_session.session.commit()
 
-    assert check_betting_period_lock(10) is None
+    assert check_betting_period_lock(period) is None
 
 
 def test_check_lock_auto_locks_past_due_period(db_session):
@@ -44,7 +44,7 @@ def test_check_lock_auto_locks_past_due_period(db_session):
     db_session.session.add(period)
     db_session.session.commit()
 
-    result = check_betting_period_lock(10)
+    result = check_betting_period_lock(period)
     assert result is not None
     assert result == period.lock_time
 
@@ -63,10 +63,6 @@ def test_check_lock_returns_lock_time_for_already_locked(db_session):
     db_session.session.add(period)
     db_session.session.commit()
 
-    result = check_betting_period_lock(10)
+    result = check_betting_period_lock(period)
     # SQLite strips timezone info, so compare without tzinfo
     assert result.replace(tzinfo=None) == lock_time.replace(tzinfo=None)
-
-
-def test_check_lock_returns_none_for_nonexistent_week(db_session):
-    assert check_betting_period_lock(99) is None

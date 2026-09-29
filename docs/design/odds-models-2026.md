@@ -1204,6 +1204,18 @@ Decisions for the owner, taken 2026-09-28:
    has published (§3.6).
 6. Scorer legs in parlays (§1.4). They stay; B8 logs refusals.
 
+Decisions for the owner, taken 2026-09-29:
+
+7. B10's scope. Spreads first, alone (§4 rank 3, with alternate lines from the score matrix).
+   Matchup totals and head to head are not wanted now.
+8. Last place (§4 rank 5) is decided by the regular-season standings, not by the playoffs, so the
+   market settles when the regular season ends. There is no third-place finish in this league, so
+   no top-3 market; top 4 (the playoff line) is the only "top N".
+9. Parlays get cash-out at the joint chance of their legs (§2.1), shipped as a B9 follow-up
+   (PR 10). Futures legs in parlays wait on per-sim standings from the playoffs step (§1.4).
+10. The simulation count may come down from 50,000 if prices hold; the analysis to run first is
+    recorded in doc 08's open issues.
+
 ---
 
 ## Glossary

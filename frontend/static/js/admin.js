@@ -158,14 +158,16 @@
 
             let html = '<table class="bets-table"><thead><tr><th>User</th><th>Description</th><th>Amount</th><th>Odds</th><th>Actions</th></tr></thead><tbody>';
             bets.forEach(bet => {
+                // A parlay settles leg by leg from the Settle Week card, so only a single settles here.
+                const settleButtons = bet.bet_type === 'parlay' ? '' : `
+                        <button class="btn btn-success btn-sm" onclick="settleBet(${bet.id}, true)">Win</button>
+                        <button class="btn btn-danger btn-sm" onclick="settleBet(${bet.id}, false)">Loss</button>`;
                 html += `<tr>
                     <td>${bet.user_id.substring(0, 8)}...</td>
                     <td>${escapeHtml(bet.description)}</td>
                     <td>$${bet.amount.toFixed(2)}</td>
                     <td>${bet.odds}</td>
-                    <td>
-                        <button class="btn btn-success btn-sm" onclick="settleBet(${bet.id}, true)">Win</button>
-                        <button class="btn btn-danger btn-sm" onclick="settleBet(${bet.id}, false)">Loss</button>
+                    <td>${settleButtons}
                         <button class="btn btn-outline btn-sm" onclick="voidBet(${bet.id})">Void</button>
                     </td>
                 </tr>`;
@@ -398,30 +400,38 @@
         }
     });
 
-    async function unlockPeriod(week) {
-        console.log('Unlock period called for week:', week);
+    function comingSundayAt1330() {
+        const now = new Date();
+        const sunday = new Date(now);
+        sunday.setUTCDate(now.getUTCDate() + (7 - now.getUTCDay()) % 7);
+        sunday.setUTCHours(13, 30, 0, 0);
+        if (sunday <= now) {
+            sunday.setUTCDate(sunday.getUTCDate() + 7);
+        }
+        return sunday;
+    }
 
-        if (!confirm(`Are you sure you want to unlock Week ${week}? Users will be able to place and remove bets again.`)) {
-            console.log('User cancelled unlock');
+    async function unlockPeriod(week) {
+        // The default is in the format the lock time field uses, in UTC: 2026-10-04T13:30.
+        const lockTime = prompt(
+            `Unlock Week ${week}? Users will be able to place and remove bets again.\n\n` +
+            `New lock time in UTC (YYYY-MM-DDTHH:MM), the week's last kickoff:`,
+            comingSundayAt1330().toISOString().slice(0, 16)
+        );
+        if (lockTime === null) {
             return;
         }
-
-        console.log('Sending unlock request...');
 
         try {
             const response = await fetch('/api/admin/unlock_period', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ week: week })
+                body: JSON.stringify({ week: week, lock_time: lockTime.trim() })
             });
-
-            console.log('Response status:', response.status);
-
             const result = await response.json();
-            console.log('Response data:', result);
 
             if (result.success) {
-                alert(`Week ${week} unlocked successfully!`);
+                alert(`Week ${week} unlocked`);
                 loadBettingPeriods();
             } else {
                 alert('Error unlocking period: ' + result.error);

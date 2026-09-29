@@ -13,6 +13,7 @@ from pipeline import markets as win_rules
 from tests.conftest import RUN_ID, WINDOW_NOW
 
 HIGHEST_SCORER_BET = {"market": "2026-w10-highest_scorer", "selection": "1", "run_id": RUN_ID, "amount": 100}
+PLAYOFFS_BET = {"market": "2026-make_playoffs-1", "selection": "yes", "run_id": RUN_ID, "amount": 100}
 TEAM_TOTAL_BET = {
     "market": "2026-w10-team_total-1",
     "selection": "over",
@@ -212,6 +213,23 @@ def publish_a_rerun(run_id, totals=None):
     db.session.commit()
 
 
+def publish_a_run_without_odds(run_id, totals=None):
+    """A newer run of the week whose odds never reached the odds tables, which still carry the seeded run."""
+    db.session.execute(
+        text("""
+        INSERT INTO simulation_runs (run_id, season, week, seed, n_sims, model_version, n_teams, draws_path,
+                                     created_at, n_locked, window_closes_at, standings_through_week)
+        SELECT :rerun, season, week, 2, n_sims, model_version, n_teams, draws_path,
+               :created_at, 1, window_closes_at, standings_through_week
+        FROM simulation_runs WHERE run_id = :run_id
+    """),
+        {"rerun": run_id, "created_at": (WINDOW_NOW - timedelta(minutes=30)).isoformat(), "run_id": RUN_ID},
+    )
+    if totals is not None:
+        store_the_scores(run_id, totals)
+    db.session.commit()
+
+
 def store_the_scores(run_id, totals):
     db.session.execute(
         text("""
@@ -322,9 +340,42 @@ def test_removing_a_bet_keeps_it_as_removed_and_refunds_once(logged_in_client, u
     assert logged_in_client.get("/api/my_bets").get_json() == []
 
 
-def test_a_bet_whose_run_was_replaced_cannot_be_removed(logged_in_client, user, betting_period, seeded_analytics):
+def test_a_bet_stays_once_its_week_has_a_newer_run_even_while_its_odds_row_keeps_its_run(
+    logged_in_client, user, betting_period, seeded_analytics
+):
     bet_id = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()["bet_id"]
-    db.session.execute(text("UPDATE betting_odds_highest_scorer SET run_id = 'new-run'"))
+    publish_a_run_without_odds("2026w10-20261110T143000")
+
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+    reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
+
+    # The newer run has no scores, so it offers no cash-out either.
+    assert (listed["removable"], listed["cash_out_offer"]) == (False, None)
+    assert reply == {"success": False, "error": "Odds have changed since this bet was placed"}
+    assert db.session.get(Bet, bet_id).status == "pending"
+    db.session.refresh(user)
+    assert user.account_balance == 900.0
+
+
+def test_a_futures_bet_is_removable_while_its_odds_row_keeps_its_run(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    # A futures bet has no window run: a newer week run leaves its odds row, and so the bet, where they were.
+    bet_id = logged_in_client.post("/api/place_bet", json=PLAYOFFS_BET).get_json()["bet_id"]
+    publish_a_run_without_odds("2026w10-20261110T143000")
+
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+    reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
+
+    assert (listed["removable"], listed["cash_out_offer"]) == (True, None)
+    assert reply == {"success": True, "new_balance": 1000.0}
+
+
+def test_a_futures_bet_stays_once_its_odds_row_has_a_newer_run(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    bet_id = logged_in_client.post("/api/place_bet", json=PLAYOFFS_BET).get_json()["bet_id"]
+    db.session.execute(text("UPDATE betting_odds_make_playoffs SET run_id = 'playoffs-only'"))
     db.session.commit()
 
     [listed] = logged_in_client.get("/api/my_bets").get_json()
@@ -333,8 +384,6 @@ def test_a_bet_whose_run_was_replaced_cannot_be_removed(logged_in_client, user, 
     assert listed["removable"] is False
     assert reply == {"success": False, "error": "Odds have changed since this bet was placed"}
     assert db.session.get(Bet, bet_id).status == "pending"
-    db.session.refresh(user)
-    assert user.account_balance == 900.0
 
 
 def test_a_legacy_bet_without_legs_is_still_removable(logged_in_client, user, betting_period):
@@ -600,24 +649,14 @@ def test_my_bets_offers_a_cash_out_in_place_of_removal_once_a_newer_run_moves_th
 def test_a_bet_with_an_offer_is_not_removable_even_while_its_odds_row_keeps_its_run(
     logged_in_client, user, betting_period, seeded_analytics
 ):
-    # The odds tables still carry the bet's run, but the week's latest run and its scores are newer.
-    place_the_design_example_bet(logged_in_client)
-    db.session.execute(
-        text("""
-        INSERT INTO simulation_runs (run_id, season, week, seed, n_sims, model_version, n_teams, draws_path,
-                                     created_at, n_locked, window_closes_at, standings_through_week)
-        SELECT :rerun, season, week, 2, n_sims, model_version, n_teams, draws_path,
-               :created_at, 1, window_closes_at, standings_through_week
-        FROM simulation_runs WHERE run_id = :run_id
-    """),
-        {"rerun": RERUN_ID, "created_at": (WINDOW_NOW - timedelta(minutes=30)).isoformat(), "run_id": RUN_ID},
-    )
-    store_the_scores(RERUN_ID, rerun_scores())
-    db.session.commit()
+    bet_id = place_the_design_example_bet(logged_in_client)
+    publish_a_run_without_odds(RERUN_ID, rerun_scores())
 
     [listed] = logged_in_client.get("/api/my_bets").get_json()
+    reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
 
     assert (listed["cash_out_offer"], listed["removable"]) == (74.38, False)
+    assert reply == {"success": False, "error": "Odds have changed since this bet was placed"}
 
 
 def test_the_account_page_shows_a_cash_out_with_its_signed_result(
@@ -854,6 +893,39 @@ def test_moved_odds_and_missing_prices_are_not_logged(logged_in_client, user, be
     assert db.session.query(ParlayRefusal).count() == 0
 
 
+@pytest.mark.parametrize(
+    ("legs", "named"),
+    [
+        (["x", "y"], [None, None]),
+        ([{}, ROSTER_1_OVER], [None]),
+        ([ROSTER_1_WINS, "x", MAKE_PLAYOFFS], [None, "2026-make_playoffs-1"]),
+    ],
+)
+@pytest.mark.parametrize("send", [quote_parlay, place_parlay])
+def test_a_leg_that_names_no_market_is_refused_as_an_unknown_one(
+    logged_in_client, user, betting_period, seeded_analytics, send, legs, named
+):
+    reply = send(logged_in_client, legs)
+
+    assert reply == {"success": False, "error": "Unknown market", "rule": "leg", "legs": named}
+    assert db.session.query(Bet).count() == 0
+
+
+@pytest.mark.parametrize("send", [quote_parlay, place_parlay])
+def test_a_page_showing_another_runs_prices_names_a_leg_that_is_not_an_object_as_none(
+    logged_in_client, user, betting_period, seeded_analytics, send
+):
+    reply = send(logged_in_client, ["x", ROSTER_1_WINS], run_id="2026w10-20261109T140000")
+
+    assert reply == {
+        "success": False,
+        "error": "Odds have changed",
+        "rule": "odds_changed",
+        "legs": [None, "2026-w10-moneyline-1v2"],
+        "run_id": RUN_ID,
+    }
+
+
 def test_a_quote_without_a_list_of_legs_is_refused(logged_in_client, user, betting_period, seeded_analytics):
     reply = logged_in_client.post("/api/parlay_quote", json={"legs": ROSTER_1_WINS, "run_id": RUN_ID}).get_json()
 
@@ -908,9 +980,9 @@ def test_a_parlay_is_removed_while_its_run_is_the_latest(logged_in_client, user,
     assert [leg.status for leg in bet.legs] == ["void", "void"]
 
 
-def test_a_parlay_stays_once_one_legs_market_has_a_newer_run(logged_in_client, user, betting_period, seeded_analytics):
+def test_a_parlay_stays_once_its_week_has_a_newer_run(logged_in_client, user, betting_period, seeded_analytics):
     bet_id = place_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])["bet_id"]
-    move_a_quote("betting_odds_team_ou", "team_id = 1")
+    publish_a_run_without_odds(RERUN_ID)
 
     [listed] = logged_in_client.get("/api/my_bets").get_json()
     reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
@@ -959,6 +1031,42 @@ def test_my_bets_offers_a_parlay_a_cash_out_once_a_rerun_moves_its_odds(
     assert (listed["bet_type"], listed["cash_out_offer"], listed["removable"]) == ("parlay", 108.68, False)
 
 
+def move_every_quote():
+    for table in ("matchup_ml", "team_ou", "highest_scorer", "make_playoffs"):
+        move_a_quote(f"betting_odds_{table}", "1 = 1")
+
+
+PARLAY_BET = {"legs": [ROSTER_1_WINS, ROSTER_1_OVER], "run_id": RUN_ID, "amount": 100}
+
+# What can happen to the runs after a bet is placed.
+RUN_CHANGES = {
+    "nothing": lambda: None,
+    "a rerun with its scores": lambda: publish_a_rerun(RERUN_ID, PARLAY_RERUN_SCORES),
+    "a rerun without its scores": lambda: publish_a_rerun(RERUN_ID),
+    "a newer run whose odds never published": lambda: publish_a_run_without_odds(RERUN_ID),
+    "a newer run with scores whose odds never published": lambda: publish_a_run_without_odds(
+        RERUN_ID, PARLAY_RERUN_SCORES
+    ),
+    "odds rows at a run never published": move_every_quote,
+    "a paused window": pause_the_window,
+}
+
+
+@pytest.mark.parametrize("change", RUN_CHANGES.values(), ids=RUN_CHANGES.keys())
+@pytest.mark.parametrize("payload", [HIGHEST_SCORER_BET, PLAYOFFS_BET, PARLAY_BET], ids=["single", "futures", "parlay"])
+def test_a_bet_is_removable_or_offered_a_cash_out_never_both(
+    logged_in_client, user, betting_period, seeded_analytics, payload, change
+):
+    bet_id = logged_in_client.post("/api/place_bet", json=payload).get_json()["bet_id"]
+    change()
+
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+    removed = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
+
+    assert not (listed["removable"] and listed["cash_out_offer"])
+    assert removed["success"] is listed["removable"]
+
+
 def test_a_one_leg_list_is_a_single(logged_in_client, user, betting_period, seeded_analytics):
     reply = place_parlay(logged_in_client, [ROSTER_1_OVER])
 
@@ -994,3 +1102,11 @@ def test_a_one_leg_list_at_a_moved_line_is_refused_as_a_single(
         "line": 110.5,
     }
     assert db.session.query(Bet).count() == 0
+
+
+def test_a_one_entry_legs_list_that_is_not_an_object_is_an_unknown_market(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    reply = logged_in_client.post("/api/place_bet", json={"legs": ["x"], "run_id": RUN_ID, "amount": 10}).get_json()
+
+    assert reply == {"success": False, "error": "Unknown market"}

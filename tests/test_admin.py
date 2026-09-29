@@ -1,4 +1,6 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from app.database import db
 from app.models import Bet, BettingPeriod
@@ -58,21 +60,41 @@ def test_set_betting_period(admin_client, admin_user, db_session):
     assert period.lock_time.month == 12
 
 
-def test_unlock_period(admin_client, admin_user, betting_period, db_session):
-    betting_period.is_locked = True
-    db_session.session.commit()
+def _unlock(client, period, **body):
+    period.is_locked = True
+    db.session.commit()
+    reply = client.post("/api/admin/unlock_period", json={"week": period.week, **body}).get_json()
+    db.session.refresh(period)
+    return reply
 
-    resp = admin_client.post(
-        "/api/admin/unlock_period",
-        json={
-            "week": betting_period.week,
-        },
-    )
-    assert resp.get_json()["success"] is True
 
-    db_session.session.refresh(betting_period)
+def _as_utc(moment):
+    # SQLite hands back naive datetimes; PostgreSQL keeps the zone.
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def test_unlocking_with_a_lock_time_locks_at_it_in_utc(admin_client, betting_period):
+    reply = _unlock(admin_client, betting_period, lock_time="2026-10-04T13:30")
+
+    assert reply == {"success": True}
     assert betting_period.is_locked is False
-    lock_time = betting_period.lock_time
-    if lock_time.tzinfo is None:
-        lock_time = lock_time.replace(tzinfo=UTC)
-    assert lock_time > datetime.now(UTC)
+    assert _as_utc(betting_period.lock_time) == datetime(2026, 10, 4, 13, 30, tzinfo=UTC)
+
+
+def test_unlocking_without_a_lock_time_locks_a_week_ahead(admin_client, betting_period):
+    before = datetime.now(UTC)
+
+    reply = _unlock(admin_client, betting_period)
+
+    assert reply == {"success": True}
+    assert betting_period.is_locked is False
+    week_ahead = _as_utc(betting_period.lock_time) - before
+    assert timedelta(days=7) <= week_ahead < timedelta(days=7, minutes=1)
+
+
+@pytest.mark.parametrize("lock_time", ["2026-10-04 13:30", "Sunday", ""])
+def test_unlocking_with_a_malformed_lock_time_is_refused(admin_client, betting_period, lock_time):
+    reply = _unlock(admin_client, betting_period, lock_time=lock_time)
+
+    assert reply == {"success": False, "error": "Invalid lock time"}
+    assert betting_period.is_locked is True

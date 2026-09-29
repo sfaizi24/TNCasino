@@ -373,6 +373,31 @@ def test_settling_a_parlay_with_a_pushed_leg_pays_the_rest_and_settles_each_leg_
     assert (week.bets_won, week.settled_pnl, week.active_bets_amount) == (1, 130.0, 0.0)
 
 
+@pytest.mark.parametrize("won", [True, False])
+def test_a_parlay_is_not_settled_by_hand(admin_client, admin_user, betting_period, seeded_analytics, db_session, won):
+    parlay = _place_parlay(admin_user)
+
+    reply = admin_client.post("/api/admin/settle_bet", json={"bet_id": parlay, "won": won}).get_json()
+
+    bet = db_session.session.get(Bet, parlay)
+    db_session.session.refresh(admin_user)
+    assert reply == {"success": False, "error": "Parlays settle from the Settle Week card"}
+    assert [bet.status] + [leg.status for leg in bet.legs] == ["pending", "pending", "pending"]
+    assert admin_user.account_balance == 900.0
+
+
+def test_a_parlay_can_still_be_voided(admin_client, admin_user, betting_period, seeded_analytics, db_session):
+    parlay = _place_parlay(admin_user)
+
+    reply = admin_client.post("/api/admin/void_bet", json={"bet_id": parlay}).get_json()
+
+    bet = db_session.session.get(Bet, parlay)
+    db_session.session.refresh(admin_user)
+    assert reply == {"success": True}
+    assert [bet.status] + [leg.status for leg in bet.legs] == ["void", "void", "void"]
+    assert admin_user.account_balance == 1000.0
+
+
 def test_the_preview_leaves_out_settled_bets_and_other_weeks(admin_client, betting_period, seeded_analytics):
     moneyline, team_total = _place(admin_client, [MONEYLINE_BET, TEAM_TOTAL_BET])
     admin_client.post("/api/admin/settle_bet", json={"bet_id": moneyline, "won": True})
