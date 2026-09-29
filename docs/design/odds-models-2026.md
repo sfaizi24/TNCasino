@@ -1116,7 +1116,10 @@ first, because every later package stores or reads it.
   (doc 08), so rerun from `simulate` until the playoffs step stamps the simulation run it read.
 - **B10.** Matchup totals, head to head, spreads, alternate lines, last place, top 3 or 4, exact
   seed. Head to head and half-point spreads need only B1; matchup totals and the futures need B4;
-  alternate lines need B3.
+  alternate lines need B3. Scoped to spreads alone by decision 7. B10a shipped 2026-09-29 (merge
+  b8965fe): half-point lines priced in the app from the score matrix, main line at the median
+  margin, alternates within ten points, `GET /api/spreads`, a Spreads tab with a line picker;
+  built by the cloud session from `docs/briefs/b10-spreads.md`. Last place and top 4 remain.
 - **B11.** Props priced in the odds step (§4).
 
 Doc 08's line references have moved: the browser's odds are read at betting.py lines 257, 300, 341

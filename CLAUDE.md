@@ -61,7 +61,7 @@ Ten Jupyter notebooks in `backend/notebooks/`, run sequentially. See `docs/archi
 - **Every requirement is pinned exactly** — `requirements.txt` names the version each package resolved to on 2026-09-29. An upgrade is an edit to that file, tested locally before it reaches CI; `pip install -r requirements.txt` on a machine with older packages upgrades them.
 - **Cash-out exists only after a reprice** — a pending bet, single or parlay, can be removed for a full refund while its own run is still the latest; once a newer run has repriced it, `app/cashout.py` offers 95% of fair value from that run instead, and the ledger posts only the profit or loss to the week the cash-out is taken.
 - **Parlays are priced and settled on the score matrix** — `app/parlays.py` prices a slip at the share of the latest run's sims in which every leg wins, with no cap and no house edge, and refuses two legs from one market, a leg that adds nothing, and a combination the sims never produce; a pushed leg drops out at settlement and the rest re-price on the placement run's matrix, which is why `simulation_totals` keeps every run. `parlay_refusals` is the app's table; both publishers leave it alone.
-- **Tests**: `python -m pytest` — 1027 tests (app tests on in-memory SQLite, pipeline tests on scratch SQLite files), about 50 s. CI runs lint + tests on every push/PR.
+- **Tests**: `python -m pytest` — 1102 tests (app tests on in-memory SQLite, pipeline tests on scratch SQLite files), about 50 s. CI runs lint + tests on every push/PR.
 - **`.env` required** — needs `SECRET_KEY`, `DATABASE_URL`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `ADMIN_EMAILS`. Local dev also needs `OAUTHLIB_INSECURE_TRANSPORT=1` and `OAUTHLIB_RELAX_TOKEN_SCOPE=1`. Prod sets `ANALYTICS_IMAGES_DIR=/var/lib/tncasino/analytics` so the analytics charts live outside the git working tree; local dev falls back to `backend/data/images/`.
 
 ## Code Quality Philosophy
@@ -92,18 +92,18 @@ app/                  — Flask application package
   database.py         — SQLAlchemy instance
   extensions.py       — Shared Flask extensions (CSRFProtect)
   ledger.py           — The only code that moves money: open_week, place, remove, settle, push, void, cash_out (settle and push take a parlay's adjusted payout and per-leg statuses)
-  markets.py          — Market keys and their quotes: parse_key, key_for_row, find_quote, price_from_odds, odds_from_probability, potential_win
+  markets.py          — Market keys and their quotes: parse_key, key_for_row, find_quote (a spread at its line from the score matrix), spread_quote, price_from_odds, odds_from_probability, potential_win
   matrices.py         — A run's score matrix decoded once per worker, and the win rules on it: score_matrix, leg_outcome, joint_probability
   migrations.py       — Schema migrations (run on startup)
   models.py           — SQLAlchemy models (User, Bet, BetLeg, ParlayRefusal, WeeklyStats, BettingPeriod)
   parlays.py          — A slip of 2 to 4 picks priced at the joint chance of the latest run: quote, joint_price, ParlayRefusal
   settlement.py       — Outcomes of a week's keyed bets from the published scores: team_scores, outcomes_for_week, outcome_for
-  windows.py          — Whether a week is open for betting: Window, betting_window
+  windows.py          — Whether a week is open for betting: Window, betting_window, latest_run_id
   routes/
     helpers.py        — Shared helpers: query_analytics(), get_current_week(), check_betting_period_lock(period), admin_required()
     pages.py          — Public pages: /, /about, /analytics, static files
     account.py        — User account: /account, /account/update-profile
-    odds.py           — Odds API: /api/matchups, /api/team_performance, etc. (12 routes)
+    odds.py           — Odds API: /api/matchups, /api/spreads, /api/team_performance, etc. (13 routes)
     betting.py        — Betting: /betting, /leaderboard, /api/place_bet, /api/betting_window, /api/cash_out, /api/parlay_quote, etc. (9 routes)
     admin.py          — Admin: /admin, /admin/pipeline, /api/admin/* (12 routes)
 
