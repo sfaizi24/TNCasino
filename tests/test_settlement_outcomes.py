@@ -10,6 +10,7 @@ from pipeline.markets import encode_totals
 from tests.conftest import set_points
 
 MONEYLINE = "2026-w10-moneyline-1v2"
+SPREAD = "2026-w10-spread-1v2"
 TEAM_TOTAL = "2026-w10-team_total-1"
 HIGHEST = "2026-w10-highest_scorer"
 LOWEST = "2026-w10-lowest_scorer"
@@ -87,6 +88,43 @@ def test_moneyline_reason_puts_the_pick_first():
 
 def test_moneyline_waits_for_both_teams():
     assert _judge(MONEYLINE, "1", _scores(None, None)).reason == "no score for Alice and Bob"
+
+
+# Alice beats Bob by 5.5 in every case but the unplayed ones.
+@pytest.mark.parametrize(
+    ("selection", "line", "scores", "outcome"),
+    [
+        ("1", -5.0, _scores(110.5, 105.0), WON),
+        ("1", -6.0, _scores(110.5, 105.0), LOST),
+        ("2", 6.0, _scores(110.5, 105.0), WON),
+        ("2", 5.0, _scores(110.5, 105.0), LOST),
+        ("1", -5.5, _scores(110.5, 105.0), PUSH),
+        ("2", 5.5, _scores(110.5, 105.0), PUSH),
+        ("1", -5.5, _scores(110.5, None), UNDECIDED),
+        ("2", 5.5, _scores(110.5), UNDECIDED),
+    ],
+    ids=[
+        "favourite covers",
+        "favourite short",
+        "underdog covers",
+        "underdog short",
+        "on",
+        "other side on",
+        "opponent unplayed",
+        "opponent missing",
+    ],
+)
+def test_a_spread_adds_the_picks_line_to_its_score(selection, line, scores, outcome):
+    assert _judge(SPREAD, selection, scores, line=line).outcome == outcome
+
+
+def test_a_spread_reason_puts_the_pick_and_its_line_first():
+    assert _judge(SPREAD, "1", _scores(110.5, 105.0), line=-5.5).reason == "Alice 110.50 -5.5 vs Bob 105.00"
+    assert _judge(SPREAD, "2", _scores(110.5, 105.0), line=5.5).reason == "Bob 105.00 +5.5 vs Alice 110.50"
+
+
+def test_a_spread_waits_for_both_teams():
+    assert _judge(SPREAD, "2", _scores(None, None), line=5.5).reason == "no score for Bob and Alice"
 
 
 @pytest.mark.parametrize(

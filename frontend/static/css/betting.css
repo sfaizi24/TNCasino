@@ -274,11 +274,14 @@
     }
 }
 
-/* Five tabs fit across a phone only a size down from the shared tab style. */
+/* Six tabs fit across a phone only a size down from the shared tab style, with the two-word names on two lines. */
 @media (max-width: 480px) {
     .tnc-tabs .tnc-tab {
-        padding: 8px 4px;
+        padding: 6px 3px;
         font-size: var(--tnc-fs-11);
+        line-height: 1.2;
+        white-space: normal;
+        min-width: min-content;
     }
 }
 
@@ -861,6 +864,87 @@
 .tnc-ou-buttons {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+/* The steps stay centred under VS; Main takes the free space to their right when it shows. */
+.tnc-sp-picker {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto 1fr;
+    align-items: center;
+    gap: 4px;
+    margin: 5px 0 6px;
+}
+
+.tnc-sp-picker > :first-child {
+    grid-column: 2;
+}
+
+.tnc-sp-step,
+.tnc-sp-main {
+    height: 24px;
+    background: var(--tnc-bg);
+    border: 1px solid var(--tnc-border);
+    border-radius: 4px;
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-12);
+    font-weight: var(--tnc-fw-semi);
+    font-family: inherit;
+    line-height: 1;
+    cursor: pointer;
+    transition: all var(--tnc-dur-base) var(--tnc-ease);
+}
+
+.tnc-sp-step {
+    width: 32px;
+}
+
+.tnc-sp-main {
+    justify-self: start;
+    padding: 0 8px;
+    color: var(--tnc-blue);
+    border-color: var(--tnc-blue);
+    font-size: var(--tnc-fs-11);
+}
+
+.tnc-sp-step:hover:not(:disabled) {
+    border-color: var(--tnc-blue);
+    color: var(--tnc-blue);
+}
+
+.tnc-sp-main:hover:not(:disabled) {
+    background: var(--tnc-blue-tint);
+}
+
+.tnc-sp-step:disabled,
+.tnc-sp-main:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Wide enough for -10.5, so the steps do not move as the line changes. */
+.tnc-sp-line {
+    min-width: 44px;
+    text-align: center;
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-14);
+    font-weight: var(--tnc-fw-bold);
+}
+
+.tnc-sp-pick {
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tnc-sp-side-line {
+    font-size: var(--tnc-fs-16);
+    font-weight: var(--tnc-fw-bold);
+    line-height: 1.1;
+}
+
+.tnc-sp-price {
+    display: inline-flex;
+    align-items: center;
     gap: 6px;
 }
 

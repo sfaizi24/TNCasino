@@ -5,6 +5,7 @@ const QUOTE_DELAY_MS = 250;
 // The endpoint listing each kind of card.
 const SOURCES = {
     ml: '/api/matchups',
+    sp: '/api/spreads',
     ou: '/api/team_performance',
     hi: '/api/highest_scorer',
     lo: '/api/lowest_scorer',
@@ -15,6 +16,7 @@ const SOURCES = {
 // The kinds of card each tab lists. Futures lists two, each under its own heading.
 const TABS = {
     ml: [{ kind: 'ml' }],
+    sp: [{ kind: 'sp' }],
     ou: [{ kind: 'ou' }],
     hi: [{ kind: 'hi' }],
     lo: [{ kind: 'lo' }],
@@ -27,6 +29,7 @@ const TABS = {
 // Active bets are listed in one group per tab.
 const ACTIVE_GROUPS = [
     { label: 'ML', types: ['moneyline'] },
+    { label: 'SPREAD', types: ['spread'] },
     { label: 'O/U', types: ['team_total'] },
     { label: 'HIGH', types: ['highest_scorer'] },
     { label: 'LOW', types: ['lowest_scorer'] },
@@ -43,7 +46,8 @@ const state = {
     stakes: {},
     opens: {},
     lineupCache: {},
-    rows: { ml: [], ou: [], hi: [], lo: [], fp: [], mp: [] },
+    spreadLines: {},
+    rows: { ml: [], sp: [], ou: [], hi: [], lo: [], fp: [], mp: [] },
     slip: emptySlip(),
 };
 
@@ -66,6 +70,11 @@ function fmtOdds(odds) {
     if (odds === 'EVEN') return 'EVEN';
     const n = typeof odds === 'string' ? parseInt(odds, 10) : odds;
     return n > 0 ? `+${n}` : `${n}`;
+}
+
+// A side's handicap: "-5.5", "+5.5", "0.0".
+function fmtLine(line) {
+    return line > 0 ? `+${line.toFixed(1)}` : line.toFixed(1);
 }
 
 function fmtPct(p) {
@@ -100,8 +109,34 @@ function closedAttrs() {
     return bettingOpen() ? '' : ` disabled title="${windowText()}"`;
 }
 
+function mainLineIndex(row) {
+    return row.lines.findIndex(entry => entry.line === row.line);
+}
+
+// row.lines speaks in team1's line, so a team2 side's line is flipped to find its entry.
+function lineIndexOf(row, selection, line) {
+    const team1Line = selection === String(row.team1_id) ? line : -line;
+    return row.lines.findIndex(entry => entry.line === team1Line);
+}
+
+// A card with a bet on it stays at the bet's line; any other shows the line picked, or the main line.
+function lineIndex(row) {
+    const bet = state.bets.find(b => b.market === row.market);
+    const betIndex = bet ? lineIndexOf(row, bet.selection, bet.legs[0].line) : -1;
+    if (betIndex !== -1) return betIndex;
+    return state.spreadLines[row.market] ?? mainLineIndex(row);
+}
+
+function spreadSides(row, entry) {
+    return [
+        { selection: String(row.team1_id), label: row.team1_name, odds: entry.team1_odds, chance: entry.team1_prob, line: entry.line },
+        { selection: String(row.team2_id), label: row.team2_name, odds: entry.team2_odds, chance: entry.team2_prob, line: -entry.line },
+    ];
+}
+
 // The selections a card offers, each with its price and its chance as a fraction.
 function sidesOf(kind, row) {
+    if (kind === 'sp') return spreadSides(row, row.lines[lineIndex(row)]);
     if (kind === 'ml') {
         return [
             { selection: String(row.team1_id), label: row.team1_name, odds: row.team1_ml, chance: row.team1_win_prob },
@@ -144,20 +179,30 @@ function pickedOdds(key) {
     return sidesOf(kind, row).find(side => side.selection === state.picks[key]).odds;
 }
 
+function isMatchup(kind) {
+    return kind === 'ml' || kind === 'sp';
+}
+
 function ownersOf(kind, row) {
-    return kind === 'ml' ? [row.team1_name, row.team2_name] : [row.owner];
+    return isMatchup(kind) ? [row.team1_name, row.team2_name] : [row.owner];
 }
 
 function isFuture(kind) {
     return kind === 'fp' || kind === 'mp';
 }
 
-// The pick's short name in the slip: "Bob B +105", "Alice A Over 110.50", "Bob B highest scorer".
+// The pick's short name in the slip: "Bob B +105", "Alice A -5.5", "Alice A Over 110.50", "Bob B highest scorer".
 function legLabel(kind, row, side) {
     if (kind === 'ml') return `${side.label} ${fmtOdds(side.odds)}`;
+    if (kind === 'sp') return `${side.label} ${fmtLine(side.line)}`;
     if (kind === 'ou') return `${row.owner} ${side.label} ${row.line.toFixed(2)}`;
     if (kind === 'hi') return `${row.owner} highest scorer`;
     return `${row.owner} lowest scorer`;
+}
+
+// A spread side carries its own line and a total's is the card's; a moneyline has none.
+function lineOf(row, side) {
+    return side.line ?? row.line ?? null;
 }
 
 function legFor(kind, row, side) {
@@ -165,7 +210,7 @@ function legFor(kind, row, side) {
         kind,
         market: row.market,
         selection: side.selection,
-        line: row.line ?? null,
+        line: lineOf(row, side),
         run_id: row.run_id,
         label: legLabel(kind, row, side),
     };
@@ -275,7 +320,7 @@ function renderShowButton(open, solo) {
 // Futures run to the end of the season, so their cards show no week's lineup.
 function renderLineupToggle(card) {
     if (isFuture(card.kind)) return '';
-    const solo = card.kind !== 'ml';
+    const solo = !isMatchup(card.kind);
     const lineups = card.open ? renderLineups(ownersOf(card.kind, card.row), solo) : '';
     return renderShowButton(card.open, solo) + lineups;
 }
@@ -314,6 +359,46 @@ function renderMatchupPicks(card) {
             <div class="tnc-mc-vs">VS</div>
             ${renderSide(team2)}
         </div>
+    `;
+}
+
+// The steps stop at the ends of the offered lines, and a card with a bet on it keeps the bet's line.
+function renderLinePicker(card) {
+    const { row } = card;
+    const index = lineIndex(row);
+    const frozen = card.placed.length > 0;
+    const lowest = frozen || index === 0 ? ' disabled' : '';
+    const highest = frozen || index === row.lines.length - 1 ? ' disabled' : '';
+    const main = index === mainLineIndex(row)
+        ? ''
+        : `<button class="tnc-sp-main" data-action="spread-main"${frozen ? ' disabled' : ''}>Main</button>`;
+    return `
+        <div class="tnc-sp-picker">
+            <button class="tnc-sp-step" data-action="spread-line" data-delta="-0.5" aria-label="Line down half a point"${lowest}>&minus;&frac12;</button>
+            <span class="tnc-sp-line tnc-tab-num">${fmtLine(row.lines[index].line)}</span>
+            <button class="tnc-sp-step" data-action="spread-line" data-delta="0.5" aria-label="Line up half a point"${highest}>+&frac12;</button>
+            ${main}
+        </div>
+    `;
+}
+
+function renderSpreadPicks(card) {
+    const [team1, team2] = card.sides;
+    const buttons = card.sides.map(side => renderPickButton(card, side, `
+        <span class="tnc-sp-side-line tnc-tab-num">${fmtLine(side.line)}</span>
+        <span class="tnc-sp-price">
+            <span class="tnc-mc-odd-num tnc-tab-num">${fmtOdds(side.odds)}</span>
+            <span class="tnc-mc-odd-prob tnc-tab-num">${fmtPct(side.chance)}</span>
+        </span>
+    `, 'tnc-sp-pick'));
+    return `
+        <div class="tnc-mc-teams">
+            <div class="tnc-mc-name">${team1.label}</div>
+            <div class="tnc-mc-vs">VS</div>
+            <div class="tnc-mc-name">${team2.label}</div>
+        </div>
+        ${renderLinePicker(card)}
+        <div class="tnc-ou-buttons">${buttons.join('')}</div>
     `;
 }
 
@@ -358,6 +443,7 @@ function renderFuturePicks(card) {
 
 function renderPicks(card) {
     if (card.kind === 'ml') return renderMatchupPicks(card);
+    if (card.kind === 'sp') return renderSpreadPicks(card);
     if (card.kind === 'ou') return renderTotalPicks(card);
     if (card.kind === 'hi' || card.kind === 'lo') return renderScorerPicks(card);
     return renderFuturePicks(card);
@@ -399,6 +485,7 @@ function chipLabel(bet) {
     if (!match) return bet.description.replace(` ${bet.odds}`, '');
     const { kind, row, side } = match;
     if (kind === 'ml') return side.label;
+    if (kind === 'sp') return `${side.label} ${fmtLine(bet.legs[0].line)}`;
     if (kind === 'ou') return `${row.owner} ${side.label[0]} ${bet.line.toFixed(2)}`;
     if (kind === 'fp') return `${row.owner} to finish first`;
     if (kind === 'mp') return `${row.owner} to make playoffs`;
@@ -598,6 +685,7 @@ async function reloadTab() {
     await Promise.all([...[...kinds].map(loadRows), loadWindow(), loadBets()]);
     state.picks = {};
     state.stakes = {};
+    state.spreadLines = {};
     refreshSlipLegs();
     render();
 }
@@ -616,11 +704,20 @@ function setSlipLegs(legs) {
     scheduleQuote();
 }
 
-// A slip leg as the rows now loaded offer it, or null once they no longer do.
+// A slip leg as the rows now loaded offer it, or null once they no longer do. A spread leg keeps its own line.
 function currentLeg(leg) {
     const match = sideForBet(leg);
-    if (!match || match.side.odds == null) return null;
-    return legFor(match.kind, match.row, match.side);
+    if (!match) return null;
+    const { kind, row } = match;
+    const side = kind === 'sp' ? spreadSideAt(row, leg.selection, leg.line) : match.side;
+    if (!side || side.odds == null) return null;
+    return legFor(kind, row, side);
+}
+
+function spreadSideAt(row, selection, line) {
+    const index = lineIndexOf(row, selection, line);
+    if (index === -1) return null;
+    return spreadSides(row, row.lines[index]).find(side => side.selection === selection);
 }
 
 // Legs whose run, line or price moved are re-quoted; legs whose market is gone are dropped.
@@ -670,8 +767,9 @@ async function quoteSlip() {
 }
 
 function payloadForKey(key, amount) {
-    const { row } = cardForKey(key);
-    return { market: row.market, selection: state.picks[key], line: row.line ?? null, run_id: row.run_id, amount };
+    const { kind, row } = cardForKey(key);
+    const side = sidesOf(kind, row).find(s => s.selection === state.picks[key]);
+    return { market: row.market, selection: side.selection, line: lineOf(row, side), run_id: row.run_id, amount };
 }
 
 function handlePick(card, btn) {
@@ -679,6 +777,27 @@ function handlePick(card, btn) {
     const selection = btn.dataset.selection;
     state.picks[key] = state.picks[key] === selection ? null : selection;
     renderGrid();
+}
+
+// A new line is a new price, so the pick and stake made at the old one go.
+function setSpreadLine(card, index) {
+    const key = card.dataset.key;
+    const { row } = cardForKey(key);
+    state.spreadLines[row.market] = index;
+    delete state.picks[key];
+    delete state.stakes[key];
+    renderGrid();
+}
+
+function handleSpreadStep(card, delta) {
+    const { row } = cardForKey(card.dataset.key);
+    const line = row.lines[lineIndex(row)].line + delta;
+    setSpreadLine(card, row.lines.findIndex(entry => entry.line === line));
+}
+
+function handleSpreadMain(card) {
+    const { row } = cardForKey(card.dataset.key);
+    setSpreadLine(card, mainLineIndex(row));
 }
 
 function updatePayoutInPlace(card) {
@@ -955,6 +1074,8 @@ function bindEvents() {
         else if (action === 'place') handlePlace(card);
         else if (action === 'parlay') handleAddToParlay(card);
         else if (action === 'show') handleShow(card);
+        else if (action === 'spread-line') handleSpreadStep(card, Number(target.dataset.delta));
+        else if (action === 'spread-main') handleSpreadMain(card);
     });
 
     document.body.addEventListener('input', e => {

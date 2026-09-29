@@ -118,6 +118,8 @@ def test_the_worked_example_of_the_design(user):
         ("2026-w10-team_total-1", "under", 110.5, 0.50),
         ("2026-w10-highest_scorer", "1", None, 0.60),
         ("2026-w10-lowest_scorer", "1", None, 0.45),
+        ("2026-w10-spread-1v2", "1", -4.0, 0.45),
+        ("2026-w10-spread-1v2", "2", 9.5, 0.70),
     ],
 )
 def test_each_weekly_market_is_priced_by_its_win_rule(user, market, selection, line, probability):
@@ -139,6 +141,19 @@ def test_a_team_total_is_priced_at_the_legs_line_not_the_quoted_one(user):
     assert offer.probability == pytest.approx(np.mean(SEEDED_TOTALS[:, 0] > 100.0))
     assert offer.probability == pytest.approx(0.70)
     assert offer.amount == 133.0
+
+
+def test_a_spread_is_offered_at_its_own_line_in_the_newer_run(user):
+    # Placed at roster 1 -4.0 on the seeded run; the newer run has roster 1 winning by 6 in 7 of 10 sims and
+    # losing by 6 in the rest, so -4.0 covers in 7.
+    bet = _bet(user, "2026-w10-spread-1v2", "1", line=-4.0, price=122, run_id=RUN_ID)
+    _add_newer_run(np.array([[106.0, 100.0]] * 7 + [[100.0, 106.0]] * 3))
+
+    offer = offer_for(bet)
+
+    assert (offer.run_id, offer.probability) == (NEWER_RUN, 0.7)
+    assert offer.fair_value == pytest.approx(222.0 * 0.7)
+    assert offer.amount == 147.63
 
 
 def test_a_futures_bet_is_offered_at_the_latest_futures_quote(user):

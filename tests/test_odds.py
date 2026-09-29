@@ -1,9 +1,11 @@
 import json
 
+import numpy as np
 import pytest
 from sqlalchemy import text
 
 from app.routes.helpers import get_team_mapping, query_analytics
+from pipeline.markets import encode_totals
 from tests.conftest import RUN_ID
 
 
@@ -43,6 +45,93 @@ def test_get_matchups(client, seeded_analytics, betting_period):
     assert (data[0]["team1_id"], data[0]["team2_id"]) == (1, 2)
     assert data[0]["market"] == "2026-w10-moneyline-1v2"
     assert data[0]["run_id"] == RUN_ID
+
+
+def test_spreads_list_each_matchup_at_its_main_line_and_the_alternates(client, seeded_analytics, betting_period):
+    [row] = client.get("/api/spreads").get_json()
+
+    # Roster 1's 20 simulated margins over roster 2 have a median of 4: its main line is -4.0, roster 2's +4.0.
+    assert {key: value for key, value in row.items() if key != "lines"} == {
+        "market": "2026-w10-spread-1v2",
+        "run_id": RUN_ID,
+        "team1_id": 1,
+        "team1_name": "Alice A",
+        "team2_id": 2,
+        "team2_name": "Bob B",
+        "line": -4.0,
+    }
+    assert [entry["line"] for entry in row["lines"]] == [line / 2 for line in range(-28, 13)]
+
+
+@pytest.mark.parametrize(
+    ("index", "entry"),
+    [
+        # Each side covers in 9 sims and 2 land on the line.
+        (20, {"line": -4.0, "team1_odds": "+122", "team1_prob": 0.45, "team2_odds": "+122", "team2_prob": 0.45}),
+        # Roster 1 -9.5 covers in 5 sims, roster 2 +9.5 in 14, and one lands on it.
+        (9, {"line": -9.5, "team1_odds": "+300", "team1_prob": 0.25, "team2_odds": "-233", "team2_prob": 0.70}),
+        (0, {"line": -14.0, "team1_odds": "+300", "team1_prob": 0.25, "team2_odds": "-300", "team2_prob": 0.75}),
+        (40, {"line": 6.0, "team1_odds": "-186", "team1_prob": 0.65, "team2_odds": "+186", "team2_prob": 0.35}),
+    ],
+)
+def test_each_spread_line_prices_both_sides_from_the_score_matrix(
+    client, seeded_analytics, betting_period, index, entry
+):
+    [row] = client.get("/api/spreads").get_json()
+
+    assert row["lines"][index] == entry
+
+
+def _store_margins(session, margins):
+    """Replace the seeded run's matrix with sims in which roster 1 beats roster 2 by each margin."""
+    totals = np.column_stack([np.full(len(margins), 100.0) + margins, np.full(len(margins), 100.0)])
+    session.execute(
+        text("UPDATE simulation_totals SET n_sims = :n_sims, totals = :totals"),
+        {"n_sims": len(margins), "totals": encode_totals(totals)},
+    )
+    session.commit()
+
+
+def test_a_spread_side_the_sims_never_split_is_listed_without_a_price(
+    client, seeded_analytics, betting_period, db_session
+):
+    _store_margins(db_session.session, [10.0, 10.0, 10.0])
+
+    [row] = client.get("/api/spreads").get_json()
+
+    assert row["line"] == -10.0
+    assert row["lines"][20] == {
+        "line": -10.0,
+        "team1_odds": None,
+        "team1_prob": 0.0,
+        "team2_odds": None,
+        "team2_prob": 0.0,
+    }
+    assert (row["lines"][21]["team1_odds"], row["lines"][21]["team1_prob"]) == (None, 1.0)
+
+
+def test_spread_lines_stop_at_40_points(client, seeded_analytics, betting_period, db_session):
+    _store_margins(db_session.session, [34.0, 35.0, 36.0])
+
+    [row] = client.get("/api/spreads").get_json()
+
+    assert row["line"] == -35.0
+    assert [entry["line"] for entry in row["lines"]] == [line / 2 for line in range(-80, -49)]
+
+
+def test_the_main_spread_line_rounds_the_median_to_the_nearest_half_point(
+    client, seeded_analytics, betting_period, db_session
+):
+    _store_margins(db_session.session, [0.1, 5.7, 20.0])
+
+    assert client.get("/api/spreads").get_json()[0]["line"] == -5.5
+
+
+def test_no_spreads_without_the_runs_matrix(client, seeded_analytics, betting_period, db_session):
+    db_session.session.execute(text("DELETE FROM simulation_totals"))
+    db_session.session.commit()
+
+    assert client.get("/api/spreads").get_json() == []
 
 
 def test_get_team_performance(client, seeded_analytics, betting_period):

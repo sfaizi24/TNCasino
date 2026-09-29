@@ -250,7 +250,7 @@ def _place_single(pick, run_id, amount, week):
         return _refuse("Not this week's market")
 
     selection = str(pick.get("selection"))
-    quote = markets.find_quote(market, selection)
+    quote = markets.find_quote(market, selection, pick.get("line"))
     if _quote_moved(market, quote, run_id, pick.get("line")):
         return _refuse("Odds have changed", run_id=quote.run_id, price=quote.price, odds=quote.odds, line=quote.line)
     if quote.price is None:
@@ -390,6 +390,9 @@ def _describe(market, selection, quote, week):
     if market.name == "moneyline":
         team1, team2 = market.teams
         return f"{name(team1)} vs {name(team2)}: {name(int(selection))} {quote.odds}"
+    if market.name == "spread":
+        team1, team2 = market.teams
+        return f"{name(team1)} vs {name(team2)}: {name(int(selection))} {quote.line:+.1f} {quote.odds}"
     if market.name == "team_total":
         return f"{name(market.teams[0])} O/U {quote.line:.2f}: {selection.capitalize()}"
     team = market.teams[0] if market.teams else int(selection)

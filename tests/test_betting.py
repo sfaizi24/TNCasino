@@ -123,7 +123,10 @@ def test_a_team_total_at_a_moved_line_is_refused(logged_in_client, user, betting
     [
         ({"market": "2026-w10-moneyline-1v2", "selection": "3"}, "Unknown selection"),
         ({"market": "2026-w09-highest_scorer"}, "Not this week's market"),
-        ({"market": "2026-w10-spread-1v2"}, "Unknown market"),
+        ({"market": "2026-w10-matchup_total-1v2"}, "Unknown market"),
+        ({"market": "2026-w10-spread-1v2", "selection": "1"}, "Unknown line"),
+        ({"market": "2026-w10-spread-1v2", "selection": "1", "line": 3.25}, "Unknown line"),
+        ({"market": "2026-w10-spread-1v2", "selection": "3", "line": -4.0}, "Unknown selection"),
         ({"market": "2026-w10-team_total-7", "selection": "over", "line": 100.0}, "Unknown market"),
     ],
 )
@@ -1110,3 +1113,101 @@ def test_a_one_entry_legs_list_that_is_not_an_object_is_an_unknown_market(
     reply = logged_in_client.post("/api/place_bet", json={"legs": ["x"], "run_id": RUN_ID, "amount": 10}).get_json()
 
     assert reply == {"success": False, "error": "Unknown market"}
+
+
+# Spreads on the seeded run: roster 1's median margin over roster 2 is 4, so its main line is -4.0 at +122 (9 of
+# 20 sims cover, 2 land on the line); roster 2 at +9.5 covers in 14 sims, at -233.
+SPREAD_BET = {"market": "2026-w10-spread-1v2", "selection": "1", "line": -4.0, "run_id": RUN_ID, "amount": 100}
+
+
+@pytest.mark.parametrize(
+    ("selection", "line", "description", "odds", "probability", "potential_win"),
+    [
+        ("1", -4.0, "Alice A vs Bob B: Alice A -4.0 +122", "+122", 0.45, 122.0),
+        ("2", 9.5, "Alice A vs Bob B: Bob B +9.5 -233", "-233", 0.70, 42.92),
+    ],
+    ids=["main line", "alternate line"],
+)
+def test_a_spread_is_placed_at_the_line_the_bettor_picked(
+    logged_in_client,
+    user,
+    betting_period,
+    seeded_analytics,
+    selection,
+    line,
+    description,
+    odds,
+    probability,
+    potential_win,
+):
+    reply = logged_in_client.post(
+        "/api/place_bet", json={**SPREAD_BET, "selection": selection, "line": line}
+    ).get_json()
+
+    assert reply == {
+        "success": True,
+        "new_balance": 900.0,
+        "bet_id": 1,
+        "market": "2026-w10-spread-1v2",
+        "selection": selection,
+        "price": int(odds),
+        "legs": ["2026-w10-spread-1v2"],
+    }
+    bet = db.session.get(Bet, 1)
+    assert (bet.bet_type, bet.description, bet.odds, bet.price) == ("spread", description, odds, int(odds))
+    assert (bet.probability, bet.run_id, round(bet.potential_win, 2)) == (probability, RUN_ID, potential_win)
+    [leg] = bet.legs
+    assert (leg.market, leg.selection, leg.line, leg.price, leg.probability) == (
+        "2026-w10-spread-1v2",
+        selection,
+        line,
+        int(odds),
+        probability,
+    )
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+    assert (listed["market"], listed["selection"], listed["line"], listed["removable"]) == (
+        "2026-w10-spread-1v2",
+        selection,
+        line,
+        True,
+    )
+
+
+def test_a_spread_at_a_newer_run_has_changed(logged_in_client, user, betting_period, seeded_analytics):
+    # The rerun has roster 1 beating roster 2 by 10 in 6,181 of its 10,000 sims and losing by 10 in the rest.
+    publish_a_rerun(RERUN_ID, rerun_scores())
+
+    reply = logged_in_client.post("/api/place_bet", json=SPREAD_BET).get_json()
+
+    assert reply == {
+        "success": False,
+        "error": "Odds have changed",
+        "run_id": RERUN_ID,
+        "price": -162,
+        "odds": "-162",
+        "line": -4.0,
+    }
+    assert db.session.query(Bet).count() == 0
+
+
+def test_a_spread_side_that_always_covers_is_not_offered(logged_in_client, user, betting_period, seeded_analytics):
+    reply = logged_in_client.post("/api/place_bet", json={**SPREAD_BET, "line": 30.0}).get_json()
+
+    assert reply == {"success": False, "error": "Not offered"}
+    assert db.session.query(Bet).count() == 0
+
+
+def test_a_spread_parlay_leg_keeps_its_line(logged_in_client, user, betting_period, seeded_analytics):
+    spread_leg = {"market": "2026-w10-spread-1v2", "selection": "1", "line": -4.0}
+
+    quoted = quote_parlay(logged_in_client, [spread_leg, ROSTER_1_OVER])
+    placed = place_parlay(logged_in_client, [spread_leg, ROSTER_1_OVER])
+
+    # Roster 1 covers -4.0 and tops 110.5 in 6 of the 20 sims.
+    assert (quoted["probability"], quoted["odds"], quoted["legs"][0]["line"]) == (0.3, "+233", -4.0)
+    bet = db.session.get(Bet, placed["bet_id"])
+    assert bet.description == "Alice A vs Bob B: Alice A -4.0 +122 + Alice A O/U 110.50: Over"
+    assert [(leg.market, leg.line, leg.price) for leg in bet.legs] == [
+        ("2026-w10-spread-1v2", -4.0, 122),
+        ("2026-w10-team_total-1", 110.5, -120),
+    ]

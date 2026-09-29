@@ -2,13 +2,18 @@
 
 A key names one market in the published odds tables: `2026-w04-moneyline-1v4` is week 4's game
 between rosters 1 and 4, `2026-first_place` is the season's first-place market. A bet is a key and a
-selection, and its price always comes from the row the key finds, never from the browser.
+selection, and its price always comes from the row the key finds, never from the browser. A spread
+has no table: its price comes from the week's latest score matrix at the line the bettor picked.
 """
 
 import re
 from dataclasses import dataclass
 
+from pipeline import markets as win_rules
+
+from .matrices import MissingMatrix, leg_outcome, score_matrix
 from .routes.helpers import query_analytics
+from .windows import latest_run_id
 
 
 class MarketError(ValueError):
@@ -18,12 +23,16 @@ class MarketError(ValueError):
 # Whether each market is priced per week, and the columns holding the roster ids its key names.
 SHAPES = {
     "moneyline": (True, ("team1_id", "team2_id")),
+    "spread": (True, ("team1_id", "team2_id")),
     "team_total": (True, ("team_id",)),
     "highest_scorer": (True, ()),
     "lowest_scorer": (True, ()),
     "first_place": (False, ()),
     "make_playoffs": (False, ("team_id",)),
 }
+
+# A spread line is the selected roster's, a multiple of 0.5 no further from zero than the margin curves reach.
+SPREAD_LIMIT = 40
 
 # Roster ids stop at nine digits, so no key can overflow an integer column.
 KEY_PATTERN = re.compile(
@@ -144,18 +153,55 @@ def key_for_row(name, row):
     return Market(name, row["season"], week, teams).key
 
 
-def find_quote(market, selection):
+def find_quote(market, selection, line=None):
+    """The selection's quote. A spread is priced at the requested line; every other market ignores `line`."""
+    if market.name == "spread":
+        return _spread_quote(market, selection, line)
+    side = _published_side(QUOTE_SQL[market.name], market, selection)
+    return Quote(run_id=side["run_id"], odds=side["odds"], probability=side["probability"], line=side["line"])
+
+
+def spread_quote(market, selection, line, run_id, matrix):
+    """One side of a spread at a line, at the share of the run's sims in which the side covers."""
+    probability = win_rules.probability(leg_outcome(market, selection, line, matrix))
+    return Quote(run_id=run_id, odds=odds_from_probability(probability), probability=probability, line=line)
+
+
+def _published_side(sql, market, selection):
     params = {"season": market.season, "week": market.week}
     for number, team in enumerate(market.teams, start=1):
         params[f"team{number}"] = team
 
-    sides = query_analytics(QUOTE_SQL[market.name], params)
+    sides = query_analytics(sql, params)
     if not sides:
         raise MarketError("Unknown market")
     for side in sides:
         if side["selection"] == selection:
-            return Quote(run_id=side["run_id"], odds=side["odds"], probability=side["probability"], line=side["line"])
+            return side
     raise MarketError("Unknown selection")
+
+
+def _spread_quote(market, selection, line):
+    line = _spread_line(line)
+    # A spread is offered on each matchup with a published moneyline, between the same two rosters.
+    _published_side(QUOTE_SQL["moneyline"], market, selection)
+
+    run_id = latest_run_id(market.week)
+    try:
+        matrix = score_matrix(run_id)
+    except MissingMatrix:
+        raise MarketError("Not offered") from None
+    return spread_quote(market, selection, line, run_id, matrix)
+
+
+def _spread_line(line):
+    try:
+        line = float(line)
+    except (TypeError, ValueError):
+        raise MarketError("Unknown line") from None
+    if abs(line) > SPREAD_LIMIT or line % 0.5 != 0:
+        raise MarketError("Unknown line")
+    return line
 
 
 def price_from_odds(odds):
@@ -169,7 +215,9 @@ def price_from_odds(odds):
 
 
 def odds_from_probability(probability):
-    """Fair American odds text for a chance strictly between 0 and 1, rounded as the pipeline's odds step rounds."""
+    """Fair American odds text, rounded as the pipeline's odds step rounds; none at 0 or 1, which the sims cannot price."""
+    if not 0 < probability < 1:
+        return None
     if probability >= 0.5:
         return f"{round(-probability / (1 - probability) * 100)}"
     return f"+{round((1 - probability) / probability * 100)}"

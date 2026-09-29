@@ -2,10 +2,13 @@ import json
 import logging
 from collections import defaultdict
 
+import numpy as np
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
 from .. import markets
+from ..matrices import MissingMatrix, score_matrix
+from ..windows import latest_run_id
 from .helpers import (
     display_name_for,
     get_current_week,
@@ -21,6 +24,9 @@ odds_bp = Blueprint("odds", __name__)
 POSITION_GROUPS = ("QB", "RB", "WR", "TE", "FLEX", "K", "DEF")
 PLAYOFF_CUTOFF = 8
 
+# The alternate spread lines either side of the main line, in half points: from 10 points below to 10 above.
+ALTERNATE_SPREAD_STEPS = 20
+
 
 @odds_bp.route("/api/matchups")
 def get_matchups():
@@ -28,17 +34,8 @@ def get_matchups():
         week = get_current_week()
         team_mapping = get_team_mapping(week)
 
-        rows = query_analytics(
-            """
-            SELECT * FROM betting_odds_matchup_ml
-            WHERE season = (SELECT MAX(season) FROM betting_odds_matchup_ml) AND week = :week
-            ORDER BY matchup
-            """,
-            {"week": week},
-        )
-
         matchups = []
-        for row in rows:
+        for row in _matchup_rows(week):
             team1_owner = team_mapping.get(row["team1_id"], f"Team {row['team1_id']}")
             team2_owner = team_mapping.get(row["team2_id"], f"Team {row['team2_id']}")
 
@@ -66,6 +63,67 @@ def get_matchups():
 
         traceback.print_exc()
         return jsonify([])
+
+
+@odds_bp.route("/api/spreads")
+def get_spreads():
+    try:
+        week = get_current_week()
+        run_id = latest_run_id(week)
+        matrix = score_matrix(run_id)
+        team_mapping = get_team_mapping(week)
+        return jsonify([_spread_row(row, run_id, matrix, team_mapping) for row in _matchup_rows(week)])
+    except MissingMatrix:
+        logging.warning(f"No spreads: the matrix of run {run_id} is not stored")
+        return jsonify([])
+    except Exception:
+        logging.exception("Could not list the spreads")
+        return jsonify([])
+
+
+def _matchup_rows(week):
+    return query_analytics(
+        """
+        SELECT * FROM betting_odds_matchup_ml
+        WHERE season = (SELECT MAX(season) FROM betting_odds_matchup_ml) AND week = :week
+        ORDER BY matchup
+        """,
+        {"week": week},
+    )
+
+
+def _spread_row(row, run_id, matrix, team_mapping):
+    """A matchup's spreads: team1's main line, the median margin to the half point, and the alternates around it."""
+    market = markets.parse_key(markets.key_for_row("spread", row))
+    team1, team2 = market.teams
+    margins = matrix.scores[:, matrix.columns[team1]] - matrix.scores[:, matrix.columns[team2]]
+    main_line = round(-2 * np.median(margins)) / 2
+    lines = [main_line + step / 2 for step in range(-ALTERNATE_SPREAD_STEPS, ALTERNATE_SPREAD_STEPS + 1)]
+
+    return {
+        "market": market.key,
+        "run_id": run_id,
+        "team1_id": team1,
+        "team1_name": team_mapping.get(team1, f"Team {team1}"),
+        "team2_id": team2,
+        "team2_name": team_mapping.get(team2, f"Team {team2}"),
+        "line": main_line,
+        "lines": [_spread_prices(market, line, run_id, matrix) for line in lines if abs(line) <= markets.SPREAD_LIMIT],
+    }
+
+
+def _spread_prices(market, line, run_id, matrix):
+    """Both sides of a matchup at team1's line; team2 takes the other side of it."""
+    team1, team2 = market.teams
+    team1_side = markets.spread_quote(market, str(team1), line, run_id, matrix)
+    team2_side = markets.spread_quote(market, str(team2), -line, run_id, matrix)
+    return {
+        "line": line,
+        "team1_odds": team1_side.odds,
+        "team1_prob": team1_side.probability,
+        "team2_odds": team2_side.odds,
+        "team2_prob": team2_side.probability,
+    }
 
 
 @odds_bp.route("/api/team_performance")
