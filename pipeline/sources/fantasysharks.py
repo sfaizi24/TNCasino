@@ -4,7 +4,7 @@ import re
 
 from bs4 import BeautifulSoup
 
-from pipeline.sources.base import Projection, ProjectionSource, get
+from pipeline.sources.base import POSITIONS, Projection, ProjectionSource, get
 from pipeline.sources.teams import DEF_NAMES, normalize_team, team_from_def_name
 
 URL = (
@@ -32,6 +32,10 @@ class FantasySharksSource(ProjectionSource):
     name = "fantasysharks"
     website = WEBSITE
     supports_future_weeks = True
+    # Its quarterback numbers are flat: every starter within a few points of the best, r 0.4 to 0.7
+    # against Sleeper on the full week-4 page and three future weeks (2026-09-29). Rescoring the stat
+    # line with league scoring removes the level gap but not the disagreement, so QB is not read.
+    positions = POSITIONS - {"QB"}
 
     def fetch(self, season: int, week: int) -> list[Projection]:
         if season not in SEGMENT_OFFSETS:
@@ -39,6 +43,8 @@ class FantasySharksSource(ProjectionSource):
         segment = SEGMENT_OFFSETS[season] + week
         pages = {}
         for position, (code, _) in PAGES.items():
+            if position not in self.positions:
+                continue
             url = URL.format(code=code, segment=segment)
             pages[position] = get(url, spacing_s=CRAWL_DELAY_S).text
         return parse(pages, season, week)

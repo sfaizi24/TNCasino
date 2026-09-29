@@ -258,7 +258,7 @@ def test_sharks_page_showing_no_week_raises(sharks_pages):
         fantasysharks.parse({"K": html}, 2026, 4)
 
 
-def test_sharks_fetch_requests_the_six_pages_a_crawl_delay_apart(monkeypatch, clock, sharks_pages):
+def test_sharks_fetch_requests_the_five_pages_a_crawl_delay_apart(monkeypatch, clock, sharks_pages):
     position_by_code = {code: position for position, (code, _) in fantasysharks.PAGES.items()}
 
     def page_for(url):
@@ -269,11 +269,12 @@ def test_sharks_fetch_requests_the_six_pages_a_crawl_delay_apart(monkeypatch, cl
 
     rows = fantasysharks.SOURCE.fetch(2026, 4)
 
-    assert len(sent) == 6
+    assert len(sent) == 5
+    assert not any("Position=1&" in request["url"] for request in sent)  # no quarterback page
     assert all("Segment=886" in request["url"] for request in sent)
     assert all(request["headers"] == {"User-Agent": USER_AGENT} for request in sent)
-    assert clock.sleeps == [60] * 5
-    assert len(rows) == 228
+    assert clock.sleeps == [60] * 4
+    assert {row.position for row in rows} == {"RB", "WR", "TE", "K", "DEF"}
 
 
 def test_sharks_fetch_needs_the_season_segment_offset():
