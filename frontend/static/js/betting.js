@@ -11,9 +11,11 @@ const SOURCES = {
     lo: '/api/lowest_scorer',
     fp: '/api/first_place',
     mp: '/api/make_playoffs',
+    lp: '/api/last_place',
+    ch: '/api/champion',
 };
 
-// The kinds of card each tab lists. Futures lists two, each under its own heading.
+// The kinds of card each tab lists. Futures lists four, each under its own heading.
 const TABS = {
     ml: [{ kind: 'ml' }],
     sp: [{ kind: 'sp' }],
@@ -23,6 +25,8 @@ const TABS = {
     fu: [
         { kind: 'fp', title: 'First place' },
         { kind: 'mp', title: 'Make playoffs' },
+        { kind: 'lp', title: 'Last place' },
+        { kind: 'ch', title: 'Champion' },
     ],
 };
 
@@ -33,7 +37,7 @@ const ACTIVE_GROUPS = [
     { label: 'O/U', types: ['team_total'] },
     { label: 'HIGH', types: ['highest_scorer'] },
     { label: 'LOW', types: ['lowest_scorer'] },
-    { label: 'FUTURES', types: ['first_place', 'make_playoffs'] },
+    { label: 'FUTURES', types: ['first_place', 'make_playoffs', 'last_place', 'champion'] },
     { label: 'PARLAY', types: ['parlay'] },
 ];
 
@@ -47,7 +51,7 @@ const state = {
     opens: {},
     lineupCache: {},
     spreadLines: {},
-    rows: { ml: [], sp: [], ou: [], hi: [], lo: [], fp: [], mp: [] },
+    rows: { ml: [], sp: [], ou: [], hi: [], lo: [], fp: [], mp: [], lp: [], ch: [] },
     slip: emptySlip(),
 };
 
@@ -153,7 +157,7 @@ function sidesOf(kind, row) {
     return [{ selection, odds: row.odds, chance: row.win_prob / 100 }];
 }
 
-// Every scorer or first-place card shares one market, so a bet marks the card that offers its selection.
+// Every scorer, first-place, last-place or champion card shares one market, so a bet marks the card that offers its selection.
 function buildCard(kind, row, idx) {
     const key = `${kind}-${idx}`;
     const sides = sidesOf(kind, row);
@@ -188,7 +192,7 @@ function ownersOf(kind, row) {
 }
 
 function isFuture(kind) {
-    return kind === 'fp' || kind === 'mp';
+    return ['fp', 'mp', 'lp', 'ch'].includes(kind);
 }
 
 // The pick's short name in the slip: "Bob B +105", "Alice A -5.5", "Alice A Over 110.50", "Bob B highest scorer".
@@ -478,7 +482,7 @@ function sideForBet(bet) {
     return null;
 }
 
-// A chip names the pick and leaves the market to its group, except in Futures, whose group holds two.
+// A chip names the pick and leaves the market to its group, except in Futures, whose group holds four.
 function chipLabel(bet) {
     if (bet.bet_type === 'parlay') return `${bet.legs.length}-leg parlay`;
     const match = sideForBet(bet);
@@ -489,6 +493,8 @@ function chipLabel(bet) {
     if (kind === 'ou') return `${row.owner} ${side.label[0]} ${bet.line.toFixed(2)}`;
     if (kind === 'fp') return `${row.owner} to finish first`;
     if (kind === 'mp') return `${row.owner} to make playoffs`;
+    if (kind === 'lp') return `${row.owner} to finish last`;
+    if (kind === 'ch') return `${row.owner} to win the championship`;
     return row.owner;
 }
 
