@@ -168,6 +168,13 @@ def price_from_odds(odds):
     return 100 if price == -100 else price
 
 
+def odds_from_probability(probability):
+    """Fair American odds text for a chance strictly between 0 and 1, rounded as the pipeline's odds step rounds."""
+    if probability >= 0.5:
+        return f"{round(-probability / (1 - probability) * 100)}"
+    return f"+{round((1 - probability) / probability * 100)}"
+
+
 def potential_win(amount, price):
     """What a winning bet pays on top of the stake."""
     if price > 0:

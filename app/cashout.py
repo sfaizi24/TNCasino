@@ -14,6 +14,7 @@ from functools import cache, partial
 from pipeline import markets as win_rules
 
 from .markets import MarketError, find_quote, parse_key
+from .matrices import MissingMatrix, leg_outcome, score_matrix
 from .routes.helpers import get_current_week, query_analytics
 from .windows import betting_window
 
@@ -22,7 +23,6 @@ OFFER_SHARE = 0.95
 NO_OFFER = "No offer for this bet"
 CANNOT_PRICE = "No offer: the latest run cannot price this bet"
 
-MATRIX_SQL = "SELECT n_sims, roster_ids, totals FROM simulation_totals WHERE run_id = :run_id"
 STANDINGS_SQL = "SELECT standings_through_week FROM simulation_runs WHERE run_id = :run_id"
 
 
@@ -40,23 +40,22 @@ class NoOffer(Exception):
 
 
 def offer_for(bet, now=None):
-    return _price(bet, partial(betting_window, now=now), _score_matrix)
+    return _price(bet, partial(betting_window, now=now))
 
 
 def offers_for(bets, now=None):
-    """Offers for one page of bets, reading each week's window and each run's matrix once."""
+    """Offers for one page of bets, reading each week's window once; the matrices are cached per worker."""
     window_of = cache(partial(betting_window, now=now))
-    matrix_of = cache(_score_matrix)
     offers = {}
     for bet in bets:
         try:
-            offers[bet.id] = _price(bet, window_of, matrix_of)
+            offers[bet.id] = _price(bet, window_of)
         except NoOffer:
             continue
     return offers
 
 
-def _price(bet, window_of, matrix_of):
+def _price(bet, window_of):
     if bet.status != "pending" or len(bet.legs) != 1:
         raise NoOffer(NO_OFFER)
     [leg] = bet.legs
@@ -68,7 +67,7 @@ def _price(bet, window_of, matrix_of):
     if market.week is None:
         probability, run_id = _futures_probability(bet, market, leg, window_of)
     else:
-        probability, run_id = _weekly_probability(bet, market, leg, window_of, matrix_of)
+        probability, run_id = _weekly_probability(bet, market, leg, window_of)
 
     fair_value = (bet.amount + bet.potential_win) * probability
     amount = round(OFFER_SHARE * fair_value, 2)
@@ -78,16 +77,16 @@ def _price(bet, window_of, matrix_of):
     return Offer(bet.id, amount, fair_value, probability, run_id)
 
 
-def _weekly_probability(bet, market, leg, window_of, matrix_of):
+def _weekly_probability(bet, market, leg, window_of):
     window = window_of(bet.week)
     _require_open(window)
     _require_newer_run(bet, window.run_id)
 
-    stored = matrix_of(window.run_id)
-    if stored is None:
-        raise NoOffer(CANNOT_PRICE)
-    scores, columns = stored
-    return win_rules.probability(_outcome(market, leg, scores, columns)), window.run_id
+    try:
+        outcome = leg_outcome(market, leg.selection, leg.line, score_matrix(window.run_id))
+    except (MissingMatrix, KeyError):
+        raise NoOffer(CANNOT_PRICE) from None
+    return win_rules.probability(outcome), window.run_id
 
 
 def _futures_probability(bet, market, leg, window_of):
@@ -116,36 +115,3 @@ def _require_open(window):
 def _require_newer_run(bet, latest_run_id):
     if latest_run_id == bet.run_id:
         raise NoOffer("Odds have not changed since this bet was placed; remove it instead")
-
-
-def _score_matrix(run_id):
-    """The run's scores and each roster's column in them; None when the run's matrix was never stored."""
-    rows = query_analytics(MATRIX_SQL, {"run_id": run_id})
-    if not rows:
-        return None
-    [row] = rows
-    roster_ids = [int(roster_id) for roster_id in row["roster_ids"].split(",")]
-    scores = win_rules.decode_totals(row["totals"], row["n_sims"], len(roster_ids))
-    columns = {roster_id: column for column, roster_id in enumerate(roster_ids)}
-    return scores, columns
-
-
-def _outcome(market, leg, scores, columns):
-    if market.name == "moneyline":
-        first, second = market.teams
-        picked_id = int(leg.selection)
-        other_id = second if picked_id == first else first
-        return win_rules.moneyline(scores, _column(columns, picked_id), _column(columns, other_id))
-    if market.name == "team_total":
-        [roster_id] = market.teams
-        # The bet's own line, never the odds table's current one.
-        return win_rules.team_total(scores, _column(columns, roster_id), leg.line, leg.selection)
-    if market.name == "highest_scorer":
-        return win_rules.highest_scorer(scores, _column(columns, int(leg.selection)))
-    return win_rules.lowest_scorer(scores, _column(columns, int(leg.selection)))
-
-
-def _column(columns, roster_id):
-    if roster_id not in columns:
-        raise NoOffer(CANNOT_PRICE)
-    return columns[roster_id]
