@@ -1,20 +1,19 @@
 """What a pending bet is worth now, and the cash-out offered for it.
 
 A bet's fair value is its payout times its chance of winning in the latest run, at the bet's own
-line; the offer is 95% of that. A weekly bet's chance comes from the week's latest score matrix in
-`simulation_totals`, through the win rule its market was priced with. A futures bet's chance is the
-latest futures quote, because the standings simulation behind it is not stored as a matrix. There is
-no offer while the bet's own run is still the latest, because removing the bet is the way out then.
-Nothing here moves money.
+line; the offer is 95% of that. A weekly bet's chance is the share of the week's latest score matrix
+in `simulation_totals` in which every leg wins, through the win rule each leg's market was priced
+with, so a single and a parlay are priced alike. A futures bet's chance is the latest futures quote,
+because the standings simulation behind it is not stored as a matrix. There is no offer while the
+bet's own run is still the latest, because removing the bet is the way out then. Nothing here moves
+money.
 """
 
 from dataclasses import dataclass
 from functools import cache, partial
 
-from pipeline import markets as win_rules
-
 from .markets import MarketError, find_quote, parse_key
-from .matrices import MissingMatrix, leg_outcome, score_matrix
+from .matrices import MissingMatrix, joint_probability, leg_outcome, score_matrix
 from .routes.helpers import get_current_week, query_analytics
 from .windows import betting_window
 
@@ -56,18 +55,18 @@ def offers_for(bets, now=None):
 
 
 def _price(bet, window_of):
-    if bet.status != "pending" or len(bet.legs) != 1:
+    if bet.status != "pending" or not bet.legs:
         raise NoOffer(NO_OFFER)
-    [leg] = bet.legs
     try:
-        market = parse_key(leg.market)
+        markets = [parse_key(leg.market) for leg in bet.legs]
     except MarketError:
         raise NoOffer(NO_OFFER) from None
 
-    if market.week is None:
-        probability, run_id = _futures_probability(bet, market, leg, window_of)
+    # A futures bet is always a single: parlays refuse futures legs.
+    if markets[0].week is None:
+        probability, run_id = _futures_probability(bet, markets[0], bet.legs[0], window_of)
     else:
-        probability, run_id = _weekly_probability(bet, market, leg, window_of)
+        probability, run_id = _weekly_probability(bet, markets, window_of)
 
     fair_value = (bet.amount + bet.potential_win) * probability
     amount = round(OFFER_SHARE * fair_value, 2)
@@ -77,16 +76,20 @@ def _price(bet, window_of):
     return Offer(bet.id, amount, fair_value, probability, run_id)
 
 
-def _weekly_probability(bet, market, leg, window_of):
+def _weekly_probability(bet, markets, window_of):
+    """The share of the latest run's sims in which every leg wins at its own line and selection."""
     window = window_of(bet.week)
     _require_open(window)
     _require_newer_run(bet, window.run_id)
 
     try:
-        outcome = leg_outcome(market, leg.selection, leg.line, score_matrix(window.run_id))
+        matrix = score_matrix(window.run_id)
+        outcomes = [
+            leg_outcome(market, leg.selection, leg.line, matrix) for market, leg in zip(markets, bet.legs, strict=True)
+        ]
     except (MissingMatrix, KeyError):
         raise NoOffer(CANNOT_PRICE) from None
-    return win_rules.probability(outcome), window.run_id
+    return joint_probability(outcomes), window.run_id
 
 
 def _futures_probability(bet, market, leg, window_of):
