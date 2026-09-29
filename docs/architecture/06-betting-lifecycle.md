@@ -1,12 +1,12 @@
 # 06 – Betting Lifecycle
 
-All money is fake. Every user starts with **1,000**. Code: `app/routes/betting.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/windows.py`, `app/ledger.py`, `app/markets.py`, `app/settlement.py`.
+All money is fake. Every user starts with **1,000**. Code: `app/routes/betting.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/windows.py`, `app/ledger.py`, `app/markets.py`, `app/settlement.py`, `app/cashout.py`.
 
 ## Betting period (one per week)
 
 Betting is open when the odds on the page come from a run made before the next kickoff, and nothing else. `betting_window(week)` in `app/windows.py` reads the week's `BettingPeriod`, the admin's lock and the week's latest `simulation_runs` row ([04](04-data-model.md)) into one of three states:
 
-| State | When | Place, remove |
+| State | When | Place, remove, cash out |
 |---|---|---|
 | `open` | the period exists and is neither settled nor locked, and now is before the latest run's `window_closes_at` | allowed |
 | `paused` | the same, but the run's window has closed and no newer run has published: Thursday night until the Friday rerun, Sunday morning until the week is settled | refused, `"Betting is paused until the odds update"` |
@@ -30,7 +30,7 @@ stateDiagram-v2
 The window comes from the runs: Wednesday's run closes at Thursday's kickoff, the Friday rerun after Thursday's game closes at Sunday's first kickoff, and a Saturday rerun the same. With no rerun published, the latest run's window has closed and betting stays paused, which is the safe default. A window closing never flips `is_locked`; the lock is the admin's backstop and kill switch.
 
 - `lock_time` is entered in the admin form as a naive datetime and **stored as UTC**. Set it at the week's last window close, Sunday's first kickoff (week 4: `2026-10-04T13:30` UTC), never Thursday's: a Thursday lock keeps the week shut after the Friday rerun.
-- The lock is lazy: `check_betting_period_lock(week)` flips `is_locked` when it sees `now ≥ lock_time`. `betting_window` is its one caller, so the lock still flips on the first `place_bet`, `remove_bet`, `my_bets` or `betting_window` request after `lock_time`; the `/betting` route itself doesn't check it.
+- The lock is lazy: `check_betting_period_lock(week)` flips `is_locked` when it sees `now ≥ lock_time`. `betting_window` is its one caller, so the lock still flips on the first `place_bet`, `remove_bet`, `cash_out`, `my_bets` or `betting_window` request after `lock_time`; the `/betting` route itself doesn't check it.
 - **Current week** = highest-numbered unsettled period. Settling week *N* moves the site to the next unsettled period; if there is none, it falls back to week 10. Creating the week *N+1* period before settling *N* moves the site forward immediately.
 - `settle_week` **only sets `is_settled`**. It doesn't touch bets; pending bets stay pending. The admin page shows only the current week's bets, so settle them ([Settlement](#settlement)) before creating the next week's period or marking this one settled.
 
@@ -44,11 +44,41 @@ stateDiagram-v2
     pending --> lost: admin settle_outcomes<br/>or settle_bet(won=false)
     pending --> push: admin settle_outcomes,<br/>tie or score on the line<br/>(balance += amount)
     pending --> void: admin void_bet<br/>(balance += amount)
+    pending --> cashed_out: cash_out while the window is open<br/>and a newer run has moved the odds<br/>(balance += offer)
 ```
 
 The app judges each weekly bet placed by market key against the league's published scores, and the admin confirms the outcomes it shows ([Settlement](#settlement)); futures and legacy bets are settled by hand as won or lost. A bet's legs settle with it, taking its status and `settled_at` in the same transaction. A push and a void both return the stake. A push is a result and stays on the record: the account page lists it as Push, and the leaderboard's popular-bet counts include it and show Push when nothing in the group won or lost. A void means the bet should never have stood, so it leaves `bets_placed` as a remove does, the account page lists it as Void, and the popular-bet counts leave it out with the removed bets.
 
-A pending bet can be removed while its week's window is open and its market still shows the run it was priced at. Once a new run is published for the market, `remove_bet` refuses with `"Odds have changed since this bet was placed"` and the bet rides to settlement. A legacy bet has no market to check and is removable while the window is open. `my_bets` reports the rule as each bet's `removable`, and the betting page shows the cancel button only when it is true. A removed bet keeps its row with status `removed` and its legs `void`; the account page lists it as Removed, and the leaderboard's popular-bet counts leave it out.
+A pending bet can be removed while its week's window is open and its market still shows the run it was priced at. Once a new run is published for the market, `remove_bet` refuses with `"Odds have changed since this bet was placed"`, and removal gives way to cash-out. A legacy bet has no market to check and is removable while the window is open. `my_bets` reports the rule as each bet's `removable`, and the betting page shows the cancel button only when it is true. A removed bet keeps its row with status `removed` and its legs `void`; the account page lists it as Removed, and the leaderboard's popular-bet counts leave it out.
+
+### Cash-out
+
+Once a newer run has moved a bet's odds, the bettor can close it for 95% of its fair value in that run, while the window is open; otherwise it rides to settlement. `app/cashout.py` prices the offer and never moves money:
+
+```
+fair value = (amount + potential_win) × p_win      p_win from the latest run, at the bet's own line
+offer      = round(0.95 × fair value, 2)
+```
+
+| | Weekly bet | Futures bet |
+|---|---|---|
+| Latest run | `betting_window(bet.week).run_id` | the `run_id` of the market's latest futures quote |
+| Window that must be open | the bet's week | the current week |
+| `p_win` | the share of that run's `simulation_totals` sims the bet wins, through the market's win rule, at the leg's own line and selection | the quote's `probability` |
+
+The 5% margin covers news the latest run has not seen and keeps holding a bet the better choice when the odds have barely moved. The latest run must differ from the bet's `run_id`, so a bet is either removable or offered, never both. `my_bets` carries each bet's offer as `cash_out_offer`, and `POST /api/cash_out/<id>` sends back the offer the page showed. The route recomputes it and refuses without moving money when:
+
+| Refusal | When |
+|---|---|
+| `"Bet not found"` | the bet is not the user's or not pending, or another request closed it first |
+| `"No offer for this bet"` | the bet has no legs (a legacy bet) or more than one, or its market key fails to parse |
+| `"Betting is paused until the odds update"`, `"Betting is closed for week 4"` | the window is not open; the admin's lock reads as closed |
+| `"Odds have not changed since this bet was placed; remove it instead"` | the latest run is the bet's own |
+| `"No offer until the next run: the standings are behind"` | futures: the run's `standings_through_week` is below the current week − 1 |
+| `"No offer: the latest run cannot price this bet"` | the bet wins in every sim or in none, the latest run has no stored matrix or no column for a roster in the key, the futures market or selection is gone from the latest run, or the offer rounds below one cent |
+| `"Offer has changed"` | the recomputed offer differs from the one sent at two decimals; the reply adds the new `offer` |
+
+Only the profit or loss of a cash-out, `offer − amount`, reaches `total_pnl` and a leaderboard, and it posts to the week the cash-out is taken, not the bet's week, so cashing out a week-4 futures bet in week 9 leaves week 4's leaderboard as it was. The bet keeps its row with status `cashed_out`, the result, and the offer, run and time it was taken at, which is the log the margin is reviewed against. The account page lists it as Cashed out with its signed result. The leaderboard counts it as placed: the popular-bet counts include it with neither a win nor a loss and show Cashed out when every bet in the group was, and the best- and worst-bet lists, which read only won and lost bets, leave it out.
 
 ### Markets
 
@@ -127,7 +157,7 @@ Both cards show the current week, and the page has no week switch; `settlement_p
 
 ## Accounting
 
-Three places hold money state. `app/ledger.py` is the only code that changes them, with one function per event (`open_week`, `place`, `remove`, `settle`, `push`, `void`):
+Three places hold money state. `app/ledger.py` is the only code that changes them, with one function per event (`open_week`, `place`, `remove`, `settle`, `push`, `void`, `cash_out`):
 
 ```mermaid
 flowchart LR
@@ -157,16 +187,17 @@ flowchart LR
 | **Settle lost** | total_pnl −= amount | active −= amount, settled_pnl −= amount, ending = balance | `lost`, result = −amount; legs `lost` |
 | **Push** | balance += amount | active −= amount, ending = balance | `push`, result = 0; legs `push` |
 | **Void** | balance += amount | placed −1, active −= amount, ending = balance | `void`, result = 0; legs `void` |
+| **Cash out** | balance += offer; total_pnl += offer − amount | the bet's week: active −= amount, ending = balance; the cash-out week: settled_pnl += offer − amount, ending = balance | `cashed_out`, result = offer − amount, `cash_out_amount` = offer, `cash_out_run_id`, `cashed_out_at`; legs `cashed_out` |
 
-A push leaves `total_pnl`, `settled_pnl`, `bets_placed` and `bets_won` as they were: the bet was placed and settled for nothing. A void takes the bet out of `bets_placed`, as a remove does, because it should never have counted. Settle, push and void set `settled_at` on the bet and its legs.
+A push leaves `total_pnl`, `settled_pnl`, `bets_placed` and `bets_won` as they were: the bet was placed and settled for nothing. A void takes the bet out of `bets_placed`, as a remove does, because it should never have counted. A cash-out leaves `bets_placed` and `bets_won` as they were, and when the bet's week is the cash-out week one row takes both changes. Settle, push, void and cash out set `settled_at` on the bet and its legs.
 
-`weekly_stats.pnl` includes the cost of still-open bets (balance-based), while `settled_pnl` only counts resolved bets. The leaderboard uses `users.total_pnl` for all-time and `weekly_stats.settled_pnl` for weekly rankings.
+`weekly_stats.pnl` includes the cost of still-open bets (balance-based), while `settled_pnl` only counts resolved bets. The leaderboard uses `users.total_pnl` for all-time and `weekly_stats.settled_pnl` for weekly rankings, and the account page's Weekly P&L shows `settled_pnl` too, so a cash-out's returned stake never reads as profit anywhere.
 
 There is no ledger table: balances change in place, so history can only be reconstructed from `bets`.
 
 ### Concurrent requests
 
-Place, remove, settle, push and void each run as one transaction that opens with a conditional guard: a statement that changes a row only while the event is still allowed. The route commits once when the guard changed a row and rolls back when it changed none; `settle_outcomes` does this once per bet:
+Place, remove, settle, push, void and cash out each run as one transaction that opens with a conditional guard: a statement that changes a row only while the event is still allowed. The route commits once when the guard changed a row and rolls back when it changed none; `settle_outcomes` does this once per bet:
 
 | Event | Guard | When it changes no row |
 |---|---|---|
@@ -175,7 +206,8 @@ Place, remove, settle, push and void each run as one transaction that opens with
 | **Settle** | `UPDATE bets SET status = :status, result = :result, settled_at = :now WHERE id = :bet AND status = 'pending'` | `"Bet already settled"` from `settle_bet`; `settle_outcomes` skips the bet as `"already settled"` |
 | **Push** | `UPDATE bets SET status = 'push', result = 0, settled_at = :now WHERE id = :bet AND status = 'pending'` | `settle_outcomes` skips the bet as `"already settled"` |
 | **Void** | `UPDATE bets SET status = 'void', result = 0, settled_at = :now WHERE id = :bet AND status = 'pending'` | `"Bet already settled"` from `void_bet` |
+| **Cash out** | `UPDATE bets SET status = 'cashed_out', result = :result, cash_out_amount = :offer, cash_out_run_id = :run_id, cashed_out_at = :now, settled_at = :now WHERE id = :bet AND status = 'pending'` | `"Bet not found"` |
 
 The statements after the guard change the stored values by SQL arithmetic (`bets_placed = bets_placed + 1`) and read `ending_balance` and `pnl` from the user's balance by subquery, so no request writes back a number it read earlier. The effects table above therefore holds when requests arrive together: a stake never takes a balance below zero, and a bet is paid or refunded at most once. On PostgreSQL a guard that meets a row another request is changing waits for that request to finish, then re-checks its condition against the new value; SQLite runs one writer at a time.
 
-The week's `weekly_stats` row is created in its own short transaction before any money moves. When two requests create it at once, the loser fails on `uq_user_week`, rolls back and uses the winner's row. `place_bet`'s balance check before the guard is only an early answer, and `new_balance` in the reply is re-read from the database after the commit.
+The week's `weekly_stats` row is created in its own short transaction before any money moves; a cash-out opens the current week's row this way before its guard. When two requests create it at once, the loser fails on `uq_user_week`, rolls back and uses the winner's row. `place_bet`'s balance check before the guard is only an early answer, and `new_balance` in the reply is re-read from the database after the commit.
