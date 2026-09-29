@@ -38,7 +38,7 @@ flowchart LR
 | Code | Git checkout at `/opt/tncasino` |
 | Charts | `/var/lib/tncasino/analytics/`, outside the checkout so `git pull` doesn't touch it |
 
-`gunicorn` is not in `requirements.txt`; it is installed on the server separately *(unverified)*. No dependency versions are pinned.
+`gunicorn` is not in `requirements.txt`; the server's venv (Python 3.12.3, checked 2026-09-29) holds it and 30 other hand-installed packages, and no `numpy`, which the app has needed since B7 ([08](08-constraints-and-debt.md#ops)). Every line of `requirements.txt` is pinned exactly to the version a fresh install resolved on 2026-09-29; the CI jobs, a fresh Linux venv and a fresh Windows venv all install the same set.
 
 ## Three independent release paths
 

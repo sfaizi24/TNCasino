@@ -88,7 +88,8 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 |---|---|---|
 | M | Single droplet for app and database; backup strategy is not documented. | [07](07-deployment-and-ops.md) |
 | M | Deploys are a manual `ssh … git pull` with no CI gate or rollback step; code, data, and charts are released independently. | `CLAUDE.md` |
-| M | No pinned dependency versions; `gunicorn` isn't in `requirements.txt`. | `requirements.txt` |
+| M | The production venv is a hand-installed subset on Python 3.12 (31 packages, `gunicorn` among them, none of it from `requirements.txt`), and it has no `numpy`. Since B7, `app/settlement.py` imports `pipeline/markets.py`, which imports numpy, so the next deploy must install numpy (or the requirements file) before the restart or gunicorn fails at import. The requirements file also carries the scraping and notebook stack the droplet does not need; splitting it is WP9's. | `requirements.txt`, `/opt/tncasino/venv` |
+| L | Every requirement is pinned exactly (PR 7, 2026-09-29), so security and bug-fix releases arrive only through a deliberate edit to `requirements.txt`. | `requirements.txt` |
 | L | No health check, error tracking, or alerting. | — |
 | L | No `.env.example`. | — |
 
