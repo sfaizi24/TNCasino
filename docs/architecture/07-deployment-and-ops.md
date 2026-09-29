@@ -89,15 +89,15 @@ Runs Flask on `0.0.0.0:5000` against whatever `DATABASE_URL` is set. The local `
 
 ## Tests
 
-709 tests in `tests/`, running in about 40 seconds. The app tests use in-memory SQLite (`StaticPool`); `test_balance_race.py` builds a file-backed SQLite app (`file_backed_app` in `conftest.py`) so twenty threads really race. The pipeline tests under `tests/pipeline/` run on scratch SQLite files and recorded fixtures, never the network or the real databases.
+801 tests in `tests/`, running in about 40 seconds. The app tests use in-memory SQLite (`StaticPool`); `test_balance_race.py` builds a file-backed SQLite app (`file_backed_app` in `conftest.py`) so twenty threads really race. The pipeline tests under `tests/pipeline/` run on scratch SQLite files and recorded fixtures, never the network or the real databases.
 
 | Area | Files | Covers |
 |---|---|---|
 | Fixtures | `conftest.py` | App fixture, logged-in/admin clients (faked via `sess["_user_id"]`), `analytics_tables` (hand-written DDL for the analytics tables, with `season` and `run_id`), `seeded_analytics` (2026 week 10), `file_backed_app` |
-| Markets and money (128) | `test_markets.py`, `test_betting.py`, `test_settlement.py`, `test_ledger.py`, `test_balance_race.py` | Market keys and quotes, placing, removing and settling by key, the refusals, accounting, lock enforcement, guarded balance changes, the twenty-thread race |
-| Odds and pages (75) | `test_odds.py`, `test_leaderboard.py`, `test_admin.py`, `test_admin_pipeline.py`, `test_helpers.py`, `test_models.py` | `query_analytics`, team mapping, odds and analytics endpoints against seeded tables, leaderboard rankings, admin access and periods, the pipeline dashboard, current week and lazy lock, ORM defaults and migrations |
+| Markets and money (192) | `test_markets.py`, `test_betting.py`, `test_settlement.py`, `test_settlement_outcomes.py`, `test_ledger.py`, `test_balance_race.py` | Market keys and quotes, placing, removing and settling by key, outcomes from the published scores, push and void, the admin preview, the refusals, accounting, lock enforcement, guarded balance changes, the twenty-thread race |
+| Odds and pages (76) | `test_odds.py`, `test_leaderboard.py`, `test_admin.py`, `test_admin_pipeline.py`, `test_helpers.py`, `test_models.py` | `query_analytics`, team mapping, odds and analytics endpoints against seeded tables, leaderboard rankings, admin access and periods, the pipeline dashboard, current week and lazy lock, ORM defaults and migrations |
 | Legacy scrapers (20) | `test_scrape.py`, `test_scrapers.py` | Week normalization, `validate_scraping` pass/fail rules, pure parsing helpers (no network) |
-| Pipeline (486) | `tests/pipeline/` (28 files) | One file per step or shared module: settings, runner, the CLI, sources, teams, names, scrape, verify, clean, match, stats, validate, league, lineups, waivers, sampling, simulate, odds, playoffs, standings, accuracy, fit, evaluate, calibrate, publish, legacy migration |
+| Pipeline (513) | `tests/pipeline/` (29 files) | One file per step or shared module: settings, runner, the CLI, sources, teams, names, scrape, verify, clean, match, stats, validate, league, lineups, waivers, params, sampling, simulate, the win rules, odds, playoffs, standings, accuracy, fit, evaluate, calibrate, publish, legacy migration |
 
 **Not covered:** the real OAuth round trip, `/account/update-profile` and CSRF, `pages.py` routes, the legacy `scripts/publish.py`, the legacy scrapers' network paths, notebooks, JavaScript, and anything Postgres-specific (the tests run on SQLite, prod runs on Postgres). The analytics DDL in `conftest.py` is maintained by hand and can drift from what the pipeline actually produces.
 

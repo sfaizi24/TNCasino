@@ -102,7 +102,7 @@ All prices are **fair odds with no vig**, rounded to whole numbers and stored as
 
 Chances are not clamped, so a selection that wins one simulation in 50,000 is priced `+4999900` (the owner's decision of 2026-09-28, `docs/design/odds-models-2026.md` §10). A chance of exactly 0 or 1, a selection that wins in no simulation or in every one, has no price: its row keeps the probability, and the price column is NULL, which marks the selection as not offered. Every market shares the one converter in `pipeline/steps/odds.py`.
 
-**Win rules.** The rule of every market lives in `pipeline/markets.py`, and the odds step prices through it. The module imports only numpy and the standard library, so the Flask app can re-price a bet with the same rules. A rule reads a run's score matrix, one row per simulation and one column per roster, and says for each simulation whether the selection won and whether it pushed:
+**Win rules.** The rule of every market lives in `pipeline/markets.py`, and the odds step prices through it. The module imports only numpy and the standard library, so the Flask app can use the same rules: settlement judges every keyed bet through them ([06](06-betting-lifecycle.md#settlement)), and re-pricing will. A rule reads a run's score matrix, one row per simulation and one column per roster, and says for each simulation whether the selection won and whether it pushed:
 
 | Rule | Wins | Pushes |
 |---|---|---|

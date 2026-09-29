@@ -23,7 +23,7 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 | M | **Two week formats.** `"Week N"` text in `projections*` tables, integer everywhere else. | `backend/scrapers/database.py`, notebooks 04/05 |
 | M | **No shared "current week".** The site uses the highest unsettled `BettingPeriod`; each notebook has its own `CURRENT_WEEK` (currently 16 in 01/05/06/07 and 14 in 08/09). | `app/routes/helpers.py:57`, notebook config cells |
 | M | **Single league and season baked in.** Owner-name map for 12 specific people, `LEAGUE_ID` default, 2025 bye weeks, 8-team playoff cutoff, fallback week 10. | `helpers.py:14`, `odds.py:22`, `scraper_sleeper_league.py:573`, `helpers.py:57` |
-| M | **Implicit offline→online contract.** Column names the app reads are not declared anywhere; `publish.py` copies whatever the notebooks produced, and `tests/conftest.py` re-declares the schema by hand. `simulation_totals` is the first published table with a declared schema; its encoding lives in `pipeline/markets.py`, which the app will import. | `scripts/publish.py`, `tests/conftest.py` |
+| M | **Implicit offline→online contract.** Column names the app reads are not declared anywhere; `publish.py` copies whatever the notebooks produced, and `tests/conftest.py` re-declares the schema by hand. `simulation_totals` is the first published table with a declared schema; its encoding lives in `pipeline/markets.py`, which the app already imports for the win rules; the encoding side waits for parlays and cash-out. | `scripts/publish.py`, `tests/conftest.py` |
 
 ## Pipeline
 

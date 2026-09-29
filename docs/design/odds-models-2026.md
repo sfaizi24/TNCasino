@@ -817,6 +817,17 @@ through an admin preview, on atomic updates.
 **Runner-up.** Manual settlement as today, with push and void buttons added. What would change my
 mind: B7 slipping past the first parlay release, since parlay settlement by hand is error-prone.
 
+**Implementation notes (B7, 2026-09-28).** `app/settlement.py` judges every keyed bet through the
+win rules in `pipeline/markets.py` on a one-row score matrix, the week's played scores in sorted
+roster order, so a market settles by the rule that priced it. Nothing is rounded: Sleeper's scores
+and the app's lines both carry two decimals, and the same two-decimal value always reads back as
+the same float, so a score on its line pushes. A roster with 0 points counts as not yet played and
+its bets stay undecided, as do futures and legless legacy bets, which the admin settles by hand.
+The admin page previews the week's scores and each bet's outcome, then settles the week in one
+confirmation; a bet settles only when its recomputed outcome matches the one previewed. Void
+closes a bet that should not stand and refunds the stake. The stat-correction hypothesis above is
+still untested; week 4 is the first chance to compare Tuesday's and Friday's fetches.
+
 ---
 
 ## 7. Validation on 2025 weeks 10–16
@@ -1051,7 +1062,7 @@ first, because every later package stores or reads it.
   limited to the latest run. Driving risk: time zones, the lazy lock, and behaviour when the laptop
   is off.
 - **B7.** The admin preview, push and void, settlement by key. Driving risk: a wrongly computed
-  outcome pays wrong money; stat corrections.
+  outcome pays wrong money; stat corrections. Shipped 2026-09-28 (merge 68da2e4).
 - **B8.** The parlay slip, the refusal rules with a refusal log, the per-worker matrix cache,
   parlay settlement. Driving risk: the page and the cache.
 - **B9.** Offers from the latest run for futures and weekly bets, and the week the profit posts to.
