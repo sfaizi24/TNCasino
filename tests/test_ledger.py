@@ -5,20 +5,24 @@ from sqlalchemy import text
 
 from app import ledger
 from app.database import db
-from app.models import Bet, WeeklyStats
+from app.models import Bet, BetLeg, WeeklyStats
 from tests.conftest import RUN_ID
 
 STAKE = {"market": "2026-w10-team_total-1", "selection": "under", "line": 110.5, "run_id": RUN_ID, "amount": 100}
+# The run a cash-out is priced from: one published after the bet's.
+LATER_RUN_ID = "2026w10-20261113T140000"
 
 EVENTS = {
     "settle": partial(ledger.settle, won=True),
     "push": ledger.push,
     "void": ledger.void,
     "remove": ledger.remove,
+    "cash_out": partial(ledger.cash_out, offer=137.5, run_id=LATER_RUN_ID, week=10),
 }
 
 
 def _bet(user, amount):
+    leg = BetLeg(season=2026, week=10, market="2026-w10-highest_scorer", selection="1", price=100, probability=0.5)
     return Bet(
         user_id=user.id,
         bet_type="highest_scorer",
@@ -28,6 +32,7 @@ def _bet(user, amount):
         odds="+100",
         potential_win=amount,
         status="pending",
+        legs=[leg],
     )
 
 
@@ -49,19 +54,19 @@ def _set_stored_balance(user, balance):
     )
 
 
-def _money(user):
-    week = db.session.query(WeeklyStats).filter_by(user_id=user.id, week=10).one()
+def _money(user, week=10):
+    stats = db.session.query(WeeklyStats).filter_by(user_id=user.id, week=week).one()
     return {
         "account_balance": user.account_balance,
         "total_pnl": user.total_pnl,
         "bets": db.session.query(Bet).count(),
-        "starting_balance": week.starting_balance,
-        "ending_balance": week.ending_balance,
-        "pnl": week.pnl,
-        "active_bets_amount": week.active_bets_amount,
-        "settled_pnl": week.settled_pnl,
-        "bets_placed": week.bets_placed,
-        "bets_won": week.bets_won,
+        "starting_balance": stats.starting_balance,
+        "ending_balance": stats.ending_balance,
+        "pnl": stats.pnl,
+        "active_bets_amount": stats.active_bets_amount,
+        "settled_pnl": stats.settled_pnl,
+        "bets_placed": stats.bets_placed,
+        "bets_won": stats.bets_won,
     }
 
 
@@ -173,6 +178,12 @@ def test_removing_a_settled_bet_refunds_nothing(user):
         ("push", "void"),
         ("remove", "void"),
         ("void", "remove"),
+        ("cash_out", "cash_out"),
+        ("settle", "cash_out"),
+        ("cash_out", "settle"),
+        ("void", "cash_out"),
+        ("remove", "cash_out"),
+        ("cash_out", "remove"),
     ],
 )
 def test_an_event_on_a_bet_that_is_no_longer_pending_changes_nothing(user, first, second):
@@ -230,3 +241,98 @@ def test_second_bet_of_the_week_adds_to_the_counters(user):
         "bets_placed": 2,
         "bets_won": 0,
     }
+
+
+@pytest.mark.parametrize(("offer", "profit"), [(137.5, 37.5), (62.5, -37.5)])
+def test_cash_out_in_the_bets_week_books_the_profit_there(user, offer, profit):
+    bet = _placed_bet(user)
+
+    assert ledger.cash_out(bet, offer, LATER_RUN_ID, week=10) is True
+    db.session.commit()
+
+    assert _money(user) == {
+        "account_balance": 1000.0 + profit,
+        "total_pnl": profit,
+        "bets": 1,
+        "starting_balance": 1000.0,
+        "ending_balance": 1000.0 + profit,
+        "pnl": profit,
+        "active_bets_amount": 0.0,
+        "settled_pnl": profit,
+        "bets_placed": 1,
+        "bets_won": 0,
+    }
+
+
+@pytest.mark.parametrize(("offer", "profit"), [(137.5, 37.5), (62.5, -37.5)])
+def test_cash_out_in_a_later_week_books_the_profit_in_that_week(user, offer, profit):
+    bet = _placed_bet(user)
+    ledger.open_week(user.id, 11)
+
+    assert ledger.cash_out(bet, offer, LATER_RUN_ID, week=11) is True
+    db.session.commit()
+
+    assert _money(user, week=10) == {
+        "account_balance": 1000.0 + profit,
+        "total_pnl": profit,
+        "bets": 1,
+        "starting_balance": 1000.0,
+        "ending_balance": 1000.0 + profit,
+        "pnl": profit,
+        "active_bets_amount": 0.0,
+        "settled_pnl": 0.0,
+        "bets_placed": 1,
+        "bets_won": 0,
+    }
+    assert _money(user, week=11) == {
+        "account_balance": 1000.0 + profit,
+        "total_pnl": profit,
+        "bets": 1,
+        "starting_balance": 900.0,
+        "ending_balance": 1000.0 + profit,
+        "pnl": offer,
+        "active_bets_amount": 0.0,
+        "settled_pnl": profit,
+        "bets_placed": 0,
+        "bets_won": 0,
+    }
+
+
+def test_a_cash_out_for_the_stake_books_no_profit_in_either_week(user):
+    bet = _placed_bet(user, 100.0)
+    ledger.open_week(user.id, 11)
+
+    assert ledger.cash_out(bet, 100.0, LATER_RUN_ID, week=11) is True
+    db.session.commit()
+
+    assert user.account_balance == 1000.0
+    assert user.total_pnl == 0.0
+    assert _money(user, week=10)["settled_pnl"] == 0.0
+    assert _money(user, week=11)["settled_pnl"] == 0.0
+
+
+def test_a_second_cash_out_in_a_later_week_changes_nothing(user):
+    bet = _placed_bet(user)
+    ledger.open_week(user.id, 11)
+    assert ledger.cash_out(bet, 137.5, LATER_RUN_ID, week=11) is True
+    db.session.commit()
+    cashed_out = (_money(user, week=10), _money(user, week=11))
+
+    assert ledger.cash_out(bet, 150.0, LATER_RUN_ID, week=11) is False
+    db.session.rollback()
+
+    assert (_money(user, week=10), _money(user, week=11)) == cashed_out
+
+
+def test_cash_out_records_the_offer_on_the_bet_and_closes_its_legs(user):
+    bet = _placed_bet(user)
+
+    ledger.cash_out(bet, 62.5, LATER_RUN_ID, week=10)
+    db.session.commit()
+
+    cashed_out = db.session.get(Bet, bet.id)
+    assert (cashed_out.status, cashed_out.result) == ("cashed_out", -37.5)
+    assert (cashed_out.cash_out_amount, cashed_out.cash_out_run_id) == (62.5, LATER_RUN_ID)
+    assert cashed_out.cashed_out_at is not None
+    assert cashed_out.settled_at == cashed_out.cashed_out_at
+    assert [(leg.status, leg.settled_at) for leg in cashed_out.legs] == [("cashed_out", cashed_out.cashed_out_at)]

@@ -44,7 +44,8 @@ def place(bet):
 
     db.session.add(bet)
     _update_weekly_stats(
-        bet,
+        bet.user_id,
+        bet.week,
         bets_placed=WeeklyStats.bets_placed + 1,
         active_bets_amount=WeeklyStats.active_bets_amount + bet.amount,
     )
@@ -59,7 +60,8 @@ def remove(bet):
     _execute(update(BetLeg).where(BetLeg.bet_id == bet.id).values(status="void"))
     _execute(update(User).where(User.id == bet.user_id).values(account_balance=User.account_balance + bet.amount))
     _update_weekly_stats(
-        bet,
+        bet.user_id,
+        bet.week,
         bets_placed=WeeklyStats.bets_placed - 1,
         active_bets_amount=WeeklyStats.active_bets_amount - bet.amount,
     )
@@ -88,6 +90,32 @@ def void(bet):
     return _close(bet, "void", result=0.0, payout=bet.amount, bets_placed=WeeklyStats.bets_placed - 1)
 
 
+def cash_out(bet, offer, run_id, week):
+    """Close a pending bet for the offer; only the profit or loss, never the stake, posts to `week`."""
+    cashed_out_at = datetime.now(UTC)
+    result = round(offer - bet.amount, 2)
+    close = (
+        update(Bet)
+        .where(Bet.id == bet.id, Bet.status == "pending")
+        .values(
+            status="cashed_out",
+            result=result,
+            cash_out_amount=offer,
+            cash_out_run_id=run_id,
+            cashed_out_at=cashed_out_at,
+            settled_at=cashed_out_at,
+        )
+    )
+    if _execute(close).rowcount == 0:
+        return False
+
+    _execute(update(BetLeg).where(BetLeg.bet_id == bet.id).values(status="cashed_out", settled_at=cashed_out_at))
+    _pay(bet.user_id, offer, result)
+    _update_weekly_stats(bet.user_id, bet.week, active_bets_amount=WeeklyStats.active_bets_amount - bet.amount)
+    _update_weekly_stats(bet.user_id, week, settled_pnl=WeeklyStats.settled_pnl + result)
+    return True
+
+
 def _close(bet, status, result, payout, **counters):
     settled_at = datetime.now(UTC)
     close = (
@@ -99,13 +127,10 @@ def _close(bet, status, result, payout, **counters):
         return False
 
     _execute(update(BetLeg).where(BetLeg.bet_id == bet.id).values(status=status, settled_at=settled_at))
-    _execute(
-        update(User)
-        .where(User.id == bet.user_id)
-        .values(account_balance=User.account_balance + payout, total_pnl=User.total_pnl + result)
-    )
+    _pay(bet.user_id, payout, result)
     _update_weekly_stats(
-        bet,
+        bet.user_id,
+        bet.week,
         active_bets_amount=WeeklyStats.active_bets_amount - bet.amount,
         settled_pnl=WeeklyStats.settled_pnl + result,
         **counters,
@@ -113,11 +138,19 @@ def _close(bet, status, result, payout, **counters):
     return True
 
 
-def _update_weekly_stats(bet, **counters):
-    balance = _balance(bet.user_id)
+def _pay(user_id, payout, result):
+    _execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(account_balance=User.account_balance + payout, total_pnl=User.total_pnl + result)
+    )
+
+
+def _update_weekly_stats(user_id, week, **counters):
+    balance = _balance(user_id)
     _execute(
         update(WeeklyStats)
-        .where(WeeklyStats.user_id == bet.user_id, WeeklyStats.week == bet.week)
+        .where(WeeklyStats.user_id == user_id, WeeklyStats.week == week)
         .values(**counters, ending_balance=balance, pnl=balance - WeeklyStats.starting_balance)
     )
 

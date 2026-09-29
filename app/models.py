@@ -49,6 +49,10 @@ class Bet(db.Model):
     week = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     settled_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    # What a cash-out paid, the run that priced it and when; null unless the bet was cashed out.
+    cash_out_amount = db.Column(db.Float, nullable=True)
+    cash_out_run_id = db.Column(db.String, nullable=True)
+    cashed_out_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     user = db.relationship(User, backref="bets")
 
@@ -67,7 +71,7 @@ class BetLeg(db.Model):
     line = db.Column(db.Numeric(7, 2, asdecimal=False), nullable=True)
     price = db.Column(db.Integer, nullable=False)
     probability = db.Column(db.Float, nullable=False)
-    # pending until the bet settles, then won, lost or push; void when the bet is removed or voided.
+    # pending until the bet closes: won, lost, push or cashed_out; void when it is removed or voided.
     status = db.Column(db.String, default="pending", nullable=False)
     settled_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
