@@ -76,10 +76,38 @@
     color: var(--tnc-blue);
 }
 
-.tnc-prize-when {
+.tnc-window {
     font-size: var(--tnc-fs-12);
     font-weight: var(--tnc-fw-bold);
+    line-height: 1.35;
     color: var(--tnc-fg-muted);
+}
+
+.tnc-window.is-open {
+    color: var(--tnc-win);
+}
+
+.tnc-window.is-paused {
+    color: var(--tnc-pending);
+}
+
+.tnc-window.is-closed {
+    color: var(--tnc-loss-soft);
+}
+
+/* The banner is a sentence, so on a phone the strip stacks and lets it wrap. */
+@media (max-width: 480px) {
+    .tnc-prize-strip {
+        flex-wrap: wrap;
+    }
+
+    .tnc-prize-divider {
+        display: none;
+    }
+
+    .tnc-prize-col-aside {
+        flex-basis: 100%;
+    }
 }
 
 .tnc-prize-divider {

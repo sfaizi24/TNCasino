@@ -1,22 +1,36 @@
 # 06 – Betting Lifecycle
 
-All money is fake. Every user starts with **1,000**. Code: `app/routes/betting.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/ledger.py`, `app/markets.py`, `app/settlement.py`.
+All money is fake. Every user starts with **1,000**. Code: `app/routes/betting.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/windows.py`, `app/ledger.py`, `app/markets.py`, `app/settlement.py`.
 
 ## Betting period (one per week)
 
+Betting is open when the odds on the page come from a run made before the next kickoff, and nothing else. `betting_window(week)` in `app/windows.py` reads the week's `BettingPeriod`, the admin's lock and the week's latest `simulation_runs` row ([04](04-data-model.md)) into one of three states:
+
+| State | When | Place, remove |
+|---|---|---|
+| `open` | the period exists and is neither settled nor locked, and now is before the latest run's `window_closes_at` | allowed |
+| `paused` | the same, but the run's window has closed and no newer run has published: Thursday night until the Friday rerun, Sunday morning until the week is settled | refused, `"Betting is paused until the odds update"` |
+| `closed` | no period, or the period is settled, or the admin's lock (`is_locked`, or `lock_time` passed), or the latest run has no window | refused, `"Bets are locked as of …"` under the lock, else `"Betting is closed for week 4"` |
+
 ```mermaid
 stateDiagram-v2
-    [*] --> Open: admin set_betting_period(week, lock_time)
-    Open --> Locked: first place_bet, remove_bet<br/>or my_bets request after lock_time (lazy)
+    [*] --> Closed: no period
+    Closed --> Open: admin set_betting_period(week, lock_time)<br/>and a published run with a window
+    Open --> Paused: the run's window_closes_at passes<br/>(the next kickoff)
+    Paused --> Open: the pipeline publishes a newer run<br/>with an open window
+    Open --> Locked: lock_time passes (lazy)<br/>or the admin locks
+    Paused --> Locked: lock_time passes (lazy)<br/>or the admin locks
     Locked --> Open: admin unlock_period<br/>(lock_time = now + 7 days)
-    Open --> Open: admin set_betting_period again<br/>(new lock_time, is_locked=false)
-    Locked --> Settled: admin settle_week
     Open --> Settled: admin settle_week
+    Paused --> Settled: admin settle_week
+    Locked --> Settled: admin settle_week
     Settled --> [*]
 ```
 
-- `lock_time` is entered in the admin form as a naive datetime and **stored as UTC**.
-- The lock is lazy: `check_betting_period_lock(week)` flips `is_locked` when it sees `now ≥ lock_time`. It is called from `place_bet`, `remove_bet`, and `my_bets` for each pending bet's `removable`; the `/betting` route itself doesn't check it.
+The window comes from the runs: Wednesday's run closes at Thursday's kickoff, the Friday rerun after Thursday's game closes at Sunday's first kickoff, and a Saturday rerun the same. With no rerun published, the latest run's window has closed and betting stays paused, which is the safe default. A window closing never flips `is_locked`; the lock is the admin's backstop and kill switch.
+
+- `lock_time` is entered in the admin form as a naive datetime and **stored as UTC**. Set it at the week's last window close, Sunday's first kickoff (week 4: `2026-10-04T13:30` UTC), never Thursday's: a Thursday lock keeps the week shut after the Friday rerun.
+- The lock is lazy: `check_betting_period_lock(week)` flips `is_locked` when it sees `now ≥ lock_time`. `betting_window` is its one caller, so the lock still flips on the first `place_bet`, `remove_bet`, `my_bets` or `betting_window` request after `lock_time`; the `/betting` route itself doesn't check it.
 - **Current week** = highest-numbered unsettled period. Settling week *N* moves the site to the next unsettled period; if there is none, it falls back to week 10. Creating the week *N+1* period before settling *N* moves the site forward immediately.
 - `settle_week` **only sets `is_settled`**. It doesn't touch bets; pending bets stay pending. The admin page shows only the current week's bets, so settle them ([Settlement](#settlement)) before creating the next week's period or marking this one settled.
 
@@ -25,7 +39,7 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> pending: place_bet<br/>(balance −= amount)
-    pending --> removed: remove_bet before lock,<br/>while its run is the latest<br/>(balance += amount)
+    pending --> removed: remove_bet while the window is open<br/>and its run is the latest<br/>(balance += amount)
     pending --> won: admin settle_outcomes<br/>or settle_bet(won=true)<br/>(balance += amount + potential_win)
     pending --> lost: admin settle_outcomes<br/>or settle_bet(won=false)
     pending --> push: admin settle_outcomes,<br/>tie or score on the line<br/>(balance += amount)
@@ -34,7 +48,7 @@ stateDiagram-v2
 
 The app judges each weekly bet placed by market key against the league's published scores, and the admin confirms the outcomes it shows ([Settlement](#settlement)); futures and legacy bets are settled by hand as won or lost. A bet's legs settle with it, taking its status and `settled_at` in the same transaction. A push and a void both return the stake. A push is a result and stays on the record: the account page lists it as Push, and the leaderboard's popular-bet counts include it and show Push when nothing in the group won or lost. A void means the bet should never have stood, so it leaves `bets_placed` as a remove does, the account page lists it as Void, and the popular-bet counts leave it out with the removed bets.
 
-A pending bet can be removed while its week is open and its market still shows the run it was priced at. Once a new run is published for the market, `remove_bet` refuses with `"Odds have changed since this bet was placed"` and the bet rides to settlement. A legacy bet has no market to check and is removable while its week is open. `my_bets` reports the rule as each bet's `removable`, and the betting page shows the cancel button only when it is true. A removed bet keeps its row with status `removed` and its legs `void`; the account page lists it as Removed, and the leaderboard's popular-bet counts leave it out.
+A pending bet can be removed while its week's window is open and its market still shows the run it was priced at. Once a new run is published for the market, `remove_bet` refuses with `"Odds have changed since this bet was placed"` and the bet rides to settlement. A legacy bet has no market to check and is removable while the window is open. `my_bets` reports the rule as each bet's `removable`, and the betting page shows the cancel button only when it is true. A removed bet keeps its row with status `removed` and its legs `void`; the account page lists it as Removed, and the leaderboard's popular-bet counts leave it out.
 
 ### Markets
 
@@ -49,7 +63,7 @@ A bet names a market by key and picks one selection in it. `app/markets.py` buil
 | `first_place` | `2026-first_place` | a roster id in the latest futures run | | `betting_odds_first_place` by season, `team_id`, at the season's highest `week` | `american_odds`, `probability` |
 | `make_playoffs` | `2026-make_playoffs-4` | `yes` | | `betting_odds_make_playoffs` by season, `team_id`, at the season's highest `week` | `american_odds`, `probability` |
 
-Only the latest published season is quoted. Weekly markets must be for the current week. Futures keys have no week; a futures bet's `week` is the current week, where its weekly stats post. After the lock, amount and balance checks, `place_bet` refuses without moving money when:
+Only the latest published season is quoted. Weekly markets must be for the current week. Futures keys have no week; a futures bet's `week` is the current week, where its weekly stats post. After the window, amount and balance checks, `place_bet` refuses without moving money when:
 
 | Refusal | When |
 |---|---|
@@ -102,6 +116,8 @@ Each outcome carries a reason the admin reads beside it: `Bob B 131.20 vs Alice 
 | `"undecided"` | the bet has no outcome from the scores published now |
 | `"already settled"` | the bet is no longer pending: settled, pushed, voided or removed |
 | `"not found"` | no bet of that week has the id |
+
+**Runbook.** When the admin sets the week's period, the lock goes at the week's last window close, Sunday's first kickoff in UTC; the runs open and close betting between Wednesday and then on their own. Locking by hand before that is the kill switch for the week.
 
 **Which scores.** `sleeper_matchups` has no `run_id` and no fetch time: publish replaces it whole from the pipeline's latest league fetch, so settlement uses whatever the last publish carried, and the app cannot tell when that fetch ran. The design's open hypothesis ([odds models §6](../design/odds-models-2026.md#6-settlement-edge-cases)) is that Sleeper's stat corrections move a few starters by a point or two after Monday night. The test is to fetch week 4's matchups on Tuesday morning and again on Friday and compare `players_points`; until the answer is known, settle on Tuesday's fetch. The admin runs the league fetch and publish on Tuesday, checks the card's scores strip, which shows exactly the points the outcomes use, and then presses the button. A bet settled from Tuesday's scores is not revisited when a correction lands later.
 

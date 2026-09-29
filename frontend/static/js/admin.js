@@ -34,6 +34,7 @@
             `;
             document.getElementById('activeWeekStatus').className = 'status-badge settled';
             document.getElementById('lockCountdown').textContent = 'Create a new betting period to enable betting';
+            document.getElementById('windowLine').textContent = '';
             document.getElementById('quickActions').innerHTML = `
                 <button class="btn btn-success btn-sm" onclick="suggestNextWeek()">Create Next Week</button>
             `;
@@ -47,6 +48,7 @@
         const now = new Date();
 
         document.getElementById('activeWeekNum').textContent = week;
+        showWindow(week);
 
         if (isLocked) {
             document.getElementById('activeWeekStatus').innerHTML = `
@@ -87,6 +89,17 @@
                 <button class="btn btn-outline btn-sm" onclick="suggestNextWeek()">Setup Week ${week + 1}</button>
             `;
         }
+    }
+
+    // The window the runs set between the admin's lock times, in the admin's own zone.
+    async function showWindow(week) {
+        const response = await fetch(`/api/betting_window?week=${week}`);
+        const betting = await response.json();
+        const when = iso => new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+        let line = 'Window: closed';
+        if (betting.state === 'open') line = `Window: open until ${when(betting.closes_at)}`;
+        if (betting.state === 'paused') line = `Window: paused since ${when(betting.closes_at)}`;
+        document.getElementById('windowLine').textContent = line;
     }
 
     function suggestNextWeek() {
