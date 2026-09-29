@@ -65,8 +65,8 @@
         <div class="tnc-acct-week">
             <div class="tnc-acct-week-label">Week {{ w.week }}</div>
             <div class="tnc-acct-week-pnl tnc-tab-num
-                {% if w.pnl > 0 %}tnc-pos{% elif w.pnl < 0 %}tnc-neg{% else %}tnc-acct-week-flat{% endif %}">
-                {{ '+' if w.pnl > 0 else ('-' if w.pnl < 0 else '') }}${{ "%.2f"|format(w.pnl|abs) }}
+                {% if w.settled_pnl > 0 %}tnc-pos{% elif w.settled_pnl < 0 %}tnc-neg{% else %}tnc-acct-week-flat{% endif %}">
+                {{ '+' if w.settled_pnl > 0 else ('-' if w.settled_pnl < 0 else '') }}${{ "%.2f"|format(w.settled_pnl|abs) }}
             </div>
         </div>
         {% endfor %}
@@ -101,10 +101,12 @@
                         <td class="tnc-tab-num
                             {% if b.status == 'won' %}tnc-pos
                             {% elif b.status == 'lost' %}tnc-neg
+                            {% elif b.status == 'cashed_out' %}{% if b.result > 0 %}tnc-pos{% elif b.result < 0 %}tnc-neg{% else %}tnc-acct-week-flat{% endif %}
                             {% elif b.status in ('removed', 'push', 'void') %}tnc-acct-week-flat
                             {% endif %}">
                             {% if b.status == 'pending' %}—
                             {% elif b.status == 'won' %}+${{ "%.2f"|format(b.result) }}
+                            {% elif b.status == 'cashed_out' %}Cashed out {{ '+' if b.result > 0 else ('-' if b.result < 0 else '') }}${{ "%.2f"|format(b.result|abs) }}
                             {% elif b.status == 'removed' %}Removed
                             {% elif b.status == 'push' %}Push
                             {% elif b.status == 'void' %}Void
