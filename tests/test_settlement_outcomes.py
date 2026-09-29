@@ -1,10 +1,12 @@
 from decimal import Decimal
 
+import numpy as np
 import pytest
 from sqlalchemy import text
 
 from app.models import Bet, BetLeg
 from app.settlement import LOST, PUSH, UNDECIDED, WON, SettlementError, TeamScore, outcome_for, team_scores
+from pipeline.markets import encode_totals
 from tests.conftest import set_points
 
 MONEYLINE = "2026-w10-moneyline-1v2"
@@ -14,6 +16,24 @@ LOWEST = "2026-w10-lowest_scorer"
 
 NAMES = {1: "Alice", 2: "Bob", 3: "Carol"}
 
+# The run a parlay was placed at, and its matrix for rosters 1, 2 and 3: roster 1 beats roster 2 in 6
+# of 10 sims, roster 3 is under 115 in 5, and both happen in 3.
+PLACEMENT_RUN = "2026w10-20261111T140000"
+PLACEMENT_TOTALS = np.array(
+    [
+        [110.0, 100.0, 100.0],
+        [120.0, 90.0, 110.0],
+        [105.0, 95.0, 114.0],
+        [110.0, 100.0, 120.0],
+        [115.0, 105.0, 130.0],
+        [125.0, 115.0, 116.0],
+        [90.0, 100.0, 100.0],
+        [95.0, 100.0, 105.0],
+        [100.0, 110.0, 120.0],
+        [80.0, 120.0, 125.0],
+    ]
+)
+
 
 def _scores(*points):
     """Scores for rosters 1, 2 and 3 in that order, where None is a roster that has not played."""
@@ -22,6 +42,28 @@ def _scores(*points):
 
 def _judge(market, selection, scores, line=None):
     return outcome_for(Bet(legs=[BetLeg(market=market, selection=selection, line=line)]), scores)
+
+
+def _parlay(*legs):
+    """A $100 parlay placed at the placement run, from (market, selection, line, price) legs with ids 1, 2, 3..."""
+    return Bet(
+        amount=100.0,
+        run_id=PLACEMENT_RUN,
+        legs=[
+            BetLeg(id=leg_id, market=market, selection=selection, line=line, price=price)
+            for leg_id, (market, selection, line, price) in enumerate(legs, 1)
+        ],
+    )
+
+
+def _store_placement_matrix(session):
+    session.execute(
+        text("""
+        INSERT INTO simulation_totals (run_id, season, week, created_at, n_sims, roster_ids, totals)
+        VALUES (:run_id, 2026, 10, '2026-11-11T14:00:00+00:00', 10, '1,2,3', :totals)
+    """),
+        {"run_id": PLACEMENT_RUN, "totals": encode_totals(PLACEMENT_TOTALS)},
+    )
 
 
 @pytest.mark.parametrize(
@@ -133,6 +175,68 @@ def test_a_key_that_does_not_parse_is_undecided_with_the_parse_error(market):
     result = _judge(market, "1", _scores(120.5, 98.25))
 
     assert (result.outcome, result.reason) == (UNDECIDED, "Unknown market")
+
+
+ALICE_WINS = (MONEYLINE, "1", None, -150)
+BOB_WINS = (MONEYLINE, "2", None, 130)
+ALICE_OVER = (TEAM_TOTAL, "over", 110.5, -120)
+ALICE_HIGHEST = (HIGHEST, "1", None, 185)
+ALICE_OVER_HER_SCORE = (TEAM_TOTAL, "over", 120.5, -120)
+CAROL_UNDER = ("2026-w10-team_total-3", "under", 115.0, 110)
+
+
+def test_a_parlay_waits_for_every_leg():
+    result = outcome_for(_parlay(ALICE_WINS, ALICE_OVER, ALICE_HIGHEST), _scores(120.5, None))
+
+    assert (result.outcome, result.reason) == (UNDECIDED, "1 of 3 legs decided")
+    assert (result.potential_win, result.leg_statuses) == (None, None)
+
+
+def test_one_lost_leg_loses_the_parlay_and_every_leg_keeps_its_own_outcome():
+    result = outcome_for(_parlay(BOB_WINS, ALICE_OVER_HER_SCORE, ALICE_HIGHEST), _scores(120.5, 98.25))
+
+    assert (result.outcome, result.reason) == (LOST, "lost: Bob 98.25 vs Alice 120.50")
+    assert (result.potential_win, result.leg_statuses) == (None, {1: LOST, 2: PUSH, 3: WON})
+
+
+def test_a_parlay_wins_when_every_leg_wins():
+    result = outcome_for(_parlay(ALICE_WINS, ALICE_OVER, ALICE_HIGHEST), _scores(120.5, 98.25))
+
+    assert (result.outcome, result.reason) == (WON, "won, 3 legs")
+    assert (result.potential_win, result.leg_statuses) == (None, {1: WON, 2: WON, 3: WON})
+
+
+def test_a_pushed_leg_drops_out_and_the_rest_are_repriced_on_the_placement_matrix(analytics_tables, db_session):
+    _store_placement_matrix(db_session.session)
+
+    result = outcome_for(_parlay(ALICE_WINS, ALICE_OVER_HER_SCORE, CAROL_UNDER), _scores(120.5, 98.25, 110.5))
+
+    # Alice beats Bob and Carol stays under 115 in 3 of the placement run's 10 sims: a joint 0.3 at +233.
+    assert (result.outcome, result.reason) == (WON, "won, 1 leg pushed: pays 233.00 on the rest")
+    assert (result.potential_win, result.leg_statuses) == (233.0, {1: WON, 2: PUSH, 3: WON})
+
+
+def test_a_parlay_left_with_one_leg_pays_that_legs_own_price():
+    result = outcome_for(_parlay(ALICE_WINS, ALICE_OVER_HER_SCORE), _scores(120.5, 98.25))
+
+    assert (result.outcome, result.reason) == (WON, "won, 1 leg pushed: pays 66.67 on the rest")
+    assert (result.potential_win, result.leg_statuses) == (66.67, {1: WON, 2: PUSH})
+
+
+def test_a_parlay_whose_every_leg_pushed_is_a_push():
+    alice_on_the_line = (TEAM_TOTAL, "under", 101.0, 100)
+
+    result = outcome_for(_parlay(ALICE_WINS, alice_on_the_line), _scores(101.0, 101.0))
+
+    assert (result.outcome, result.reason) == (PUSH, "push: every leg on its line")
+    assert (result.potential_win, result.leg_statuses) == (None, {1: PUSH, 2: PUSH})
+
+
+def test_a_parlay_to_reprice_without_its_placement_matrix_settles_by_hand(analytics_tables):
+    result = outcome_for(_parlay(ALICE_WINS, ALICE_OVER_HER_SCORE, CAROL_UNDER), _scores(120.5, 98.25, 110.5))
+
+    assert (result.outcome, result.reason) == (UNDECIDED, "placement run's matrix not stored: settle by hand")
+    assert (result.potential_win, result.leg_statuses) == (None, None)
 
 
 def test_scores_name_every_roster_of_the_weeks_league(seeded_analytics, db_session):

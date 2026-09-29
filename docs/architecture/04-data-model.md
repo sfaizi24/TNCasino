@@ -13,7 +13,7 @@ flowchart LR
         M[(montecarlo.db · 411 MB)]
     end
     subgraph PG["Production PostgreSQL"]
-        APPT[App tables<br/>users, bets, bet_legs,<br/>weekly_stats, betting_periods]
+        APPT[App tables<br/>users, bets, bet_legs,<br/>weekly_stats, betting_periods,<br/>parlay_refusals]
         ANT[Analytics tables<br/>13 published tables]
     end
     L -- "4 tables (3 renamed)" --> ANT
@@ -106,6 +106,7 @@ erDiagram
     users ||--o{ bets : places
     users ||--o{ weekly_stats : has
     bets ||--o{ bet_legs : holds
+    users ||--o{ parlay_refusals : "was refused"
     betting_periods ||..o{ bets : "same week (no FK)"
 
     users {
@@ -124,7 +125,7 @@ erDiagram
     bets {
         int id PK
         string user_id FK
-        string bet_type "market name, e.g. moneyline"
+        string bet_type "market name, e.g. moneyline, or parlay"
         text description
         float amount
         string odds "American, e.g. -150 or EVEN"
@@ -173,11 +174,22 @@ erDiagram
         bool is_locked
         bool is_settled
     }
+    parlay_refusals {
+        int id PK
+        string user_id FK
+        int week
+        string run_id "the window's run the quote was priced at"
+        text legs "JSON: the legs as the page sent them"
+        string rule "same_market | impossible | redundant"
+        timestamptz created_at
+    }
 ```
 
-A bet placed by market key has one `bet_legs` row recording the pick as data: the key, the selection, the line, and the price and chance it was placed at. A leg is `pending` until its bet closes, then takes the bet's `won`, `lost`, `push`, `cashed_out` or `void` and `settled_at`; the legs of a removed bet are `void` with no `settled_at`. A `push` returns the stake because the scores tied or landed on the line; a `void` returns it because the admin found the bet should not stand ([06](06-betting-lifecycle.md#settlement)). Bets placed before market keys existed have no legs, and their `price`, `probability` and `run_id` are null. See [06](06-betting-lifecycle.md#markets) for the keys.
+A single placed by market key has one `bet_legs` row recording the pick as data: the key, the selection, the line, and the price and chance it was placed at. A parlay (`bet_type = parlay`) has one row per leg, two to four, each with its own single price and chance, while the bet holds the joint ones ([06](06-betting-lifecycle.md#parlays)). A leg is `pending` until its bet closes, then takes the bet's `won`, `lost`, `push`, `cashed_out` or `void` and `settled_at`, except that a parlay settled from the preview gives each leg its own `won`, `lost` or `push`; the legs of a removed bet are `void` with no `settled_at`. A `push` returns the stake because the scores tied or landed on the line; a `void` returns it because the admin found the bet should not stand ([06](06-betting-lifecycle.md#settlement)). Bets placed before market keys existed have no legs, and their `price`, `probability` and `run_id` are null. See [06](06-betting-lifecycle.md#markets) for the keys.
 
-App tables are created by `db.create_all()` on startup and patched by `app/migrations.py` (idempotent `ALTER`s, errors logged and swallowed). There is no migration framework. `create_all` creates a missing table such as `bet_legs` but never alters one that exists, so the `bets` columns `run_id`, `price`, `probability`, `cash_out_amount`, `cash_out_run_id` and `cashed_out_at` are added by `ALTER`s in `app/migrations.py`, which also renames the legacy bet types to their market names once (`team_ou` → `team_total`, `first_seed` → `first_place`, `ammad_playoff` → `make_playoffs`).
+`parlay_refusals` logs each parlay quote refused because two legs share a market (`same_market`), the legs win together in every sim or none (`impossible`), or a leg adds nothing (`redundant`). The app writes it and nothing reads it yet; it is for the owner's SQL on how often the rules bite ([06](06-betting-lifecycle.md#parlays)).
+
+App tables are created by `db.create_all()` on startup and patched by `app/migrations.py` (idempotent `ALTER`s, errors logged and swallowed). There is no migration framework. `create_all` creates a missing table such as `bet_legs` or `parlay_refusals`, so a new table needs no migration, but never alters one that exists, so the `bets` columns `run_id`, `price`, `probability`, `cash_out_amount`, `cash_out_run_id` and `cashed_out_at` are added by `ALTER`s in `app/migrations.py`, which also renames the legacy bet types to their market names once (`team_ou` → `team_total`, `first_seed` → `first_place`, `ammad_playoff` → `make_playoffs`).
 
 The analytics tables have **no foreign keys to the app tables or each other**. The app joins them by `week`, `owner`, `team_id`/`roster_id`, or `team_name`, depending on the table.
 
@@ -211,7 +223,7 @@ sequenceDiagram
     P->>PG: COMMIT
 ```
 
-Safety rails: refuses to target `users`, `bets`, `bet_legs`, `weekly_stats`, or `betting_periods`. `--dry-run` still writes the staging tables to production to validate them, then drops them instead of swapping. Postgres column types come from pandas inference, so the analytics schema in prod is whatever `to_sql` produces (no primary keys or indexes).
+Safety rails: refuses to target `users`, `bets`, `bet_legs`, `weekly_stats`, `betting_periods` or `parlay_refusals`. `--dry-run` still writes the staging tables to production to validate them, then drops them instead of swapping. Postgres column types come from pandas inference, so the analytics schema in prod is whatever `to_sql` produces (no primary keys or indexes).
 
 **The pipeline's `publish` step** (`pipeline/steps/publish.py`) stages, counts and swaps the same way, with the same refusals, but uploads the current season only and, of each table with a `run_id`, each week's latest run. Its `--dry-run` writes nothing. It replaces the 13 tables above and nine more:
 
@@ -234,5 +246,7 @@ The matchup totals and the standings matrix are published for markets the app do
 | `n_sims` | integer | 50,000 |
 | `roster_ids` | text | the matrix's column order, ascending: `1,2,3,4,5,6,7,8,9,10,11,12` |
 | `totals` | bytea (a BLOB in SQLite) | `pipeline.markets.encode_totals` of the matrix: float32, little-endian, one simulation's scores after another, zlib-compressed; about 2.1 MB a run |
+
+The app reads it through `app/matrices.py`, one decoded matrix per run cached in each worker: cash-out prices a bet on the latest run's matrix, a parlay is quoted and placed on the window's run's, and settlement re-prices a parlay with a pushed leg on the matrix of the run it was placed at.
 
 Before it stages anything, the step creates the table if it is missing, reads which of the season's runs it already holds, and inserts the matrix of every other run among the `simulation_runs` rows it is about to upload, built from that run's Parquet draws, with `INSERT ... ON CONFLICT (run_id) DO NOTHING`. A stored row is never rewritten, and a run the site shows always has its matrix, even when the swap that follows fails. A run whose draws file is missing is skipped with a warning naming it. The table is never staged or swapped, because a swap would keep only the runs of this publish, each week's latest, and drop the matrices of the earlier runs that bets were placed at; `write_tables` refuses it by name (`APPEND_ONLY_TABLES`), as it refuses the app's tables. `scripts/publish.py` neither writes nor drops it.

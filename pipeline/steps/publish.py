@@ -53,7 +53,7 @@ TABLES = [
     ("pipeline", "source_reviews", "source_reviews"),
 ]
 # Owned by the Flask app: `users` holds the site's accounts, while Sleeper's users publish as sleeper_users.
-PROTECTED_TABLES = {"users", "bets", "bet_legs", "weekly_stats", "betting_periods"}
+PROTECTED_TABLES = {"users", "bets", "bet_legs", "weekly_stats", "betting_periods", "parlay_refusals"}
 # Never swapped, because a swap would drop the matrices of earlier runs, and bets are re-priced at the run they
 # were placed on.
 APPEND_ONLY_TABLES = {"simulation_totals"}

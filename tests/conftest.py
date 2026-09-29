@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 
-from app import create_app, windows
+from app import create_app, matrices, windows
 from app.database import db as _db
 from app.models import BettingPeriod, User
 from pipeline.markets import encode_totals
@@ -201,6 +201,12 @@ SEEDED_TOTALS = np.array(
 @pytest.fixture(autouse=True)
 def window_clock(monkeypatch):
     monkeypatch.setattr(windows, "utc_now", lambda: WINDOW_NOW)
+
+
+@pytest.fixture(autouse=True)
+def fresh_matrix_cache():
+    """Every test seeds its own database, so a matrix cached under a run id in the last test is stale."""
+    matrices.score_matrix.cache_clear()
 
 
 def create_analytics_tables(session):

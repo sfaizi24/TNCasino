@@ -68,21 +68,26 @@ def remove(bet):
     return True
 
 
-def settle(bet, won):
-    if won:
-        return _close(
-            bet,
-            "won",
-            result=bet.potential_win,
-            payout=bet.amount + bet.potential_win,
-            bets_won=WeeklyStats.bets_won + 1,
-        )
-    return _close(bet, "lost", result=-bet.amount, payout=0.0)
+def settle(bet, won, potential_win=None, leg_statuses=None):
+    """A win pays `potential_win` when given, as a parlay whose pushed legs dropped out does, and records it."""
+    if not won:
+        return _close(bet, "lost", result=-bet.amount, payout=0.0, leg_statuses=leg_statuses)
+
+    win = bet.potential_win if potential_win is None else potential_win
+    return _close(
+        bet,
+        "won",
+        result=win,
+        payout=bet.amount + win,
+        leg_statuses=leg_statuses,
+        potential_win=potential_win,
+        bets_won=WeeklyStats.bets_won + 1,
+    )
 
 
-def push(bet):
+def push(bet, leg_statuses=None):
     """A result exactly on the line: the stake comes back and the bet still counts as placed."""
-    return _close(bet, "push", result=0.0, payout=bet.amount)
+    return _close(bet, "push", result=0.0, payout=bet.amount, leg_statuses=leg_statuses)
 
 
 def void(bet):
@@ -109,24 +114,26 @@ def cash_out(bet, offer, run_id, week):
     if _execute(close).rowcount == 0:
         return False
 
-    _execute(update(BetLeg).where(BetLeg.bet_id == bet.id).values(status="cashed_out", settled_at=cashed_out_at))
+    _close_legs(bet, "cashed_out", cashed_out_at)
     _pay(bet.user_id, offer, result)
     _update_weekly_stats(bet.user_id, bet.week, active_bets_amount=WeeklyStats.active_bets_amount - bet.amount)
     _update_weekly_stats(bet.user_id, week, settled_pnl=WeeklyStats.settled_pnl + result)
     return True
 
 
-def _close(bet, status, result, payout, **counters):
+def _close(bet, status, result, payout, leg_statuses=None, potential_win=None, **counters):
     settled_at = datetime.now(UTC)
     close = (
         update(Bet)
         .where(Bet.id == bet.id, Bet.status == "pending")
         .values(status=status, result=result, settled_at=settled_at)
     )
+    if potential_win is not None:
+        close = close.values(potential_win=potential_win)
     if _execute(close).rowcount == 0:
         return False
 
-    _execute(update(BetLeg).where(BetLeg.bet_id == bet.id).values(status=status, settled_at=settled_at))
+    _close_legs(bet, status, settled_at, leg_statuses)
     _pay(bet.user_id, payout, result)
     _update_weekly_stats(
         bet.user_id,
@@ -136,6 +143,19 @@ def _close(bet, status, result, payout, **counters):
         **counters,
     )
     return True
+
+
+def _close_legs(bet, status, settled_at, leg_statuses=None):
+    """Every leg takes the bet's status, unless `leg_statuses` gives each leg of a parlay its own."""
+    if leg_statuses is None:
+        _execute(update(BetLeg).where(BetLeg.bet_id == bet.id).values(status=status, settled_at=settled_at))
+        return
+    for leg_id, leg_status in leg_statuses.items():
+        _execute(
+            update(BetLeg)
+            .where(BetLeg.id == leg_id, BetLeg.bet_id == bet.id)
+            .values(status=leg_status, settled_at=settled_at)
+        )
 
 
 def _pay(user_id, payout, result):
