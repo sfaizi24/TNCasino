@@ -2,6 +2,7 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
 import pytest
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
@@ -9,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app import create_app, windows
 from app.database import db as _db
 from app.models import BettingPeriod, User
+from pipeline.markets import encode_totals
 
 TEST_CONFIG = {
     "TESTING": True,
@@ -156,6 +158,7 @@ ANALYTICS_TABLES = [
     "sleeper_matchups",
     "projections_rosters",
     "simulation_runs",
+    "simulation_totals",
 ]
 
 # The pipeline run that published every seeded odds row, and the window it opened.
@@ -165,6 +168,34 @@ WINDOW_CLOSES_AT = "2026-11-13T00:15:00+00:00"
 
 # What the app takes as now when it asks whether the seeded run's window is open: an hour after the run.
 WINDOW_NOW = datetime(2026, 11, 10, 15, tzinfo=UTC)
+
+# The seeded run's score matrix: 20 sims, one row each, with columns for rosters 1 and 2. Roster 1
+# outscores roster 2 in 11 sims, ties in one and loses 8; against its 110.5 line it is over in 9 sims,
+# on it in one and under in 10.
+SEEDED_TOTALS = np.array(
+    [
+        [130.0, 100.0],
+        [128.0, 105.0],
+        [125.0, 110.0],
+        [122.0, 95.0],
+        [120.0, 115.0],
+        [118.0, 90.0],
+        [116.0, 112.0],
+        [114.0, 140.0],
+        [112.0, 135.0],
+        [110.5, 101.0],
+        [108.0, 99.0],
+        [106.0, 97.0],
+        [104.0, 104.0],
+        [102.0, 120.0],
+        [100.0, 111.0],
+        [98.0, 103.0],
+        [96.0, 125.0],
+        [94.0, 107.0],
+        [92.0, 88.0],
+        [90.0, 118.0],
+    ]
+)
 
 
 @pytest.fixture(autouse=True)
@@ -313,6 +344,14 @@ def create_analytics_tables(session):
         )
     """)
     )
+    session.execute(
+        text("""
+        CREATE TABLE simulation_totals (
+            run_id TEXT PRIMARY KEY, season INTEGER, week INTEGER, created_at TEXT,
+            n_sims INTEGER, roster_ids TEXT, totals BLOB
+        )
+    """)
+    )
     session.commit()
 
 
@@ -349,6 +388,13 @@ def seed_analytics(session):
         VALUES (:run_id, 2026, 10, 1738, 50000, 'v2', 12, 'draws/2026w10.npy', :created_at, 0, :closes_at, 9)
     """),
         {"run_id": RUN_ID, "created_at": RUN_CREATED_AT, "closes_at": WINDOW_CLOSES_AT},
+    )
+    session.execute(
+        text("""
+        INSERT INTO simulation_totals (run_id, season, week, created_at, n_sims, roster_ids, totals)
+        VALUES (:run_id, 2026, 10, :created_at, 20, '1,2', :totals)
+    """),
+        {"run_id": RUN_ID, "created_at": RUN_CREATED_AT, "totals": encode_totals(SEEDED_TOTALS)},
     )
     session.execute(
         text("""

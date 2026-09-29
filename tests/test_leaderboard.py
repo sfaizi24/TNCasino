@@ -388,3 +388,21 @@ def test_a_popular_bet_on_the_line_shows_as_a_push_and_void_bets_are_left_out(cl
     assert (popular.description, popular.count, popular.pushes) == ("Bob J: Lowest Scorer +230", 2, 2)
     assert '<div class="tnc-lb-outcome tnc-lb-outcome-push">Push</div>' in page
     assert "Carol D: Lowest Scorer" not in page
+
+
+def test_a_popular_bet_cashed_out_counts_as_placed_but_neither_won_nor_lost(client, db_session, captured_templates):
+    _seed_leaderboard_data(db_session)
+    db_session.session.add_all(
+        [
+            _lowest_scorer_bet("lb-1", "Bob J: Lowest Scorer +230", "cashed_out"),
+            _lowest_scorer_bet("lb-3", "Bob J: Lowest Scorer +230", "cashed_out"),
+        ]
+    )
+    db_session.session.commit()
+
+    page = client.get("/leaderboard").get_data(as_text=True)
+
+    popular = captured_templates[0][1]["popular_lowest"]
+    assert (popular.description, popular.count) == ("Bob J: Lowest Scorer +230", 2)
+    assert (popular.wins, popular.losses, popular.pushes, popular.pending) == (0, 0, 0, 0)
+    assert '<div class="tnc-lb-outcome tnc-lb-outcome-cashed">Cashed out</div>' in page

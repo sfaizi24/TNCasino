@@ -80,7 +80,7 @@ function windowText() {
     return `Betting is closed for week ${w.week}.`;
 }
 
-// The server refuses a place or cancel outside the window; disabling the button just says why up front.
+// The server refuses a place, cancel or cash-out outside the window; disabling the button just says why up front.
 function closedAttrs() {
     return bettingOpen() ? '' : ` disabled title="${windowText()}"`;
 }
@@ -149,6 +149,7 @@ function renderPlacedStrip(bets) {
                 <div class="tnc-mc-placed-row">
                     <span class="tnc-mc-placed-tag">Bet Placed</span>
                     <span class="tnc-mc-placed-info tnc-tab-num"><strong>${fmtMoney(b.amount)}</strong></span>
+                    ${b.cash_out_offer !== null ? `<button class="tnc-mc-placed-cash tnc-tab-num" data-action="cashout" data-bet-id="${b.id}"${closedAttrs()}>Cash out ${fmtMoney(b.cash_out_offer)}</button>` : ''}
                     ${b.removable ? `<button class="tnc-mc-placed-rm" data-action="cancel" data-bet-id="${b.id}"${closedAttrs()}>Cancel bet</button>` : ''}
                 </div>
             `).join('')}
@@ -355,6 +356,9 @@ function chipLabel(bet) {
 }
 
 function renderActiveChip(bet) {
+    const cashOut = bet.cash_out_offer !== null
+        ? `<button class="tnc-active-chip-cash tnc-tab-num" data-action="cashout" data-bet-id="${bet.id}"${closedAttrs()}>Cash out ${fmtMoney(bet.cash_out_offer)}</button>`
+        : '';
     const cancel = bet.removable
         ? `<button class="tnc-active-chip-rm" data-action="cancel" data-bet-id="${bet.id}"${closedAttrs()}>Cancel</button>`
         : '';
@@ -363,7 +367,7 @@ function renderActiveChip(bet) {
             <span class="tnc-active-chip-name">${chipLabel(bet)}</span>
             <span class="tnc-active-chip-odds tnc-tab-num">${fmtOdds(bet.odds)}</span>
             <span class="tnc-active-chip-stake tnc-tab-num">${fmtMoney(bet.amount)}</span>
-            ${cancel}
+            ${cashOut}${cancel}
         </span>
     `;
 }
@@ -593,6 +597,34 @@ async function handleCancel(betId) {
     }
 }
 
+async function handleCashOut(betId) {
+    const bet = state.bets.find(b => b.id === betId);
+    if (!bet) return;
+    const offer = bet.cash_out_offer;
+    if (!confirm(`Cash out "${bet.description}" for ${fmtMoney(offer)}? The bet closes for good.`)) return;
+
+    try {
+        const r = await fetch(`/api/cash_out/${betId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ offer }),
+        });
+        const result = await r.json();
+        if (result.success) {
+            setBalance(result.new_balance);
+            await loadBets();
+            render();
+            toast(`Cashed out for ${fmtMoney(result.cash_out_amount)}`);
+        } else {
+            toast(result.error || 'Failed to cash out', 'error');
+            await reloadWindow();
+        }
+    } catch (e) {
+        console.error('Error cashing out', e);
+        toast('Failed to cash out', 'error');
+    }
+}
+
 async function handleShow(card) {
     const key = card.dataset.key;
     state.opens[key] = !state.opens[key];
@@ -632,6 +664,10 @@ function bindEvents() {
         const action = target.dataset.action;
         if (action === 'cancel') {
             handleCancel(parseInt(target.dataset.betId, 10));
+            return;
+        }
+        if (action === 'cashout') {
+            handleCashOut(parseInt(target.dataset.betId, 10));
             return;
         }
         const card = target.closest('.tnc-mc');

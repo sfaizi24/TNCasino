@@ -236,6 +236,11 @@
     color: var(--tnc-blue);
 }
 
+.tnc-lb-outcome-cashed {
+    background: var(--tnc-blue-tint);
+    color: var(--tnc-blue);
+}
+
 .tnc-card-h-bad {
     color: var(--tnc-loss);
 }

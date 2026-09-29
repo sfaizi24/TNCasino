@@ -4,7 +4,7 @@ from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 from sqlalchemy import Integer, case, cast, desc, distinct, func
 
-from .. import ledger, markets
+from .. import cashout, ledger, markets
 from ..database import db
 from ..models import Bet, BetLeg, User, WeeklyStats
 from ..windows import betting_window
@@ -333,13 +333,14 @@ def get_my_bets():
         )
         weeks = {bet.week for bet in bets}
         open_weeks = {week for week in weeks if betting_window(week).state == "open"}
-        return jsonify([_bet_summary(bet, bet.week in open_weeks) for bet in bets])
+        offers = cashout.offers_for(bets)
+        return jsonify([_bet_summary(bet, bet.week in open_weeks, offers.get(bet.id)) for bet in bets])
     except Exception:
         logging.exception(f"Could not list the bets of user {current_user.id}")
         return jsonify([])
 
 
-def _bet_summary(bet, week_is_open):
+def _bet_summary(bet, week_is_open, offer):
     summary = {
         "id": bet.id,
         "description": friendly_description(bet.description),
@@ -355,7 +356,9 @@ def _bet_summary(bet, week_is_open):
         "price": bet.price,
         "probability": bet.probability,
         "run_id": bet.run_id,
-        "removable": week_is_open and _run_is_latest(bet),
+        # An offer needs a newer run and removal needs the bet's own, so a bet never has both.
+        "removable": week_is_open and offer is None and _run_is_latest(bet),
+        "cash_out_offer": offer.amount if offer else None,
     }
     if bet.legs:
         leg = bet.legs[0]
@@ -400,6 +403,41 @@ def remove_bet(bet_id):
     except Exception as error:
         db.session.rollback()
         logging.exception(f"Could not remove bet {bet_id} for user {current_user.id}")
+        return _refuse(str(error))
+
+
+@betting_bp.route("/api/cash_out/<int:bet_id>", methods=["POST"])
+@login_required
+def cash_out_bet(bet_id):
+    try:
+        bet = db.session.query(Bet).filter_by(id=bet_id, user_id=current_user.id, status="pending").first()
+        if not bet:
+            return _refuse("Bet not found")
+
+        offer = cashout.offer_for(bet)
+        if round(float(request.get_json()["offer"]), 2) != offer.amount:
+            return _refuse("Offer has changed", offer=offer.amount)
+
+        week = get_current_week()
+        ledger.open_week(current_user.id, week)
+        if not ledger.cash_out(bet, offer.amount, offer.run_id, week):
+            # Settled, removed or cashed out by another request since the read above.
+            db.session.rollback()
+            return _refuse("Bet not found")
+
+        db.session.commit()
+        db.session.refresh(current_user)
+        new_balance = current_user.account_balance
+        logging.info(
+            f"User {current_user.id} cashed out bet {bet_id} for {offer.amount} at run {offer.run_id}, "
+            f"new balance {new_balance}"
+        )
+        return jsonify({"success": True, "new_balance": new_balance, "cash_out_amount": offer.amount})
+    except cashout.NoOffer as no_offer:
+        return _refuse(str(no_offer))
+    except Exception as error:
+        db.session.rollback()
+        logging.exception(f"Could not cash out bet {bet_id} for user {current_user.id}")
         return _refuse(str(error))
 
 

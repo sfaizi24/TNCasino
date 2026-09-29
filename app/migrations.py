@@ -116,7 +116,16 @@ def run_schema_migrations():
                 logging.info("settled_pnl column added and backfilled")
 
             float_type = "DOUBLE PRECISION" if dialect == "postgresql" else "REAL"
-            for column, column_type in (("run_id", "VARCHAR"), ("price", "INTEGER"), ("probability", float_type)):
+            timestamp_type = "TIMESTAMP WITH TIME ZONE" if dialect == "postgresql" else "TIMESTAMP"
+            bet_columns = (
+                ("run_id", "VARCHAR"),
+                ("price", "INTEGER"),
+                ("probability", float_type),
+                ("cash_out_amount", float_type),
+                ("cash_out_run_id", "VARCHAR"),
+                ("cashed_out_at", timestamp_type),
+            )
+            for column, column_type in bet_columns:
                 if not column_exists(inspector, "bets", column):
                     conn.execute(text(f"ALTER TABLE bets ADD COLUMN {column} {column_type}"))
                     logging.info(f"Added bets.{column}")

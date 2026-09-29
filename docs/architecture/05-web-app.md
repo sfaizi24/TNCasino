@@ -7,7 +7,9 @@ A server-rendered Flask app with vanilla-JS pages that call JSON endpoints. It o
 ```
 app/__init__.py      create_app(): config from env, extensions, blueprints, create_all + migrations
 app/auth.py          Google OAuth (Flask-Dance), Flask-Login user loader, /auth/logout
-app/ledger.py        The only code that moves money: open_week, place, remove, settle, push, void
+app/cashout.py       What a pending bet is worth now: offer_for(), offers_for()
+app/ledger.py        The only code that moves money: open_week, place, remove, settle, push, void,
+                     cash_out
 app/markets.py       Market keys and their quotes: key_for_row(), parse_key(), find_quote(),
                      price_from_odds(), potential_win()
 app/models.py        User, Bet, BetLeg, WeeklyStats, BettingPeriod
@@ -22,7 +24,7 @@ app/routes/
   pages.py           /, /login, /about, /analytics, static + chart images
   account.py         /account, profile update
   odds.py            Odds + analytics JSON API
-  betting.py         /betting, /leaderboard, bet placement/removal
+  betting.py         /betting, /leaderboard, bet placement/removal/cash-out
   admin.py           /admin + admin JSON API
 frontend/templates/  Jinja2 (base.html + one per page)
 frontend/static/js/  betting.js, analytics.js, admin.js, base.js (mobile menu only)
@@ -49,7 +51,7 @@ sequenceDiagram
 ```
 
 - **Anonymous** users can see `/betting` (odds are public), `/leaderboard`, `/about`, and most odds APIs.
-- **Logged in** is required for placing/viewing/removing bets, `/account`, `/analytics` data endpoints (`/api/teams`, `/api/team_distribution`, `/api/team_players`).
+- **Logged in** is required for placing/viewing/removing/cashing out bets, `/account`, `/analytics` data endpoints (`/api/teams`, `/api/team_distribution`, `/api/team_players`).
 - **Admin** (`@admin_required`) is re-derived from `ADMIN_EMAILS` on every login, so removing an email revokes admin at next sign-in.
 - Unauthenticated `/api/*` calls get `401` JSON; pages redirect to Google.
 - **CSRF**: `CSRFProtect` is installed with default checking **off**. Only `POST /account/update-profile` calls `csrf.protect()`. The JSON `POST`/`DELETE` endpoints rely on the `SameSite=Lax` session cookie and JSON content type.
@@ -79,8 +81,9 @@ sequenceDiagram
 | `/api/team_distribution` | GET | login | `team_distribution_curves`, `team_matchup_margin_curves`, `betting_odds_matchup_ml` | |
 | `/api/team_players` | GET | login | `projections_rosters` (falls back to `team_lineups`) | |
 | `/api/place_bet` | POST | login | odds tables, `betting_periods`, `simulation_runs` | `bets`, `bet_legs`, `users`, `weekly_stats` |
-| `/api/my_bets` | GET | login | `bets`, `bet_legs`, `betting_periods`, `simulation_runs`, odds tables | |
+| `/api/my_bets` | GET | login | `bets`, `bet_legs`, `betting_periods`, `simulation_runs`, `simulation_totals`, odds tables | |
 | `/api/remove_bet/<id>` | DELETE | login | `betting_periods`, `simulation_runs`, odds tables | `bets`, `bet_legs`, `users`, `weekly_stats` |
+| `/api/cash_out/<id>` | POST | login | odds tables, `simulation_runs`, `simulation_totals`, `betting_periods` | `bets`, `bet_legs`, `users`, `weekly_stats` |
 | `/admin` | GET | admin | | |
 | `/api/admin/betting_periods` | GET | admin | `betting_periods` | |
 | `/api/admin/set_betting_period` | POST | admin | | `betting_periods` |
@@ -104,14 +107,17 @@ Every odds/analytics endpoint except the two futures endpoints uses `get_current
 |---|---|---|
 | `GET /api/betting_window` | `week` in the query, the current week by default | `success`, `week`, `state` (`open`, `paused` or `closed`), `closes_at`, `run_created_at` |
 | `POST /api/place_bet` | `market`, `selection`, `run_id`, `amount`, and `line` for team totals; nothing else is read; needs an open window | `success`, `new_balance`, `bet_id`, `market`, `selection`, `price` |
-| `GET /api/my_bets` | | The user's pending bets, each with `id`, `description`, `amount`, `odds`, `potential_win`, `status`, `week`, `bet_type`, `market`, `selection`, `line`, `price`, `probability`, `run_id`, `removable` |
+| `GET /api/my_bets` | | The user's pending bets, each with `id`, `description`, `amount`, `odds`, `potential_win`, `status`, `week`, `bet_type`, `market`, `selection`, `line`, `price`, `probability`, `run_id`, `removable`, `cash_out_offer` |
 | `DELETE /api/remove_bet/<id>` | needs an open window | `success`, `new_balance` |
+| `POST /api/cash_out/<id>` | `offer`, the amount the page showed; needs an open window and a newer run than the bet's | `success`, `new_balance`, `cash_out_amount` |
 
 `betting_window` reports the week's state as `app/windows.py` computes it ([06](06-betting-lifecycle.md#betting-period-one-per-week)): `closes_at` is the latest run's `window_closes_at` and `run_created_at` its `created_at`, both ISO 8601 UTC and null when the week has no run or the lock or the period closed it. The lock time is not sent.
 
 A refusal is `success: false` with an `error` message. `place_bet` and `remove_bet` first need the week's window open, and refuse otherwise: `"Bets are locked as of 2026-10-04 01:30 PM UTC"` when the admin's lock closed the week, `"Betting is paused until the odds update"` while the latest run's window has closed and no newer run has published, and `"Betting is closed for week 4"` when the week has no period, is settled, or its run has no window. Then `place_bet` prices the bet from the row its `market` and `selection` find ([06](06-betting-lifecycle.md#markets)); when that row's `run_id` differs from the request's, or a team total's `line` has moved, it refuses with `"Odds have changed"` and adds the row's `run_id`, `price`, `odds` and `line`. In `my_bets`, the six fields from `market` to `run_id` are null on bets placed before market keys existed.
 
 `removable` is true while the bet's week's window is open and its market's row still carries the bet's `run_id`; a legacy bet has no market to check and is removable while the window is open. `my_bets` looks each distinct week up once, not once per bet. `remove_bet` applies the same rule, refusing a bet whose run has been replaced with `"Odds have changed since this bet was placed"`. A removed bet keeps its row, with status `removed`.
+
+`cash_out_offer` is what the bet can be cashed out for now, from `cashout.offers_for`, or null when it has no offer ([06](06-betting-lifecycle.md#cash-out)): the window is not open, the bet's run is still the latest, or the latest run cannot price it. An offer needs a newer run than the bet's and removal needs the bet's own, so `removable` is false whenever `cash_out_offer` is set. `offers_for` decodes each run's score matrix and looks each week's window up once per request. `cash_out` refuses, in order: `"Bet not found"` when the bet is not the user's or not pending; the reason `offer_for` gives when there is no offer, such as `"Odds have not changed since this bet was placed; remove it instead"` or `"Betting is paused until the odds update"`; and `"Offer has changed"`, adding the new `offer`, when the recomputed offer differs from the request's at two decimals. The profit or loss posts to the current week's `weekly_stats`, which the route opens first.
 
 ### Admin endpoints
 
@@ -146,6 +152,7 @@ flowchart LR
     B --> LU[/api/lineup/owner]
     B --> PB[/api/place_bet]
     B --> RB[/api/remove_bet]
+    B --> CO[/api/cash_out]
 
     AN --> SC[/api/session-check]
     AN --> T[/api/teams]
@@ -169,6 +176,6 @@ flowchart LR
 
 `/leaderboard` and `/account` are fully server-rendered with no API calls. The betting page's Futures tab lists `/api/first_place` and `/api/make_playoffs` in two groups.
 
-- **betting.js** loads the six odds endpoints and the betting window in parallel, lazy-loads lineups when a card expands, and updates the balance optimistically on place/remove before reloading `my_bets`. The window fills the banner in the prize strip, in the visitor's own zone: `Odds updated Wed 7:00 PM. Betting closes Thu 8:15 PM.`, `Betting paused since Thu 8:15 PM, until the odds update.` or `Betting is closed for week 4.`, each in its own colour. Outside an open window the place and cancel buttons are disabled with the banner's text as their tooltip, and a refused place or cancel reloads the window and the bets so a page kept open across a kickoff shows why. Each card carries its row's `market` key and each pick button its `selection`; a bet marks the card side whose market and selection match its own, so a legacy bet is listed as active but marks no card. A side with a null price shows "No price" instead of a pick button, the cancel button shows only on `removable` bets, and an `"Odds have changed"` refusal reloads the tab at the new quote.
+- **betting.js** loads the six odds endpoints and the betting window in parallel, lazy-loads lineups when a card expands, and updates the balance optimistically on place/remove before reloading `my_bets`; a cash-out sets it from the reply. The window fills the banner in the prize strip, in the visitor's own zone: `Odds updated Wed 7:00 PM. Betting closes Thu 8:15 PM.`, `Betting paused since Thu 8:15 PM, until the odds update.` or `Betting is closed for week 4.`, each in its own colour. Outside an open window the place and cancel buttons are disabled with the banner's text as their tooltip, and a refused place or cancel reloads the window and the bets so a page kept open across a kickoff shows why. Each card carries its row's `market` key and each pick button its `selection`; a bet marks the card side whose market and selection match its own, so a legacy bet is listed as active but marks no card. A side with a null price shows "No price" instead of a pick button, the cancel button shows only on `removable` bets, and an `"Odds have changed"` refusal reloads the tab at the new quote. A bet with a `cash_out_offer` shows a `Cash out $74.38` button in its card's placed strip and its active chip instead; it asks `confirm()` with the bet and the amount before sending, is disabled outside an open window like place and cancel, and a refusal reloads the window and the bets so the offers shown are current.
 - **analytics.js** renders five Chart.js charts from the precomputed curves (matchup distributions, margin, lineup comparison, standings, position strength). The PNG charts from the pipeline are not used on this page any more; `/analytics` only uses the PNG directory to decide which week to show.
 - **admin.js** loads the betting periods, then the Settle Week preview and the Pending Bets list for the current week. The active week banner adds the window from `/api/betting_window` beside the countdown to the lock: `Window: open until Thu 8:15 PM`, `Window: paused since Thu 8:15 PM` or `Window: closed`, and the Set Betting Period card says to set the lock at the week's last window close. Settling the decided bets, settling one by hand and voiding one each reload both cards; after settling the decided bets they reload even when the reply is an error, because the bets settled before a failure stand. Bettors set their own names on the account page and team names come from Sleeper, so the two cards escape every name, description and reason they render.

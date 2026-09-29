@@ -51,6 +51,9 @@ def test_bet_defaults(db_session, user):
 
     assert bet.status == "pending"
     assert bet.result == 0.0
+    assert bet.cash_out_amount is None
+    assert bet.cash_out_run_id is None
+    assert bet.cashed_out_at is None
 
 
 def test_betting_period_defaults(db_session):
@@ -105,7 +108,7 @@ def test_user_bets_relationship(db_session, user):
     assert user.bets[0].description == "Test bet"
 
 
-def test_migrations_add_the_quote_columns_and_rename_legacy_bet_types(file_backed_app, caplog):
+def test_migrations_add_the_quote_and_cash_out_columns_and_rename_legacy_bet_types(file_backed_app, caplog):
     with file_backed_app.app_context():
         with db.engine.begin() as conn:
             conn.execute(text("DROP TABLE bets"))
@@ -126,7 +129,7 @@ def test_migrations_add_the_quote_columns_and_rename_legacy_bet_types(file_backe
         rows = db.session.execute(text("SELECT bet_type, description FROM bets ORDER BY id")).all()
 
     assert "Migration error" not in caplog.text
-    assert {"run_id", "price", "probability"} <= columns
+    assert {"run_id", "price", "probability", "cash_out_amount", "cash_out_run_id", "cashed_out_at"} <= columns
     assert [tuple(row) for row in rows] == [
         ("first_place", "Ammady: #1 Seed +250"),
         ("team_total", "Ammady O/U 101.5: Under"),

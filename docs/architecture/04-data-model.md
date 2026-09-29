@@ -132,11 +132,14 @@ erDiagram
         float probability
         string run_id "simulation run the price came from"
         float potential_win
-        string status "pending | won | lost | push | removed | void"
+        string status "pending | won | lost | push | removed | void | cashed_out"
         float result
         int week
         timestamptz created_at
         timestamptz settled_at
+        float cash_out_amount "the offer taken"
+        string cash_out_run_id "simulation run the offer came from"
+        timestamptz cashed_out_at
     }
     bet_legs {
         int id PK
@@ -148,7 +151,7 @@ erDiagram
         numeric line "two decimals, team totals only"
         int price
         float probability
-        string status "pending | won | lost | push | void"
+        string status "pending | won | lost | push | void | cashed_out"
         timestamptz settled_at
     }
     weekly_stats {
@@ -172,9 +175,9 @@ erDiagram
     }
 ```
 
-A bet placed by market key has one `bet_legs` row recording the pick as data: the key, the selection, the line, and the price and chance it was placed at. A leg is `pending` until its bet closes, then takes the bet's `won`, `lost`, `push` or `void` and `settled_at`; the legs of a removed bet are `void` with no `settled_at`. A `push` returns the stake because the scores tied or landed on the line; a `void` returns it because the admin found the bet should not stand ([06](06-betting-lifecycle.md#settlement)). Bets placed before market keys existed have no legs, and their `price`, `probability` and `run_id` are null. See [06](06-betting-lifecycle.md#markets) for the keys.
+A bet placed by market key has one `bet_legs` row recording the pick as data: the key, the selection, the line, and the price and chance it was placed at. A leg is `pending` until its bet closes, then takes the bet's `won`, `lost`, `push`, `cashed_out` or `void` and `settled_at`; the legs of a removed bet are `void` with no `settled_at`. A `push` returns the stake because the scores tied or landed on the line; a `void` returns it because the admin found the bet should not stand ([06](06-betting-lifecycle.md#settlement)). Bets placed before market keys existed have no legs, and their `price`, `probability` and `run_id` are null. See [06](06-betting-lifecycle.md#markets) for the keys.
 
-App tables are created by `db.create_all()` on startup and patched by `app/migrations.py` (idempotent `ALTER`s, errors logged and swallowed). There is no migration framework. `create_all` creates a missing table such as `bet_legs` but never alters one that exists, so the `bets` columns `run_id`, `price` and `probability` are added by `ALTER`s in `app/migrations.py`, which also renames the legacy bet types to their market names once (`team_ou` → `team_total`, `first_seed` → `first_place`, `ammad_playoff` → `make_playoffs`).
+App tables are created by `db.create_all()` on startup and patched by `app/migrations.py` (idempotent `ALTER`s, errors logged and swallowed). There is no migration framework. `create_all` creates a missing table such as `bet_legs` but never alters one that exists, so the `bets` columns `run_id`, `price`, `probability`, `cash_out_amount`, `cash_out_run_id` and `cashed_out_at` are added by `ALTER`s in `app/migrations.py`, which also renames the legacy bet types to their market names once (`team_ou` → `team_total`, `first_seed` → `first_place`, `ammad_playoff` → `make_playoffs`).
 
 The analytics tables have **no foreign keys to the app tables or each other**. The app joins them by `week`, `owner`, `team_id`/`roster_id`, or `team_name`, depending on the table.
 

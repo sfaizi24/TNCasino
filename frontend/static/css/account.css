@@ -208,6 +208,18 @@
     font-size: var(--tnc-fs-13);
 }
 
+.tnc-acct-table td.tnc-pos {
+    color: var(--tnc-win);
+}
+
+.tnc-acct-table td.tnc-neg {
+    color: var(--tnc-loss);
+}
+
+.tnc-acct-table td.tnc-acct-week-flat {
+    color: var(--tnc-fg-muted);
+}
+
 .tnc-acct-table tr:last-child td {
     border-bottom: none;
 }

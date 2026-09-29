@@ -197,7 +197,8 @@
     flex-shrink: 0;
 }
 
-.tnc-active-chip-rm {
+.tnc-active-chip-rm,
+.tnc-active-chip-cash {
     background: transparent;
     border: 1px solid var(--tnc-border);
     color: var(--tnc-fg);
@@ -220,6 +221,16 @@
     color: var(--tnc-loss);
     border-color: var(--tnc-loss);
     background: var(--tnc-surface);
+}
+
+.tnc-active-chip-cash {
+    color: var(--tnc-blue);
+    border-color: var(--tnc-blue);
+}
+
+.tnc-active-chip-cash:hover:not(:disabled) {
+    color: #fff;
+    background: var(--tnc-blue);
 }
 
 @media (max-width: 480px) {
@@ -250,10 +261,16 @@
         font-size: 12.5px;
     }
 
-    .tnc-active-chip-rm {
+    .tnc-active-chip-rm,
+    .tnc-active-chip-cash {
         height: 30px;
         padding: 0 14px;
         font-size: var(--tnc-fs-12);
+    }
+
+    /* The offer is the widest thing in a chip; the bet's name gives way before it does. */
+    .tnc-active-chip-cash {
+        padding: 0 10px;
     }
 }
 
@@ -341,7 +358,8 @@
     font-weight: var(--tnc-fw-bold);
 }
 
-.tnc-mc-placed-rm {
+.tnc-mc-placed-rm,
+.tnc-mc-placed-cash {
     height: 26px;
     padding: 0 12px;
     border-radius: 5px;
@@ -359,6 +377,22 @@
 .tnc-mc-placed-rm:hover {
     border-color: var(--tnc-loss);
     color: var(--tnc-loss);
+}
+
+.tnc-mc-placed-cash {
+    border-color: var(--tnc-blue);
+    color: var(--tnc-blue);
+}
+
+.tnc-mc-placed-cash:hover:not(:disabled) {
+    background: var(--tnc-blue);
+    color: #fff;
+}
+
+.tnc-mc-placed-cash:disabled,
+.tnc-active-chip-cash:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .tnc-mc-teams {

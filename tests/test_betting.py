@@ -1,11 +1,14 @@
+import re
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
 import pytest
 from sqlalchemy import text
 
 from app import ledger
 from app.database import db
-from app.models import Bet, WeeklyStats
+from app.models import Bet, BettingPeriod, WeeklyStats
+from pipeline import markets as win_rules
 from tests.conftest import RUN_ID, WINDOW_NOW
 
 HIGHEST_SCORER_BET = {"market": "2026-w10-highest_scorer", "selection": "1", "run_id": RUN_ID, "amount": 100}
@@ -186,8 +189,8 @@ def pause_the_window():
     close_the_window_at(WINDOW_NOW - timedelta(hours=1))
 
 
-def publish_a_rerun(run_id):
-    """A rerun published before the clock, with an open window, that repriced every market."""
+def publish_a_rerun(run_id, totals=None):
+    """A rerun published before the clock, with an open window, that repriced every market; with its scores when given."""
     db.session.execute(
         text("""
         INSERT INTO simulation_runs (run_id, season, week, seed, n_sims, model_version, n_teams, draws_path,
@@ -202,7 +205,24 @@ def publish_a_rerun(run_id):
     )
     for table in ("matchup_ml", "team_ou", "highest_scorer", "lowest_scorer", "first_place", "make_playoffs"):
         db.session.execute(text(f"UPDATE betting_odds_{table} SET run_id = :run_id"), {"run_id": run_id})
+    if totals is not None:
+        store_the_scores(run_id, totals)
     db.session.commit()
+
+
+def store_the_scores(run_id, totals):
+    db.session.execute(
+        text("""
+        INSERT INTO simulation_totals (run_id, season, week, created_at, n_sims, roster_ids, totals)
+        VALUES (:run_id, 2026, 10, :created_at, :n_sims, '1,2', :totals)
+    """),
+        {
+            "run_id": run_id,
+            "created_at": (WINDOW_NOW - timedelta(minutes=30)).isoformat(),
+            "n_sims": len(totals),
+            "totals": win_rules.encode_totals(totals),
+        },
+    )
 
 
 def test_the_admin_lock_is_the_kill_switch(logged_in_client, user, betting_period, seeded_analytics):
@@ -412,3 +432,211 @@ def test_the_account_page_lists_new_legacy_removed_won_and_lost_bets(
     assert "Ammad: #1 Seed" in page
     assert "+$100.00" in page
     assert "-$30.00" in page
+
+
+def test_the_account_pages_weekly_pnl_counts_settled_bets_not_open_stakes(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    won_id = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()["bet_id"]
+    logged_in_client.post("/api/place_bet", json=TEAM_TOTAL_BET)
+    ledger.settle(db.session.get(Bet, won_id), won=True)
+    db.session.commit()
+
+    page = logged_in_client.get("/account").get_data(as_text=True)
+
+    # The balance is up $85 on the week, but only the won bet's $185 is settled; the other stake is still open.
+    assert re.search(r"tnc-acct-week-pnl[^\"]*tnc-pos\">\s*\+\$185\.00", page)
+    assert "+$85.00" not in page
+
+
+# The worked example of design §2.1: $100 on roster 2 at +105 pays $205. After Thursday's game the
+# rerun has roster 2 winning 3,819 of 10,000 sims, a fair value of $78.29 and an offer of $74.38.
+DESIGN_EXAMPLE_BET = {"market": "2026-w10-moneyline-1v2", "selection": "2", "run_id": RUN_ID, "amount": 100}
+RERUN_ID = "2026w10-20261110T143000"
+
+
+def rerun_scores():
+    roster_2_wins = np.arange(10_000) < 3_819
+    return np.column_stack([np.full(10_000, 100.0), np.where(roster_2_wins, 110.0, 90.0)])
+
+
+def place_the_design_example_bet(client):
+    db.session.execute(text("UPDATE betting_odds_matchup_ml SET team2_ml = '+105'"))
+    db.session.commit()
+    return client.post("/api/place_bet", json=DESIGN_EXAMPLE_BET).get_json()["bet_id"]
+
+
+def cash_out(client, bet_id, offer=74.38):
+    return client.post(f"/api/cash_out/{bet_id}", json={"offer": offer}).get_json()
+
+
+def weekly_money(user, week):
+    stats = db.session.query(WeeklyStats).filter_by(user_id=user.id, week=week).one()
+    return (
+        stats.starting_balance,
+        stats.ending_balance,
+        stats.pnl,
+        stats.active_bets_amount,
+        stats.settled_pnl,
+        stats.bets_placed,
+        stats.bets_won,
+    )
+
+
+def test_cashing_out_pays_the_offer_and_posts_only_the_profit_to_the_current_week(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    bet_id = place_the_design_example_bet(logged_in_client)
+    publish_a_rerun(RERUN_ID, rerun_scores())
+    db.session.add(BettingPeriod(week=11, lock_time=datetime.now(UTC) + timedelta(days=14)))
+    db.session.commit()
+
+    reply = cash_out(logged_in_client, bet_id)
+
+    assert reply == {"success": True, "new_balance": pytest.approx(974.38), "cash_out_amount": 74.38}
+    db.session.refresh(user)
+    assert (user.account_balance, user.total_pnl) == pytest.approx((974.38, -25.62))
+    bet = db.session.get(Bet, bet_id)
+    assert (bet.status, bet.result, bet.cash_out_amount, bet.cash_out_run_id) == (
+        "cashed_out",
+        -25.62,
+        74.38,
+        RERUN_ID,
+    )
+    assert bet.cashed_out_at is not None
+    assert bet.settled_at == bet.cashed_out_at
+    assert [(leg.status, leg.settled_at) for leg in bet.legs] == [("cashed_out", bet.cashed_out_at)]
+    # The bet's week closes the stake; the week it was taken in books the $25.62 loss.
+    assert weekly_money(user, 10) == pytest.approx((1000.0, 974.38, -25.62, 0.0, 0.0, 1, 0))
+    assert weekly_money(user, 11) == pytest.approx((900.0, 974.38, 74.38, 0.0, -25.62, 0, 0))
+    assert logged_in_client.get("/api/my_bets").get_json() == []
+
+
+def test_a_second_cash_out_of_the_same_bet_is_refused(logged_in_client, user, betting_period, seeded_analytics):
+    bet_id = place_the_design_example_bet(logged_in_client)
+    publish_a_rerun(RERUN_ID, rerun_scores())
+
+    cash_out(logged_in_client, bet_id)
+    second = cash_out(logged_in_client, bet_id)
+
+    assert second == {"success": False, "error": "Bet not found"}
+    db.session.refresh(user)
+    assert user.account_balance == pytest.approx(974.38)
+
+
+def test_a_cash_out_of_another_users_bet_a_settled_bet_or_no_bet_is_refused(
+    logged_in_client, user, admin_user, betting_period, seeded_analytics
+):
+    theirs = place_the_design_example_bet(logged_in_client)
+    settled = place_the_design_example_bet(logged_in_client)
+    publish_a_rerun(RERUN_ID, rerun_scores())
+    db.session.execute(text("UPDATE bets SET user_id = :owner WHERE id = :id"), {"owner": admin_user.id, "id": theirs})
+    ledger.settle(db.session.get(Bet, settled), won=False)
+    db.session.commit()
+
+    replies = [cash_out(logged_in_client, bet_id) for bet_id in (theirs, settled, 999)]
+
+    assert replies == [{"success": False, "error": "Bet not found"}] * 3
+    assert db.session.get(Bet, theirs).status == "pending"
+    assert db.session.get(Bet, settled).status == "lost"
+
+
+def test_no_cash_out_while_the_bets_run_is_still_the_latest(logged_in_client, user, betting_period, seeded_analytics):
+    bet_id = place_the_design_example_bet(logged_in_client)
+
+    reply = cash_out(logged_in_client, bet_id)
+
+    assert reply == {
+        "success": False,
+        "error": "Odds have not changed since this bet was placed; remove it instead",
+    }
+    assert db.session.get(Bet, bet_id).status == "pending"
+
+
+def test_no_cash_out_while_the_window_is_paused(logged_in_client, user, betting_period, seeded_analytics):
+    bet_id = place_the_design_example_bet(logged_in_client)
+    publish_a_rerun(RERUN_ID, rerun_scores())
+    pause_the_window()
+
+    reply = cash_out(logged_in_client, bet_id)
+
+    assert reply == {"success": False, "error": "Betting is paused until the odds update"}
+    assert db.session.get(Bet, bet_id).status == "pending"
+
+
+def test_a_cash_out_at_an_offer_the_latest_run_has_moved_is_refused_with_the_new_offer(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    bet_id = place_the_design_example_bet(logged_in_client)
+    publish_a_rerun(RERUN_ID, rerun_scores())
+
+    reply = cash_out(logged_in_client, bet_id, offer=92.24)
+
+    assert reply == {"success": False, "error": "Offer has changed", "offer": 74.38}
+    assert db.session.get(Bet, bet_id).status == "pending"
+    db.session.refresh(user)
+    assert user.account_balance == 900.0
+
+
+def test_my_bets_offers_a_cash_out_in_place_of_removal_once_a_newer_run_moves_the_odds(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    place_the_design_example_bet(logged_in_client)
+
+    [before] = logged_in_client.get("/api/my_bets").get_json()
+    publish_a_rerun(RERUN_ID, rerun_scores())
+    [after] = logged_in_client.get("/api/my_bets").get_json()
+
+    assert (before["cash_out_offer"], before["removable"]) == (None, True)
+    assert (after["cash_out_offer"], after["removable"]) == (74.38, False)
+
+
+def test_a_bet_with_an_offer_is_not_removable_even_while_its_odds_row_keeps_its_run(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    # The odds tables still carry the bet's run, but the week's latest run and its scores are newer.
+    place_the_design_example_bet(logged_in_client)
+    db.session.execute(
+        text("""
+        INSERT INTO simulation_runs (run_id, season, week, seed, n_sims, model_version, n_teams, draws_path,
+                                     created_at, n_locked, window_closes_at, standings_through_week)
+        SELECT :rerun, season, week, 2, n_sims, model_version, n_teams, draws_path,
+               :created_at, 1, window_closes_at, standings_through_week
+        FROM simulation_runs WHERE run_id = :run_id
+    """),
+        {"rerun": RERUN_ID, "created_at": (WINDOW_NOW - timedelta(minutes=30)).isoformat(), "run_id": RUN_ID},
+    )
+    store_the_scores(RERUN_ID, rerun_scores())
+    db.session.commit()
+
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+
+    assert (listed["cash_out_offer"], listed["removable"]) == (74.38, False)
+
+
+def test_the_account_page_shows_a_cash_out_with_its_signed_result(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    bet_id = place_the_design_example_bet(logged_in_client)
+    publish_a_rerun(RERUN_ID, rerun_scores())
+    cash_out(logged_in_client, bet_id)
+    db.session.add(
+        Bet(
+            user_id=user.id,
+            bet_type="make_playoffs",
+            description="Alice A: Make Playoffs +152",
+            week=9,
+            amount=100.0,
+            odds="+152",
+            potential_win=152.0,
+            status="cashed_out",
+            result=19.7,
+            cash_out_amount=119.7,
+        )
+    )
+    db.session.commit()
+
+    page = logged_in_client.get("/account").get_data(as_text=True)
+
+    assert re.search(r"tnc-neg\s*\">\s*Cashed out -\$25\.62", page)
+    assert re.search(r"tnc-pos\s*\">\s*Cashed out \+\$19\.70", page)
