@@ -336,6 +336,20 @@ lines and head to head. What would change my mind: a worker's memory not fitting
 of 4.8 MB. For settlement, the runner-up is to store at placement the price of every subset of
 legs (14 prices for a 4-leg parlay), which settles without the old matrix.
 
+**Implementation notes (B8, 2026-09-29).** `app/parlays.py` quotes a slip of 2 to 4 same-week
+legs at the joint chance on the latest run's matrix, refusing in a fixed order: size, a leg that
+does not parse or is futures or another week's, two legs from one market, odds that moved (another
+run, or a team total at another line), no price, a joint chance of 0 or 1 (`impossible`), and a
+leg whose removal leaves the winning-sim count unchanged (`redundant`). The refusals the owner
+reviews (`same_market`, `impossible`, `redundant`) are logged to `parlay_refusals` by
+`POST /api/parlay_quote`; `POST /api/place_bet` with two or more `legs` records the parlay through
+the same ledger path as a single. `app/matrices.py` decodes a run's matrix once per worker
+(`lru_cache(maxsize=4)`) for parlays, cash-out and settlement. Settlement judges a parlay leg by
+leg, undecided until every leg is; pushed legs drop out and the rest re-price on the placement
+run's matrix, a lone leg at its own price, none left is a push, and a missing matrix is undecided
+for the admin to settle by hand. Cash-out still refuses multi-leg bets. Built by a Claude Code
+cloud session from `docs/briefs/b8-parlays.md`; merged 2026-09-29 (9e43632), 980 tests.
+
 ---
 
 ## 2. Cash-out
@@ -1092,7 +1106,8 @@ first, because every later package stores or reads it.
 - **B7.** The admin preview, push and void, settlement by key. Driving risk: a wrongly computed
   outcome pays wrong money; stat corrections. Shipped 2026-09-28 (merge 68da2e4).
 - **B8.** The parlay slip, the refusal rules with a refusal log, the per-worker matrix cache,
-  parlay settlement. Driving risk: the page and the cache.
+  parlay settlement. Driving risk: the page and the cache. Shipped 2026-09-29 (merge 9e43632);
+  parlay cash-out and the by-hand admin buttons on parlays are open (doc 08).
 - **B9.** Offers from the latest run for futures and weekly bets, and the week the profit posts to.
   Driving risk: futures and weekly bets reach their chances by different paths. Shipped
   2026-09-29 (merge 52aebf2); a playoffs-only rerun ends removal on that week's futures bets
