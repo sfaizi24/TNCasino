@@ -20,7 +20,7 @@ stateDiagram-v2
     Paused --> Open: the pipeline publishes a newer run<br/>with an open window
     Open --> Locked: lock_time passes (lazy)<br/>or the admin locks
     Paused --> Locked: lock_time passes (lazy)<br/>or the admin locks
-    Locked --> Open: admin unlock_period<br/>(lock_time = now + 7 days)
+    Locked --> Open: admin unlock_period<br/>(lock_time = the time the admin enters,<br/>default the coming Sunday 13:30 UTC)
     Open --> Settled: admin settle_week
     Paused --> Settled: admin settle_week
     Locked --> Settled: admin settle_week
@@ -30,7 +30,7 @@ stateDiagram-v2
 The window comes from the runs: Wednesday's run closes at Thursday's kickoff, the Friday rerun after Thursday's game closes at Sunday's first kickoff, and a Saturday rerun the same. With no rerun published, the latest run's window has closed and betting stays paused, which is the safe default. A window closing never flips `is_locked`; the lock is the admin's backstop and kill switch.
 
 - `lock_time` is entered in the admin form as a naive datetime and **stored as UTC**. Set it at the week's last window close, Sunday's first kickoff (week 4: `2026-10-04T13:30` UTC), never Thursday's: a Thursday lock keeps the week shut after the Friday rerun.
-- The lock is lazy: `check_betting_period_lock(week)` flips `is_locked` when it sees `now ≥ lock_time`. `betting_window` is its one caller, so the lock still flips on the first `place_bet`, `remove_bet`, `cash_out`, `my_bets` or `betting_window` request after `lock_time`; the `/betting` route itself doesn't check it.
+- The lock is lazy: `check_betting_period_lock(period)`, given the period `betting_window` loaded, flips `is_locked` when it sees `now ≥ lock_time`. `betting_window` is its one caller, so the lock still flips on the first `place_bet`, `remove_bet`, `cash_out`, `my_bets` or `betting_window` request after `lock_time`; the `/betting` route itself doesn't check it.
 - **Current week** = highest-numbered unsettled period. Settling week *N* moves the site to the next unsettled period; if there is none, it falls back to week 10. Creating the week *N+1* period before settling *N* moves the site forward immediately.
 - `settle_week` **only sets `is_settled`**. It doesn't touch bets; pending bets stay pending. The admin page shows only the current week's bets, so settle them ([Settlement](#settlement)) before creating the next week's period or marking this one settled.
 
@@ -40,8 +40,8 @@ The window comes from the runs: Wednesday's run closes at Thursday's kickoff, th
 stateDiagram-v2
     [*] --> pending: place_bet<br/>(balance −= amount)
     pending --> removed: remove_bet while the window is open<br/>and its run is the latest<br/>(balance += amount)
-    pending --> won: admin settle_outcomes<br/>or settle_bet(won=true)<br/>(balance += amount + potential_win;<br/>a parlay with pushed legs pays its adjusted potential_win)
-    pending --> lost: admin settle_outcomes<br/>or settle_bet(won=false)
+    pending --> won: admin settle_outcomes<br/>or settle_bet(won=true), singles only<br/>(balance += amount + potential_win;<br/>a parlay with pushed legs pays its adjusted potential_win)
+    pending --> lost: admin settle_outcomes<br/>or settle_bet(won=false), singles only
     pending --> push: admin settle_outcomes,<br/>tie or score on the line<br/>(balance += amount)
     pending --> void: admin void_bet<br/>(balance += amount)
     pending --> cashed_out: cash_out while the window is open<br/>and a newer run has moved the odds<br/>(balance += offer)
@@ -49,7 +49,7 @@ stateDiagram-v2
 
 The app judges each weekly bet placed by market key against the league's published scores, and the admin confirms the outcomes it shows ([Settlement](#settlement)); futures and legacy bets are settled by hand as won or lost. A bet's legs settle with it in the same transaction, taking its `settled_at` and its status, except a parlay settled from the preview, whose legs each take their own outcome. A push and a void both return the stake. A push is a result and stays on the record: the account page lists it as Push, and the leaderboard's popular-bet counts include it and show Push when nothing in the group won or lost. A void means the bet should never have stood, so it leaves `bets_placed` as a remove does, the account page lists it as Void, and the popular-bet counts leave it out with the removed bets.
 
-A pending bet can be removed while its week's window is open and its market, or every leg's market for a parlay, still shows the run it was priced at. Once a new run is published for one of them, `remove_bet` refuses with `"Odds have changed since this bet was placed"`, and removal gives way to cash-out. A legacy bet has no market to check and is removable while the window is open. `my_bets` reports the rule as each bet's `removable`, and the betting page shows the cancel button only when it is true. A removed bet keeps its row with status `removed` and its legs `void`; the account page lists it as Removed, and the leaderboard's popular-bet counts leave it out.
+A pending bet can be removed while its week's window is open and its `run_id` is still the week's latest run, the one the window names; a futures bet, which has no window run, is removable while its odds row still shows the run it was priced at. Once a newer run is published, `remove_bet` refuses with `"Odds have changed since this bet was placed"`, and removal gives way to cash-out. A legacy bet has no market to check and is removable while the window is open. `my_bets` reports the rule as each bet's `removable`, and the betting page shows the cancel button only when it is true. A removed bet keeps its row with status `removed` and its legs `void`; the account page lists it as Removed, and the leaderboard's popular-bet counts leave it out.
 
 ### Cash-out
 
@@ -128,7 +128,7 @@ On the seeded test run, roster 1 beats roster 2 in 11 of 20 sims and tops its 11
 |---|---|---|
 | `"Odds have changed"` | `odds_changed` | the request's `run_id` is not the window's: the page showed another run's prices, so every leg is named |
 | `"A parlay has 2 to 4 legs"` | `size` | fewer than two legs or more than four, or `legs` is not a list |
-| `"Unknown market"`, `"Unknown selection"`, `"Not this week's market"`, `"Futures cannot be parlayed"` | `leg` | a leg's key fails to parse or finds no row, names another week, or is a futures market; every faulty leg is named under the first one's text |
+| `"Unknown market"`, `"Unknown selection"`, `"Not this week's market"`, `"Futures cannot be parlayed"` | `leg` | a leg's key fails to parse or finds no row, names another week, or is a futures market, or the entry is not an object or names no market (named as null); every faulty leg is named under the first one's text |
 | `"Two legs from one market"` | `same_market` | two legs share a key: both sides of a matchup, a team's over and under, two highest-scorer picks. They could only win together on a tie |
 | `"Odds have changed"` | `odds_changed` | a leg's row is at another run than the window's, or a team total's line is missing or differs at two decimals |
 | `"Not offered"` | `no_price` | a leg's price is null (the leg is named), or the run's matrix is not stored (none is) |
@@ -137,7 +137,7 @@ On the seeded test run, roster 1 beats roster 2 in 11 of 20 sims and tops its 11
 
 An `"Odds have changed"` reply adds the window's `run_id`, so the page reloads the tab and quotes again. A quote refused as `same_market`, `impossible` or `redundant` writes one `parlay_refusals` row ([04](04-data-model.md#postgresql-production)): the user, week and run, the legs as the page sent them in JSON, and the rule. Malformed legs, moved odds and missing prices are not logged, and neither are refusals at placement, which follows a quote. Nothing reads the log yet; it is for the owner's SQL after weeks 5 and 6, to decide whether scorer legs stay in parlays ([design §1.4](../design/odds-models-2026.md#14-which-legs-belong)).
 
-A placed parlay is a `bets` row with `bet_type` `parlay`, the joint `odds`, `price` and `probability`, the run's `run_id` and the `potential_win` of the joint price, and one `bet_legs` row per leg holding the leg's own single price, chance and line. Its `description` joins the legs' single descriptions with ` + `: `Alice A vs Bob B: Alice A -150 + Alice A O/U 110.50: Over`. It is removable while every leg's market still shows the bet's run; once a newer run has moved the odds it is offered a cash-out at the joint chance of its legs in that run, like a single ([Cash-out](#cash-out)), or rides to settlement ([Settlement](#settlement)). The leaderboard counts it like any bet, except the popular-bet groups, which are the four single markets.
+A placed parlay is a `bets` row with `bet_type` `parlay`, the joint `odds`, `price` and `probability`, the run's `run_id` and the `potential_win` of the joint price, and one `bet_legs` row per leg holding the leg's own single price, chance and line. Its `description` joins the legs' single descriptions with ` + `: `Alice A vs Bob B: Alice A -150 + Alice A O/U 110.50: Over`. It is removable while the bet's run is still the week's latest; once a newer run has moved the odds it is offered a cash-out at the joint chance of its legs in that run, like a single ([Cash-out](#cash-out)), or rides to settlement ([Settlement](#settlement)). The leaderboard counts it like any bet, except the popular-bet groups, which are the four single markets.
 
 ### Payout math
 
@@ -193,11 +193,11 @@ The re-priced win replaces `bets.potential_win` when the bet settles, and each l
 | `"already settled"` | the bet is no longer pending: settled, pushed, voided or removed |
 | `"not found"` | no bet of that week has the id |
 
-**Runbook.** When the admin sets the week's period, the lock goes at the week's last window close, Sunday's first kickoff in UTC; the runs open and close betting between Wednesday and then on their own. Locking by hand before that is the kill switch for the week.
+**Runbook.** When the admin sets the week's period, the lock goes at the week's last window close, Sunday's first kickoff in UTC; the runs open and close betting between Wednesday and then on their own. Locking by hand before that is the kill switch for the week. Unlock asks for the new lock time, defaulting to the coming Sunday 13:30 UTC; a week ahead only when none is sent.
 
 **Which scores.** `sleeper_matchups` has no `run_id` and no fetch time: publish replaces it whole from the pipeline's latest league fetch, so settlement uses whatever the last publish carried, and the app cannot tell when that fetch ran. The design's open hypothesis ([odds models §6](../design/odds-models-2026.md#6-settlement-edge-cases)) is that Sleeper's stat corrections move a few starters by a point or two after Monday night. The test is to fetch week 4's matchups on Tuesday morning and again on Friday and compare `players_points`; until the answer is known, settle on Tuesday's fetch. The admin runs the league fetch and publish on Tuesday, checks the card's scores strip, which shows exactly the points the outcomes use, and then presses the button. A bet settled from Tuesday's scores is not revisited when a correction lands later.
 
-**By hand.** The Pending Bets card keeps a Win and a Loss button on every pending bet (`POST /api/admin/settle_bet`). They are how futures (after the season) and legacy bets settle, and they settle any other pending bet as won or lost too. On a parlay, Win pays the stored joint `potential_win` and gives every leg the bet's status; it does not re-price pushed legs, so parlays settle through the preview. The Void button beside them (`POST /api/admin/void_bet`, after a confirm naming the bet and its stake) refunds a bet that should never have stood: a game not played, an admin mistake.
+**By hand.** The Pending Bets card keeps a Win and a Loss button on every pending single (`POST /api/admin/settle_bet`). They are how futures (after the season) and legacy bets settle, and they settle any other pending single as won or lost too. A parlay shows neither: `settle_bet` refuses a bet with more than one leg (`"Parlays settle from the Settle Week card"`), so a parlay settles only through the preview, which judges it leg by leg. Void stays on every bet. The Void button beside them (`POST /api/admin/void_bet`, after a confirm naming the bet and its stake) refunds a bet that should never have stood: a game not played, an admin mistake.
 
 Both cards show the current week, and the page has no week switch; `settlement_preview` and `pending_bets` take `?week=N` for any other week, and `settle_outcomes` takes the week in its body.
 
