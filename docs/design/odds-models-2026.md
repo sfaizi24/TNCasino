@@ -649,6 +649,20 @@ and the owners' kicked-off starters pinned; two windows a week set by the runs t
 change leaves betting open during a game. What would change my mind: if the rerun proves
 unreliable in weeks 5 and 6, fall back to one window closing at Thursday's kickoff.
 
+**Implementation notes (B6, 2026-09-28).** `app/windows.py` computes a week's window in the order
+of the acceptance rules above: no period or a settled one is closed; the admin's lock (checked
+through the lazy `check_betting_period_lock`, its one remaining caller) is closed with the lock
+time; otherwise the latest `simulation_runs` row for the week decides, open before its
+`window_closes_at` and paused after, and closed when the run has no window. Only the lock
+flips `is_locked`; a paused window never does, so the Friday publish reopens betting on its
+own. `place_bet` and `remove_bet` refuse outside an open window, `removable` needs the window
+open as well as the bet's run still the latest, and `GET /api/betting_window` reports the
+state for the page and the admin banner. The banner shows the times in the visitor's own zone
+rather than ET, and the app reads whatever `window_closes_at` the pipeline set rather than
+computing kickoffs. The locked players with their final points (§3.7) wait for B5's `n_locked`
+and the lineup endpoint. Built by a Claude Code cloud session from
+`docs/briefs/b6-betting-windows.md`; merged 2026-09-28 (31db13e), 825 tests.
+
 ---
 
 ## 4. Other bet types
@@ -1060,7 +1074,8 @@ first, because every later package stores or reads it.
   empty slot) and sources dropping players who have played.
 - **B6.** Acceptance by window, the paused banner, `lock_time` as a kill switch, `remove_bet`
   limited to the latest run. Driving risk: time zones, the lazy lock, and behaviour when the laptop
-  is off.
+  is off. Shipped 2026-09-28 (merge 31db13e), ahead of B5: until the Friday rerun exists, the
+  window pauses at Thursday's kickoff and stays paused for the week.
 - **B7.** The admin preview, push and void, settlement by key. Driving risk: a wrongly computed
   outcome pays wrong money; stat corrections. Shipped 2026-09-28 (merge 68da2e4).
 - **B8.** The parlay slip, the refusal rules with a refusal log, the per-worker matrix cache,

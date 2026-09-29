@@ -57,7 +57,8 @@ Ten Jupyter notebooks in `backend/notebooks/`, run sequentially. See `docs/archi
 - **Monte Carlo uses lognormal** (not normal) distribution. Position baseline variances: QB=7, RB=9, WR=10, TE=8, K=4, DST=7.
 - **One module of win rules** — `pipeline/markets.py` says what wins and what pushes for every market; the odds step prices through it, the Flask app settles through it, and it will re-price through it. It imports only numpy and the standard library, and `pipeline/__init__.py` stays a bare docstring so the app can import it cheaply.
 - **`simulation_totals` is append-only** — the pipeline's publish step stores each published run's score matrix there before the staging-and-swap and never replaces the table; every other published table is swapped whole.
-- **Tests**: `python -m pytest` — 801 tests (app tests on in-memory SQLite, pipeline tests on scratch SQLite files), about 40 s. CI runs lint + tests on every push/PR.
+- **The betting window comes from the runs, the lock is the kill switch** — `app/windows.py` opens betting while the latest published run's `window_closes_at` is in the future and pauses it after; the next publish reopens it. The admin's `lock_time` is the hard close: the lazy lock flips `is_locked` for good, so set it at the week's last kickoff (Sunday's first game), never Thursday's.
+- **Tests**: `python -m pytest` — 825 tests (app tests on in-memory SQLite, pipeline tests on scratch SQLite files), about 40 s. CI runs lint + tests on every push/PR.
 - **`.env` required** — needs `SECRET_KEY`, `DATABASE_URL`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `ADMIN_EMAILS`. Local dev also needs `OAUTHLIB_INSECURE_TRANSPORT=1` and `OAUTHLIB_RELAX_TOKEN_SCOPE=1`. Prod sets `ANALYTICS_IMAGES_DIR=/var/lib/tncasino/analytics` so the analytics charts live outside the git working tree; local dev falls back to `backend/data/images/`.
 
 ## Code Quality Philosophy
@@ -91,12 +92,13 @@ app/                  — Flask application package
   migrations.py       — Schema migrations (run on startup)
   models.py           — SQLAlchemy models (User, Bet, BetLeg, WeeklyStats, BettingPeriod)
   settlement.py       — Outcomes of a week's keyed bets from the published scores: team_scores, outcomes_for_week, outcome_for
+  windows.py          — Whether a week is open for betting: Window, betting_window
   routes/
     helpers.py        — Shared helpers: query_analytics(), get_current_week(), check_betting_period_lock(), admin_required()
     pages.py          — Public pages: /, /about, /analytics, static files
     account.py        — User account: /account, /account/update-profile
     odds.py           — Odds API: /api/matchups, /api/team_performance, etc. (12 routes)
-    betting.py        — Betting: /betting, /leaderboard, /api/place_bet, etc. (6 routes)
+    betting.py        — Betting: /betting, /leaderboard, /api/place_bet, /api/betting_window, etc. (7 routes)
     admin.py          — Admin: /admin, /admin/pipeline, /api/admin/* (12 routes)
 
 scripts/              — Standalone CLI tools (invoked as `python -m scripts.<name>`)

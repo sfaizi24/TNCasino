@@ -67,6 +67,11 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 | L | `/analytics` picks its week from PNG filenames even though the page no longer shows PNGs. | `pages.py:31` |
 | L | The admin page has no week switch. Its settlement and pending-bets cards follow the current week, which moves on once the next week's period exists or this one is marked settled; bets still pending from an earlier week can then be settled only by calling the admin API with that week. | `frontend/static/js/admin.js` |
 | L | The admin page scrolls sideways at phone width: at a 375 px viewport the Current Betting Periods table stretches `.admin-grid`'s `1fr` column to 390 px and the page to 404 px. The settlement and pending-bets cards sit outside the grid and fit. The B7 browser check found this and left it. | `frontend/static/css/admin.css` |
+| L | `GET /api/betting_window` is a read that writes: it runs the lazy lock, so an anonymous page load after `lock_time` flips `is_locked`. Harmless today, since the next place or remove would have flipped it, but a GET with a side effect. | `app/windows.py`, `app/routes/betting.py` |
+| L | `betting_window` loads the week's `BettingPeriod` and then `check_betting_period_lock` loads it again, because the helper takes a week rather than a period. | `app/windows.py`, `app/routes/helpers.py` |
+| L | The betting page cannot tell a locked week from a settled one or from a run with no window: the endpoint reports `closed` without the lock time, so the banner reads `Betting is closed for week N` for all three. | `frontend/static/js/betting.js` |
+| L | `simulation_runs.created_at` and `window_closes_at` are read as ISO 8601 text. If a publish ever gives PostgreSQL a timestamp column instead of TEXT, `datetime.fromisoformat` receives a `datetime` and raises; check the column types after the first week-4 publish. | `app/windows.py`, `pipeline/steps/publish.py` |
+| L | `unlock_period` sets `lock_time` a week ahead. Now that the lock is the hard close, an admin who unlocks on a Sunday has to set it back to the week's last kickoff by hand. | `app/routes/admin.py` |
 
 ## Data & publishing
 
