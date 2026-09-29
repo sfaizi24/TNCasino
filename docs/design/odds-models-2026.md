@@ -1119,7 +1119,12 @@ first, because every later package stores or reads it.
   alternate lines need B3. Scoped to spreads alone by decision 7. B10a shipped 2026-09-29 (merge
   b8965fe): half-point lines priced in the app from the score matrix, main line at the median
   margin, alternates within ten points, `GET /api/spreads`, a Spreads tab with a line picker;
-  built by the cloud session from `docs/briefs/b10-spreads.md`. Last place and top 4 remain.
+  built by the cloud session from `docs/briefs/b10-spreads.md`. B10b shipped 2026-09-29 (merge
+  09bcb71): last place and the champion, the champion priced on Sleeper's fixed bracket played on
+  simulated playoff weeks, futures rows stamped with the simulation run they read, `sleeper_leagues`
+  published, the standings futures settled from the final standings in the regular season's last
+  week, the champion by hand, and a futures result posted to the week it settles in; built by the
+  cloud session from `docs/briefs/b10-futures.md`. Top 4 is the existing make-playoffs market.
 - **B11.** Props priced in the odds step (§4).
 
 Doc 08's line references have moved: the browser's odds are read at betting.py lines 257, 300, 341
