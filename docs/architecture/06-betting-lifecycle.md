@@ -84,34 +84,38 @@ Only the profit or loss of a cash-out, `offer − amount`, reaches `total_pnl` a
 
 ### Markets
 
-A bet names a market by key and picks one selection in it. `app/markets.py` builds the key from an odds row, parses it back, and finds the quote: the row's price, chance, line and `run_id` for that selection. From the request, `place_bet` reads only the key, the selection, the `run_id`, the amount and, for team totals, the line; the price always comes from the table.
+A bet names a market by key and picks one selection in it. `app/markets.py` builds the key from an odds row, parses it back, and finds the quote: the row's price, chance, line and `run_id` for that selection, or for a spread the price and chance at the requested line from the week's latest score matrix. From the request, `place_bet` reads only the key, the selection, the `run_id`, the amount and, for team totals and spreads, the line; the price always comes from the table or the matrix, never from the request.
 
 | Market (`bet_type`) | Key | Selection | Line | Priced from | Price, chance |
 |---|---|---|---|---|---|
 | `moneyline` | `2026-w04-moneyline-1v4`, lower roster id first | a roster id from the key | | `betting_odds_matchup_ml` by season, week, `team1_id`, `team2_id` | `team1_ml`/`team2_ml`, `team1_win_prob`/`team2_win_prob` |
+| `spread` | `2026-w04-spread-1v4`, lower roster id first | a roster id from the key | the selected roster's, signed: a multiple of 0.5 within ±40, as requested | the week's latest `simulation_runs` row's `simulation_totals` matrix, at the requested line, for a matchup with a `betting_odds_matchup_ml` row | the share of the run's sims in which the side covers, at fair odds (`odds_from_probability`) |
 | `team_total` | `2026-w04-team_total-4` | `over` or `under` | the row's `line`, two decimals | `betting_odds_team_ou` by season, week, `team_id` | `over_odds`/`under_odds`, `over_prob`/`under_prob` |
 | `highest_scorer` | `2026-w04-highest_scorer` | a roster id with a row that week | | `betting_odds_highest_scorer` by season, week, `team_id` | `odds`, `probability` |
 | `lowest_scorer` | `2026-w04-lowest_scorer` | a roster id with a row that week | | `betting_odds_lowest_scorer` by season, week, `team_id` | `odds`, `probability` |
 | `first_place` | `2026-first_place` | a roster id in the latest futures run | | `betting_odds_first_place` by season, `team_id`, at the season's highest `week` | `american_odds`, `probability` |
 | `make_playoffs` | `2026-make_playoffs-4` | `yes` | | `betting_odds_make_playoffs` by season, `team_id`, at the season's highest `week` | `american_odds`, `probability` |
 
+**Spread lines.** A line belongs to the selected roster: roster 4 at +5.5 covers when its score plus 5.5 beats roster 1's, pushes when the two are equal, and roster 1 at −5.5 is the other side of the same line. Pricing (through `leg_outcome`), cash-out and settlement all apply the one rule, `win_rules.spread(scores, picked, other, line)`. A matchup's main line is the median of `team1 − team2` over the latest run's sims, rounded to the nearest 0.5 and negated for team1, so a favourite by 5.7 shows −5.5 and team2 +5.5; the alternates run from the main line −10 to +10 in half points, inside ±40. On the seeded test run roster 1's median margin is 4: at −4.0 each side covers in 9 of 20 sims and 2 land on the line, both at `+122`. A spread has no odds table: the quote is priced when it is asked for, from the run `windows.latest_run_id(week)` names, which is the window's run read without the lazy lock. A side that covers in every sim or in none has no price, as the owner's no-cap, no-edge rule has it ([design decision 2](../design/odds-models-2026.md#10-evidence)).
+
 Only the latest published season is quoted. Weekly markets must be for the current week. Futures keys have no week; a futures bet's `week` is the current week, where its weekly stats post. After the window, amount and balance checks, `place_bet` refuses without moving money when:
 
 | Refusal | When |
 |---|---|
+| `"Unknown line"` | a spread without a line, or with one that is not a number, not a multiple of 0.5, or beyond ±40; checked before the market |
 | `"Unknown market"` | the key is not exactly one of the shapes above, or no row has it |
 | `"Not this week's market"` | a weekly key names another week |
 | `"Unknown selection"` | the market has no such selection: a roster id not in the key, `yes` on a moneyline, `over` on a scorer market, a roster with no row |
-| `"Odds have changed"` | the row's `run_id` differs from the request's, or a team total's line is missing or differs at two decimals; the reply adds the row's `run_id`, `price`, `odds` and `line` |
-| `"Not offered"` | the side's price is null because its simulated chance is 0 or 1; the page shows "No price" there |
+| `"Odds have changed"` | the row's `run_id` differs from the request's, or a team total's line is missing or differs at two decimals; a spread is quoted at the requested line, so only its run can move; the reply adds the quote's `run_id`, `price`, `odds` and `line` |
+| `"Not offered"` | the side's price is null because its simulated chance is 0 or 1, or a spread's run has no stored matrix; the page shows "No price" there |
 
-The bet stores the table's `odds` text, `price` (the odds as an integer: `+150` is 150, `-150` is −150, even money is 100), and the row's `probability` and `run_id`. Its one `bet_legs` row records the pick as data: the key, the selection, the line, the price and the chance. The `description` keeps the old wording for the weekly markets (`Samer vs Ammad: Samer -143`, `Samer: Highest Scorer +474`), with team-total lines now at two decimals (`Samer O/U 110.63: Over`); futures read `Samer: First Place +139` and `Ammad: Make Playoffs -114`. The admin page shows it beside each bet's outcome; only futures and legacy bets are still settled by reading it.
+The bet stores the table's `odds` text, `price` (the odds as an integer: `+150` is 150, `-150` is −150, even money is 100), and the row's `probability` and `run_id`. Its one `bet_legs` row records the pick as data: the key, the selection, the line, the price and the chance. The `description` keeps the old wording for the weekly markets (`Samer vs Ammad: Samer -143`, `Samer: Highest Scorer +474`), with team-total lines now at two decimals (`Samer O/U 110.63: Over`); a spread names the matchup, then the pick with its signed line at one decimal and the odds (`Samer vs Ammad: Samer -5.5 -110`), and its leg's `line` is the selected roster's; futures read `Samer: First Place +139` and `Ammad: Make Playoffs -114`. The admin page shows it beside each bet's outcome; only futures and legacy bets are still settled by reading it.
 
 **Legacy bets.** Bets placed before market keys existed have no legs and null `price`, `probability` and `run_id`. They keep their `description` and `odds` as the only record of the pick, show on the account page, the leaderboard and the admin page like any other bet, and settle by hand as before. Their `bet_type` was renamed once to the market names (`team_ou` → `team_total`, `first_seed` → `first_place`, `ammad_playoff` → `make_playoffs`); their descriptions keep the old wording ("#1 Seed", "Ammad Playoff").
 
 #### Parlays
 
-A parlay is one bet on two to four of the current week's picks, and it wins only if every leg wins. Its legs come from the four weekly markets, `moneyline`, `team_total`, `highest_scorer` and `lowest_scorer`; futures are refused. `app/parlays.py` prices the legs together at the joint chance, the share of the week's latest run's sims in which every leg wins, read from that run's `simulation_totals` matrix through each market's win rule (`app/matrices.py`, cached per worker). The run is the window's `run_id`, and every leg's own quote must come from it.
+A parlay is one bet on two to four of the current week's picks, and it wins only if every leg wins. Its legs come from the five weekly markets, `moneyline`, `spread`, `team_total`, `highest_scorer` and `lowest_scorer`; futures are refused. A spread leg carries its `line` and is quoted at it. `app/parlays.py` prices the legs together at the joint chance, the share of the week's latest run's sims in which every leg wins, read from that run's `simulation_totals` matrix through each market's win rule (`app/matrices.py`, cached per worker). The run is the window's `run_id`, and every leg's own quote must come from it.
 
 ```
 joint  = share of the run's sims in which every leg wins
@@ -128,16 +132,16 @@ On the seeded test run, roster 1 beats roster 2 in 11 of 20 sims and tops its 11
 |---|---|---|
 | `"Odds have changed"` | `odds_changed` | the request's `run_id` is not the window's: the page showed another run's prices, so every leg is named |
 | `"A parlay has 2 to 4 legs"` | `size` | fewer than two legs or more than four, or `legs` is not a list |
-| `"Unknown market"`, `"Unknown selection"`, `"Not this week's market"`, `"Futures cannot be parlayed"` | `leg` | a leg's key fails to parse or finds no row, names another week, or is a futures market, or the entry is not an object or names no market (named as null); every faulty leg is named under the first one's text |
-| `"Two legs from one market"` | `same_market` | two legs share a key: both sides of a matchup, a team's over and under, two highest-scorer picks. They could only win together on a tie |
+| `"Unknown market"`, `"Unknown selection"`, `"Unknown line"`, `"Not this week's market"`, `"Futures cannot be parlayed"` | `leg` | a leg's key fails to parse or finds no row, names another week, or is a futures market, a spread leg's line is missing or not a half point within ±40, or the entry is not an object or names no market (named as null); every faulty leg is named under the first one's text. A spread leg on a run without a stored matrix is refused here too, as `"Not offered"` |
+| `"Two legs from one market"` | `same_market` | two legs share a key: both sides of a matchup, a team's over and under, two highest-scorer picks, two spread legs of one matchup at any lines. They could only win together on a tie, or say one thing twice |
 | `"Odds have changed"` | `odds_changed` | a leg's row is at another run than the window's, or a team total's line is missing or differs at two decimals |
 | `"Not offered"` | `no_price` | a leg's price is null (the leg is named), or the run's matrix is not stored (none is) |
 | `"Not offered: the simulations cannot price this parlay"` | `impossible` | the legs win together in every sim or in none |
-| `"A leg adds nothing to this parlay"` | `redundant` | without the leg the others win in exactly as many sims: "Alice A is the highest scorer" already wins "Alice A beats Bob B", so the pair would pay what the single pays. Every such leg is named |
+| `"A leg adds nothing to this parlay"` | `redundant` | without the leg the others win in exactly as many sims: "Alice A is the highest scorer" already wins "Alice A beats Bob B", and so does "Alice A −4.0"; the pair would pay what the single pays. Every such leg is named |
 
 An `"Odds have changed"` reply adds the window's `run_id`, so the page reloads the tab and quotes again. A quote refused as `same_market`, `impossible` or `redundant` writes one `parlay_refusals` row ([04](04-data-model.md#postgresql-production)): the user, week and run, the legs as the page sent them in JSON, and the rule. Malformed legs, moved odds and missing prices are not logged, and neither are refusals at placement, which follows a quote. Nothing reads the log yet; it is for the owner's SQL after weeks 5 and 6, to decide whether scorer legs stay in parlays ([design §1.4](../design/odds-models-2026.md#14-which-legs-belong)).
 
-A placed parlay is a `bets` row with `bet_type` `parlay`, the joint `odds`, `price` and `probability`, the run's `run_id` and the `potential_win` of the joint price, and one `bet_legs` row per leg holding the leg's own single price, chance and line. Its `description` joins the legs' single descriptions with ` + `: `Alice A vs Bob B: Alice A -150 + Alice A O/U 110.50: Over`. It is removable while the bet's run is still the week's latest; once a newer run has moved the odds it is offered a cash-out at the joint chance of its legs in that run, like a single ([Cash-out](#cash-out)), or rides to settlement ([Settlement](#settlement)). The leaderboard counts it like any bet, except the popular-bet groups, which are the four single markets.
+A placed parlay is a `bets` row with `bet_type` `parlay`, the joint `odds`, `price` and `probability`, the run's `run_id` and the `potential_win` of the joint price, and one `bet_legs` row per leg holding the leg's own single price, chance and line. Its `description` joins the legs' single descriptions with ` + `: `Alice A vs Bob B: Alice A -150 + Alice A O/U 110.50: Over`. It is removable while the bet's run is still the week's latest; once a newer run has moved the odds it is offered a cash-out at the joint chance of its legs in that run, like a single ([Cash-out](#cash-out)), or rides to settlement ([Settlement](#settlement)). The leaderboard counts it like any bet, except the popular-bet groups, which are the four single markets `moneyline`, `team_total`, `highest_scorer` and `lowest_scorer`. A spread is a bet like any other for money and the best- and worst-bet lists, and has no popular-bet group of its own.
 
 ### Payout math
 
@@ -156,6 +160,7 @@ A placed parlay is a `bets` row with `bet_type` `parlay`, the joint `odds`, `pri
 | Market | Won | Lost | Push | Undecided |
 |---|---|---|---|---|
 | `moneyline` | the picked roster outscores the other roster in the key | the other way | equal points | either roster has no score |
+| `spread` | the picked roster's points plus the leg's `line` beat the other roster's | the other way | equal after the line | either roster has no score |
 | `team_total` | `over`: points above the leg's `line`; `under`: below | the other way | points on the line | the roster has no score |
 | `highest_scorer`, `lowest_scorer` | the picked roster's points equal the week's highest (lowest) | otherwise | never | any roster of the week's league has no score |
 | `first_place`, `make_playoffs` | | | | always: settled by hand after the season |
@@ -163,12 +168,12 @@ A placed parlay is a `bets` row with `bet_type` `parlay`, the joint `odds`, `pri
 | a key that fails to parse | | | | always, with the parse error as the reason |
 
 - A roster has no score when its row is missing or its `points` are exactly 0. Sleeper lists every roster of a week at 0.0 until the week is played, and no team with a lineup scores exactly zero.
-- The moneyline's other roster comes from the key, not from `matchup_id_number`.
+- The moneyline's and the spread's other roster comes from the key, not from `matchup_id_number`. A spread settles at the line stored on its leg, the picked roster's.
 - A team total settles at the `line` stored on its leg, never the odds table's current line, which a later run may have moved.
 - Every roster tied on the top (or bottom) score wins in full, because the pricing counted each of them the winner.
 - A week whose `sleeper_matchups` rows come from more than one league is refused whole: `"Week 4 has scores from 2 leagues; publish only this season's league"`.
 
-Each outcome carries a reason the admin reads beside it: `Bob B 131.20 vs Alice A 110.50`, `Alice A 110.50, line 110.50`, `highest 131.20: Bob B, Carol C`, `no score for Bob B`, `futures: settle by hand`, `placed before market keys: settle by hand`.
+Each outcome carries a reason the admin reads beside it: `Bob B 131.20 vs Alice A 110.50`, `Alice A 110.50 -5.5 vs Bob B 105.00` (the pick, its points and its line first), `Alice A 110.50, line 110.50`, `highest 131.20: Bob B, Carol C`, `no score for Bob B`, `futures: settle by hand`, `placed before market keys: settle by hand`.
 
 **Parlays** settle all or nothing, leg by leg, each leg judged by its market's rule above ([design §1.6](../design/odds-models-2026.md#16-settling-a-parlay)). A pushed leg drops out, and the legs left standing are paid on the run the parlay was placed at, never the latest:
 
