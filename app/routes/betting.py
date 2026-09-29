@@ -231,7 +231,8 @@ def place_bet():
             parlay = _quote_parlay(legs, data.get("run_id"), week, window)
             return _record_bet(_new_parlay(parlay, amount, week))
         # The page sends a lone pick as a one-leg list; other clients send it at the top level.
-        return _place_single(legs[0] if legs else data, data.get("run_id"), amount, week)
+        pick = legs[0] if legs and isinstance(legs[0], dict) else data
+        return _place_single(pick, data.get("run_id"), amount, week)
     except markets.MarketError as error:
         return _refuse(str(error))
     except parlays.ParlayRefusal as refusal:
@@ -319,7 +320,8 @@ def parlay_quote():
 def _quote_parlay(legs, run_id, week, window):
     """The parlay at the window's run; a page showing another run's prices has seen every leg change."""
     if run_id != window.run_id:
-        raise parlays.ParlayRefusal("Odds have changed", "odds_changed", [leg.get("market") for leg in legs])
+        keys = [leg.get("market") if isinstance(leg, dict) else None for leg in legs]
+        raise parlays.ParlayRefusal("Odds have changed", "odds_changed", keys)
     return parlays.quote(legs, week, window.run_id)
 
 
@@ -430,16 +432,15 @@ def get_my_bets():
             .order_by(Bet.created_at.desc())
             .all()
         )
-        weeks = {bet.week for bet in bets}
-        open_weeks = {week for week in weeks if betting_window(week).state == "open"}
+        windows = {week: betting_window(week) for week in {bet.week for bet in bets}}
         offers = cashout.offers_for(bets)
-        return jsonify([_bet_summary(bet, bet.week in open_weeks, offers.get(bet.id)) for bet in bets])
+        return jsonify([_bet_summary(bet, windows[bet.week], offers.get(bet.id)) for bet in bets])
     except Exception:
         logging.exception(f"Could not list the bets of user {current_user.id}")
         return jsonify([])
 
 
-def _bet_summary(bet, week_is_open, offer):
+def _bet_summary(bet, window, offer):
     summary = {
         "id": bet.id,
         "description": friendly_description(bet.description),
@@ -455,8 +456,8 @@ def _bet_summary(bet, week_is_open, offer):
         "price": bet.price,
         "probability": bet.probability,
         "run_id": bet.run_id,
-        # An offer needs a newer run and removal needs the bet's own, so a bet never has both.
-        "removable": week_is_open and offer is None and _run_is_latest(bet),
+        # Removal needs the bet's own run to be the latest and an offer needs a newer one, so a bet never has both.
+        "removable": window.state == "open" and _run_is_latest(bet, window),
         "cash_out_offer": offer.amount if offer else None,
         "legs": [
             {
@@ -476,8 +477,11 @@ def _bet_summary(bet, week_is_open, offer):
     return summary
 
 
-def _run_is_latest(bet):
-    """Whether every leg's market still shows the run the bet was priced from; a legacy bet has none to check."""
+def _run_is_latest(bet, window):
+    """Whether the bet was priced from its week's latest run, the same run a cash-out offer compares against."""
+    if any(leg.week is not None for leg in bet.legs):
+        return bet.run_id == window.run_id
+    # A futures bet has no window run, so its odds row decides; a legacy bet has no legs to check.
     return all(_quotes_run(leg, bet.run_id) for leg in bet.legs)
 
 
@@ -500,7 +504,7 @@ def remove_bet(bet_id):
         window = betting_window(bet.week)
         if window.state != "open":
             return _refuse_window(window)
-        if not _run_is_latest(bet):
+        if not _run_is_latest(bet, window):
             return _refuse("Odds have changed since this bet was placed")
 
         if not ledger.remove(bet):

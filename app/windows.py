@@ -37,7 +37,7 @@ def betting_window(week, now=None):
     if period is None or period.is_settled:
         return Window(week, "closed")
 
-    lock_time = check_betting_period_lock(week)
+    lock_time = check_betting_period_lock(period)
     if lock_time is not None:
         return Window(week, "closed", lock_time=lock_time)
 

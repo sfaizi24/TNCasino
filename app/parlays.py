@@ -76,9 +76,11 @@ def joint_price(outcomes):
 def _legs(requests, week):
     legs, faulty_keys, messages = [], [], []
     for request in requests:
-        key = request.get("market")
+        # An entry that is not an object names no market, so it is refused as an unknown one.
+        entry = request if isinstance(request, dict) else {}
+        key = entry.get("market")
         try:
-            legs.append(_leg(key, str(request.get("selection")), week))
+            legs.append(_leg(key, str(entry.get("selection")), week))
         except MarketError as error:
             faulty_keys.append(key)
             messages.append(str(error))

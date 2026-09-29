@@ -118,6 +118,18 @@ def test_a_faulty_leg_is_refused_before_a_shared_market():
 
 
 @pytest.mark.parametrize(
+    ("requests", "named"),
+    [
+        (["x", "y"], (None, None)),
+        ([{}, ROSTER_1_OVER], (None,)),
+        ([ROSTER_1_WINS, None, {"selection": "over"}, FUTURES], (None, None, "2026-make_playoffs-1")),
+    ],
+)
+def test_an_entry_that_names_no_market_is_refused_as_an_unknown_one(requests, named):
+    assert _refusal(requests) == ("Unknown market", "leg", named)
+
+
+@pytest.mark.parametrize(
     ("requests", "shared"),
     [
         ([ROSTER_1_WINS, ROSTER_2_WINS], ("2026-w10-moneyline-1v2",)),
