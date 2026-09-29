@@ -4,10 +4,21 @@ import numpy as np
 import pytest
 from sqlalchemy import text
 
+from app import settlement
 from app.models import Bet, BetLeg
-from app.settlement import LOST, PUSH, UNDECIDED, WON, SettlementError, TeamScore, outcome_for, team_scores
+from app.settlement import (
+    LOST,
+    PUSH,
+    UNDECIDED,
+    WON,
+    SettlementError,
+    TeamScore,
+    final_standings,
+    outcome_for,
+    team_scores,
+)
 from pipeline.markets import encode_totals
-from tests.conftest import set_points
+from tests.conftest import play_weeks, set_points
 
 MONEYLINE = "2026-w10-moneyline-1v2"
 SPREAD = "2026-w10-spread-1v2"
@@ -195,11 +206,13 @@ def test_a_week_nobody_has_played_counts_the_teams_without_a_score():
     assert _judge(LOWEST, "1", _scores(None, None, None)).reason == "no score for 3 teams"
 
 
-@pytest.mark.parametrize(("market", "selection"), [("2026-first_place", "1"), ("2026-make_playoffs-1", "yes")])
-def test_futures_settle_by_hand(market, selection):
+@pytest.mark.parametrize(
+    ("market", "selection"), [("2026-first_place", "1"), ("2026-make_playoffs-1", "yes"), ("2026-last_place", "2")]
+)
+def test_standings_futures_wait_for_the_final_standings(market, selection):
     result = _judge(market, selection, _scores(120.5, 98.25, 110.5))
 
-    assert (result.outcome, result.reason) == (UNDECIDED, "futures: settle by hand")
+    assert (result.outcome, result.reason) == (UNDECIDED, "futures: judged from the final standings")
 
 
 def test_a_bet_placed_before_market_keys_settles_by_hand():
@@ -308,3 +321,108 @@ def test_a_week_with_scores_from_two_leagues_cannot_be_settled(seeded_analytics,
 
 def test_a_week_without_published_scores_has_no_teams(seeded_analytics):
     assert team_scores(11) == {}
+
+
+# Ten weeks for rosters 1 and 2 of the seeded league, whose regular season ends in week 10. Alice A wins
+# weeks 1 to 6 and 10 for 7-3 and 1,140.25 points; Bob B goes 3-7 with 1,100.00.
+ALICE_ON_TOP = ([120.0] * 6 + [100.0] * 3 + [120.25], [110.0] * 10)
+# Both 5-5, Bob B on more points: 1,150.00 to Alice A's 905.00.
+BOB_ON_POINTS = ([101.0] * 5 + [80.0] * 5, [100.0] * 5 + [130.0] * 5)
+# Every week a tie, so both are 0-0-10 on 1,000.00 and the lower roster id ranks first.
+LEVEL = ([100.0] * 10, [100.0] * 10)
+
+
+def _play_season(session, season):
+    alice, bob = season
+    play_weeks(session, {1: alice[:9], 2: bob[:9]})
+    set_points(session, {1: alice[9], 2: bob[9]})
+
+
+def _judge_on_the_standings(market, selection):
+    return outcome_for(Bet(legs=[BetLeg(market=market, selection=selection)]), {}, final_standings(10))
+
+
+@pytest.mark.parametrize(
+    ("market", "selection", "outcome", "reason"),
+    [
+        ("2026-first_place", "1", WON, "1st of 2: 7-3, 1,140.25 pts"),
+        ("2026-first_place", "2", LOST, "2nd of 2: 3-7, 1,100.00 pts"),
+        ("2026-make_playoffs-1", "yes", WON, "1st of 2: 7-3, 1,140.25 pts"),
+        ("2026-make_playoffs-2", "yes", LOST, "2nd of 2: 3-7, 1,100.00 pts"),
+        ("2026-last_place", "2", WON, "2nd of 2: 3-7, 1,100.00 pts"),
+        ("2026-last_place", "1", LOST, "1st of 2: 7-3, 1,140.25 pts"),
+    ],
+)
+def test_the_final_standings_decide_each_standings_future(
+    seeded_analytics, db_session, market, selection, outcome, reason
+):
+    _play_season(db_session.session, ALICE_ON_TOP)
+
+    result = _judge_on_the_standings(market, selection)
+
+    assert (result.outcome, result.reason) == (outcome, reason)
+
+
+@pytest.mark.parametrize(
+    ("season", "first", "reason"),
+    [(BOB_ON_POINTS, "2", "1st of 2: 5-5, 1,150.00 pts"), (LEVEL, "1", "1st of 2: 0-0-10, 1,000.00 pts")],
+    ids=["points for", "roster id"],
+)
+def test_level_wins_rank_by_points_for_then_roster_id(seeded_analytics, db_session, season, first, reason):
+    _play_season(db_session.session, season)
+
+    result = _judge_on_the_standings("2026-first_place", first)
+
+    assert (result.outcome, result.reason) == (WON, reason)
+
+
+def test_the_standings_wait_for_every_roster_to_score_in_the_last_week(seeded_analytics, db_session):
+    play_weeks(db_session.session, {1: [100.0] * 9, 2: [110.0] * 9})
+    set_points(db_session.session, {1: 120.0})
+
+    result = _judge_on_the_standings("2026-last_place", "2")
+
+    assert (result.outcome, result.reason) == (
+        UNDECIDED,
+        "regular season not complete: 1 of 2 rosters scored in week 10",
+    )
+
+
+def test_a_score_of_zero_in_an_earlier_week_leaves_the_season_incomplete(seeded_analytics, db_session):
+    play_weeks(db_session.session, {1: [100.0] * 9, 2: [110.0] * 3 + [0.0] + [110.0] * 5})
+    set_points(db_session.session, {1: 120.0, 2: 90.0})
+
+    assert final_standings(10).incomplete == "regular season not complete: 1 of 2 rosters scored in week 4"
+
+
+def test_only_the_regular_seasons_last_week_has_final_standings(seeded_analytics, db_session):
+    _play_season(db_session.session, ALICE_ON_TOP)
+
+    assert final_standings(9) is None
+    assert final_standings(10).incomplete is None
+
+
+def test_a_league_without_published_settings_cannot_be_settled(seeded_analytics, db_session):
+    db_session.session.execute(text("DELETE FROM sleeper_leagues"))
+
+    with pytest.raises(SettlementError, match="League league1 has no published settings"):
+        final_standings(10)
+
+
+def test_the_champion_settles_by_hand_whatever_the_standings(seeded_analytics, db_session):
+    _play_season(db_session.session, ALICE_ON_TOP)
+    champion = Bet(legs=[BetLeg(market="2026-champion", selection="1")])
+
+    results = [outcome_for(champion, {}, standings) for standings in (None, final_standings(10))]
+
+    assert {(result.outcome, result.reason) for result in results} == {
+        (UNDECIDED, "champion: settle by hand after the final")
+    }
+
+
+@pytest.mark.parametrize(
+    ("number", "ordinal"),
+    [(1, "1st"), (2, "2nd"), (3, "3rd"), (4, "4th"), (11, "11th"), (12, "12th"), (13, "13th"), (21, "21st")],
+)
+def test_a_rank_reads_as_an_ordinal(number, ordinal):
+    assert settlement._ordinal(number) == ordinal

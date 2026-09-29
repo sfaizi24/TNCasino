@@ -23,18 +23,20 @@ TEAM_TOTAL_BET = {
 }
 
 # bet_type, key, selection, line, description, odds and the potential win on a 100 stake, from the seeded tables.
-SIX_MARKETS = [
+SINGLE_MARKETS = [
     ("moneyline", "2026-w10-moneyline-1v2", "1", None, "Alice A vs Bob B: Alice A -150", "-150", 66.67),
     ("team_total", "2026-w10-team_total-1", "over", 110.5, "Alice A O/U 110.50: Over", "-120", 83.33),
     ("highest_scorer", "2026-w10-highest_scorer", "1", None, "Alice A: Highest Scorer +185", "+185", 185.0),
     ("lowest_scorer", "2026-w10-lowest_scorer", "2", None, "Bob B: Lowest Scorer +230", "+230", 230.0),
     ("first_place", "2026-first_place", "2", None, "Bob B: First Place +150", "+150", 150.0),
     ("make_playoffs", "2026-make_playoffs-1", "yes", None, "Alice A: Make Playoffs -400", "-400", 25.0),
+    ("last_place", "2026-last_place", "2", None, "Bob B: Last Place +230", "+230", 230.0),
+    ("champion", "2026-champion", "1", None, "Alice A: Champion +233", "+233", 233.0),
 ]
 
 
 @pytest.mark.parametrize(
-    ("bet_type", "market", "selection", "line", "description", "odds", "potential_win"), SIX_MARKETS
+    ("bet_type", "market", "selection", "line", "description", "odds", "potential_win"), SINGLE_MARKETS
 )
 def test_each_market_is_priced_from_its_table_not_the_request(
     logged_in_client,
@@ -209,7 +211,16 @@ def publish_a_rerun(run_id, totals=None):
             "closes_at": (WINDOW_NOW + timedelta(days=2)).isoformat(),
         },
     )
-    for table in ("matchup_ml", "team_ou", "highest_scorer", "lowest_scorer", "first_place", "make_playoffs"):
+    for table in (
+        "matchup_ml",
+        "team_ou",
+        "highest_scorer",
+        "lowest_scorer",
+        "first_place",
+        "make_playoffs",
+        "last_place",
+        "champion",
+    ):
         db.session.execute(text(f"UPDATE betting_odds_{table} SET run_id = :run_id"), {"run_id": run_id})
     if totals is not None:
         store_the_scores(run_id, totals)
@@ -660,6 +671,28 @@ def test_a_bet_with_an_offer_is_not_removable_even_while_its_odds_row_keeps_its_
 
     assert (listed["cash_out_offer"], listed["removable"]) == (74.38, False)
     assert reply == {"success": False, "error": "Odds have changed since this bet was placed"}
+
+
+def test_a_last_place_bet_is_offered_and_cashed_out_at_the_newer_futures_quote(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    last_place = {"market": "2026-last_place", "selection": "2", "run_id": RUN_ID, "amount": 100}
+    bet_id = logged_in_client.post("/api/place_bet", json=last_place).get_json()["bet_id"]
+    # A newer futures run puts Bob B's last place at 50%: $330 at 50% is worth $165, offered at $156.75.
+    db.session.execute(text("UPDATE betting_odds_last_place SET run_id = 'newer-futures', probability = 0.5"))
+    db.session.commit()
+
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+    reply = cash_out(logged_in_client, bet_id, offer=156.75)
+
+    assert (listed["bet_type"], listed["market"], listed["selection"]) == ("last_place", "2026-last_place", "2")
+    assert (listed["description"], listed["removable"], listed["cash_out_offer"]) == (
+        "Bob B: Last Place +230",
+        False,
+        156.75,
+    )
+    assert reply == {"success": True, "new_balance": pytest.approx(1056.75), "cash_out_amount": 156.75}
+    assert weekly_money(user, 10) == pytest.approx((1000.0, 1056.75, 56.75, 0.0, 56.75, 1, 0))
 
 
 def test_the_account_page_shows_a_cash_out_with_its_signed_result(

@@ -229,6 +229,48 @@ def test_push_and_void_refund_the_stake_and_only_a_push_still_counts_as_placed(u
     assert closed.settled_at is not None
 
 
+@pytest.mark.parametrize(
+    ("event", "profit", "bets_won"),
+    [
+        (partial(ledger.settle, won=True, week=11), 100.0, 1),
+        (partial(ledger.settle, won=False, week=11), -100.0, 0),
+        (partial(ledger.push, week=11), 0.0, 0),
+    ],
+    ids=["won", "lost", "push"],
+)
+def test_a_result_posted_to_a_later_week_leaves_only_the_stake_in_the_bets_week(user, event, profit, bets_won):
+    bet = _placed_bet(user)
+    ledger.open_week(user.id, 11)
+
+    assert event(bet) is True
+    db.session.commit()
+
+    assert _money(user, week=10) == {
+        "account_balance": 1000.0 + profit,
+        "total_pnl": profit,
+        "bets": 1,
+        "starting_balance": 1000.0,
+        "ending_balance": 1000.0 + profit,
+        "pnl": profit,
+        "active_bets_amount": 0.0,
+        "settled_pnl": 0.0,
+        "bets_placed": 1,
+        "bets_won": 0,
+    }
+    assert _money(user, week=11) == {
+        "account_balance": 1000.0 + profit,
+        "total_pnl": profit,
+        "bets": 1,
+        "starting_balance": 900.0,
+        "ending_balance": 1000.0 + profit,
+        "pnl": 100.0 + profit,
+        "active_bets_amount": 0.0,
+        "settled_pnl": profit,
+        "bets_placed": 0,
+        "bets_won": bets_won,
+    }
+
+
 def test_second_bet_of_the_week_adds_to_the_counters(user):
     _placed_bet(user, 100.0)
     _placed_bet(user, 50.0)

@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.database import db
-from app.models import Bet, BettingPeriod
+from app.models import Bet, BetLeg, BettingPeriod
 
 
 def test_admin_page_requires_admin(logged_in_client, user):
@@ -41,6 +41,35 @@ def test_pending_bets_default_to_the_current_week(admin_client, admin_user, db_s
     bets = admin_client.get("/api/admin/pending_bets").get_json()
 
     assert [bet["description"] for bet in bets] == ["Week 12 bet"]
+
+
+def _bet_on(user, bet_type, market, week, leg_week):
+    return Bet(
+        user_id=user.id,
+        bet_type=bet_type,
+        description=f"Week {week}: {market}",
+        amount=10.0,
+        odds="+100",
+        potential_win=10.0,
+        week=week,
+        legs=[BetLeg(season=2026, week=leg_week, market=market, selection="1", price=100, probability=0.5)],
+    )
+
+
+def test_pending_bets_keep_every_pending_futures_bet_whatever_its_week(admin_client, admin_user, db_session):
+    db_session.session.add(BettingPeriod(week=12, lock_time=datetime.now(UTC)))
+    db_session.session.add_all(
+        [
+            _bet_on(admin_user, "moneyline", "2026-w10-moneyline-1v2", 10, 10),
+            _bet_on(admin_user, "champion", "2026-champion", 10, None),
+            _bet_on(admin_user, "moneyline", "2026-w12-moneyline-1v2", 12, 12),
+        ]
+    )
+    db_session.session.commit()
+
+    bets = admin_client.get("/api/admin/pending_bets").get_json()
+
+    assert [bet["description"] for bet in bets] == ["Week 10: 2026-champion", "Week 12: 2026-w12-moneyline-1v2"]
 
 
 def test_set_betting_period(admin_client, admin_user, db_session):

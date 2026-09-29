@@ -6,7 +6,7 @@ import numpy as np
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
-from .. import markets
+from .. import markets, settlement
 from ..matrices import MissingMatrix, score_matrix
 from ..windows import latest_run_id
 from .helpers import (
@@ -22,7 +22,6 @@ odds_bp = Blueprint("odds", __name__)
 
 # League-wide views slice FLEX out of RB/WR/TE so it stacks/charts as its own group.
 POSITION_GROUPS = ("QB", "RB", "WR", "TE", "FLEX", "K", "DEF")
-PLAYOFF_CUTOFF = 8
 
 # The alternate spread lines either side of the main line, in half points: from 10 points below to 10 above.
 ALTERNATE_SPREAD_STEPS = 20
@@ -257,6 +256,24 @@ def get_make_playoffs():
         return jsonify(_futures_rows("make_playoffs"))
     except Exception:
         logging.exception("Could not list the make-playoffs odds")
+        return jsonify([])
+
+
+@odds_bp.route("/api/last_place")
+def get_last_place():
+    try:
+        return jsonify(_futures_rows("last_place"))
+    except Exception:
+        logging.exception("Could not list the last-place odds")
+        return jsonify([])
+
+
+@odds_bp.route("/api/champion")
+def get_champion():
+    try:
+        return jsonify(_futures_rows("champion"))
+    except Exception:
+        logging.exception("Could not list the champion odds")
         return jsonify([])
 
 
@@ -665,61 +682,6 @@ def get_team_players():
         return jsonify({"starters": [], "bench": []})
 
 
-def _standings_through(week, league_id):
-    """Records and points-for through completed games in weeks < `week`, ordered by record."""
-    user_rows = query_analytics(
-        """
-        SELECT r.roster_id, u.username, u.display_name
-        FROM sleeper_rosters r
-        LEFT JOIN sleeper_users u ON r.owner_id = u.user_id
-        WHERE r.league_id = :league_id
-        """,
-        {"league_id": league_id},
-    )
-    owner_by_rid = {r["roster_id"]: r["username"] or r["display_name"] or f"Team {r['roster_id']}" for r in user_rows}
-
-    pair_rows = query_analytics(
-        """
-        SELECT a.roster_id AS rid, a.points AS pts, b.points AS opp_pts
-        FROM sleeper_matchups a
-        JOIN sleeper_matchups b
-          ON a.league_id = b.league_id
-         AND a.week = b.week
-         AND a.matchup_id_number = b.matchup_id_number
-         AND a.roster_id <> b.roster_id
-        WHERE a.league_id = :league_id AND a.week < :week
-        """,
-        {"league_id": league_id, "week": week},
-    )
-    record = defaultdict(lambda: {"wins": 0, "losses": 0, "ties": 0, "fpts": 0.0})
-    for row in pair_rows:
-        rid, pts, opp = row["rid"], row["pts"] or 0, row["opp_pts"] or 0
-        record[rid]["fpts"] += pts
-        if pts > opp:
-            record[rid]["wins"] += 1
-        elif pts < opp:
-            record[rid]["losses"] += 1
-        else:
-            record[rid]["ties"] += 1
-
-    standings = []
-    for rid, owner in owner_by_rid.items():
-        r = record[rid]
-        standings.append(
-            {
-                "roster_id": rid,
-                "owner": owner,
-                "label": display_name_for(owner),
-                "wins": r["wins"],
-                "losses": r["losses"],
-                "ties": r["ties"],
-                "fpts": r["fpts"],
-            }
-        )
-    standings.sort(key=lambda t: (-t["wins"], -t["fpts"]))
-    return standings
-
-
 @odds_bp.route("/api/league_overview")
 def league_overview():
     """Power-ranking payload: standings, projected mean/p10/p90, and matchup win prob."""
@@ -728,7 +690,7 @@ def league_overview():
     if not league_id:
         return jsonify({"week": week, "teams": []})
 
-    standings = _standings_through(week, league_id)
+    standings = settlement.standings_before(week, league_id)
 
     dist_rows = query_analytics(
         "SELECT owner, mean, p10, p50, p90 FROM team_distribution_curves WHERE week = :week",
@@ -746,24 +708,24 @@ def league_overview():
         win_prob_by_rid[r["team2_id"]] = r["team2_win_prob"]
 
     teams = []
-    for rank, t in enumerate(standings, start=1):
-        dist = dist_by_owner.get(t["owner"])
-        record = f"{t['wins']}-{t['losses']}" + (f"-{t['ties']}" if t["ties"] else "")
+    for rank, standing in enumerate(standings, start=1):
+        dist = dist_by_owner.get(standing.owner)
         teams.append(
             {
                 "rank": rank,
-                "label": t["label"],
-                "record": record,
+                "label": display_name_for(standing.owner),
+                "record": standing.record,
                 "proj_mean": round(dist["mean"], 1) if dist else None,
                 "p10": round(dist["p10"], 1) if dist else None,
                 "p90": round(dist["p90"], 1) if dist else None,
-                "win_prob": round(win_prob_by_rid.get(t["roster_id"], 0) * 100, 1)
-                if t["roster_id"] in win_prob_by_rid
+                "win_prob": round(win_prob_by_rid.get(standing.roster_id, 0) * 100, 1)
+                if standing.roster_id in win_prob_by_rid
                 else None,
             }
         )
 
-    return jsonify({"week": week, "playoff_cutoff": PLAYOFF_CUTOFF, "teams": teams})
+    playoff_teams = settlement.league_settings(league_id).playoff_teams
+    return jsonify({"week": week, "playoff_cutoff": playoff_teams, "teams": teams})
 
 
 @odds_bp.route("/api/position_strength")
@@ -774,8 +736,8 @@ def position_strength():
     if not league_id:
         return jsonify({"week": week, "positions": list(POSITION_GROUPS), "teams": []})
 
-    standings = _standings_through(week, league_id)
-    rank_by_owner = {t["owner"]: i + 1 for i, t in enumerate(standings)}
+    standings = settlement.standings_before(week, league_id)
+    rank_by_owner = {standing.owner: rank for rank, standing in enumerate(standings, start=1)}
 
     lineup_rows = query_analytics(
         """

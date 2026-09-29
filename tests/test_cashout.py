@@ -166,6 +166,16 @@ def test_a_futures_bet_is_offered_at_the_latest_futures_quote(user):
     assert offer_for(bet) == Offer(bet.id, 119.7, 126.0, 0.5, RUN_ID)
 
 
+@pytest.mark.parametrize(("name", "selection"), [("last_place", "2"), ("champion", "1")])
+def test_last_place_and_the_champion_are_offered_at_their_latest_quote(user, name, selection):
+    # Placed in week 9 at +300; the seeded week 10 run puts the pick at 40%: $400 at 40% is worth $160.
+    db.session.execute(text(f"UPDATE betting_odds_{name} SET probability = 0.4"))
+    db.session.commit()
+    bet = _bet(user, f"2026-{name}", selection, price=300, run_id="2026w09-20261103T140000", week=9)
+
+    assert offer_for(bet) == Offer(bet.id, 152.0, 160.0, 0.4, RUN_ID)
+
+
 def test_no_futures_offer_while_the_standings_are_behind(user):
     db.session.execute(
         text("UPDATE simulation_runs SET standings_through_week = 8 WHERE run_id = :run_id"), {"run_id": RUN_ID}
