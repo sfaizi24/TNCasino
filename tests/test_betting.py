@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -7,7 +8,7 @@ from sqlalchemy import text
 
 from app import ledger
 from app.database import db
-from app.models import Bet, BettingPeriod, WeeklyStats
+from app.models import Bet, BettingPeriod, ParlayRefusal, WeeklyStats
 from pipeline import markets as win_rules
 from tests.conftest import RUN_ID, WINDOW_NOW
 
@@ -58,6 +59,7 @@ def test_each_market_is_priced_from_its_table_not_the_request(
         "market": market,
         "selection": selection,
         "price": int(odds),
+        "legs": [market],
     }
     bet = db.session.get(Bet, 1)
     assert bet.bet_type == bet_type
@@ -282,6 +284,9 @@ def test_my_bets_lists_the_pick_and_whether_it_can_be_removed(logged_in_client, 
     assert listed["bet_type"] == "team_total"
     assert (listed["market"], listed["selection"], listed["line"]) == ("2026-w10-team_total-1", "over", 110.5)
     assert (listed["price"], listed["probability"], listed["run_id"]) == (-120, 0.55, RUN_ID)
+    assert listed["legs"] == [
+        {"market": "2026-w10-team_total-1", "selection": "over", "line": 110.5, "price": -120, "odds": "-120"}
+    ]
     assert listed["removable"] is True
 
 
@@ -350,6 +355,7 @@ def test_a_legacy_bet_without_legs_is_still_removable(logged_in_client, user, be
     reply = logged_in_client.delete(f"/api/remove_bet/{legacy.id}").get_json()
 
     assert (listed["market"], listed["selection"], listed["line"], listed["run_id"]) == (None, None, None, None)
+    assert listed["legs"] == []
     assert listed["removable"] is True
     assert reply == {"success": True, "new_balance": 1000.0}
     assert db.session.get(Bet, legacy.id).status == "removed"
@@ -640,3 +646,312 @@ def test_the_account_page_shows_a_cash_out_with_its_signed_result(
 
     assert re.search(r"tnc-neg\s*\">\s*Cashed out -\$25\.62", page)
     assert re.search(r"tnc-pos\s*\">\s*Cashed out \+\$19\.70", page)
+
+
+# Parlays, on the seeded run: roster 1 wins 11 of the 20 sims, is over 110.5 in 9, and does both in 7.
+ROSTER_1_WINS = {"market": "2026-w10-moneyline-1v2", "selection": "1"}
+ROSTER_2_WINS = {"market": "2026-w10-moneyline-1v2", "selection": "2"}
+ROSTER_1_OVER = {"market": "2026-w10-team_total-1", "selection": "over", "line": 110.5}
+ROSTER_2_OVER = {"market": "2026-w10-team_total-2", "selection": "over", "line": 95.0}
+ROSTER_1_HIGHEST = {"market": "2026-w10-highest_scorer", "selection": "1"}
+ROSTER_2_HIGHEST = {"market": "2026-w10-highest_scorer", "selection": "2"}
+ROSTER_2_LOWEST = {"market": "2026-w10-lowest_scorer", "selection": "2"}
+MAKE_PLAYOFFS = {"market": "2026-make_playoffs-1", "selection": "yes"}
+
+CANNOT_PRICE = "Not offered: the simulations cannot price this parlay"
+
+# The legs, the refusal text, its rule and the keys it names.
+PARLAY_REFUSALS = [
+    ([ROSTER_1_WINS] * 5, "A parlay has 2 to 4 legs", "size", []),
+    ([ROSTER_1_OVER, MAKE_PLAYOFFS], "Futures cannot be parlayed", "leg", ["2026-make_playoffs-1"]),
+    ([ROSTER_1_WINS, ROSTER_2_WINS], "Two legs from one market", "same_market", ["2026-w10-moneyline-1v2"]),
+    ([ROSTER_1_WINS, ROSTER_2_HIGHEST], CANNOT_PRICE, "impossible", []),
+    (
+        [ROSTER_1_HIGHEST, ROSTER_2_LOWEST],
+        "A leg adds nothing to this parlay",
+        "redundant",
+        ["2026-w10-highest_scorer", "2026-w10-lowest_scorer"],
+    ),
+]
+
+
+def quote_parlay(client, legs, run_id=RUN_ID):
+    return client.post("/api/parlay_quote", json={"legs": legs, "run_id": run_id}).get_json()
+
+
+def place_parlay(client, legs, run_id=RUN_ID, amount=100):
+    return client.post("/api/place_bet", json={"legs": legs, "run_id": run_id, "amount": amount}).get_json()
+
+
+def move_a_quote(table, where):
+    db.session.execute(text(f"UPDATE {table} SET run_id = 'new-run' WHERE {where}"))
+    db.session.commit()
+
+
+def test_a_parlay_is_quoted_at_the_sims_where_every_leg_wins(logged_in_client, user, betting_period, seeded_analytics):
+    reply = quote_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])
+
+    assert reply == {
+        "success": True,
+        "run_id": RUN_ID,
+        "probability": 0.35,
+        "odds": "+186",
+        "price": 186,
+        "legs": [
+            {
+                "market": "2026-w10-moneyline-1v2",
+                "selection": "1",
+                "line": None,
+                "odds": "-150",
+                "price": -150,
+                "probability": 0.6,
+            },
+            {
+                "market": "2026-w10-team_total-1",
+                "selection": "over",
+                "line": 110.5,
+                "odds": "-120",
+                "price": -120,
+                "probability": 0.55,
+            },
+        ],
+    }
+    assert db.session.query(ParlayRefusal).count() == 0
+
+
+def test_a_placed_parlay_records_the_joint_price_and_each_legs_own(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    reply = place_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])
+
+    assert reply == {
+        "success": True,
+        "new_balance": 900.0,
+        "bet_id": 1,
+        "market": None,
+        "selection": None,
+        "price": 186,
+        "legs": ["2026-w10-moneyline-1v2", "2026-w10-team_total-1"],
+    }
+    bet = db.session.get(Bet, 1)
+    assert (bet.bet_type, bet.week, bet.amount, bet.status) == ("parlay", 10, 100.0, "pending")
+    assert bet.description == "Alice A vs Bob B: Alice A -150 + Alice A O/U 110.50: Over"
+    assert (bet.odds, bet.price, bet.probability, bet.run_id, bet.potential_win) == ("+186", 186, 0.35, RUN_ID, 186.0)
+    assert [(leg.market, leg.selection, leg.line, leg.price, leg.probability) for leg in bet.legs] == [
+        ("2026-w10-moneyline-1v2", "1", None, -150, 0.6),
+        ("2026-w10-team_total-1", "over", 110.5, -120, 0.55),
+    ]
+    assert {(leg.season, leg.week, leg.status) for leg in bet.legs} == {(2026, 10, "pending")}
+    assert weekly_money(user, 10) == (1000.0, 900.0, -100.0, 100.0, 0.0, 1, 0)
+
+
+def test_a_three_leg_parlay_is_placed_at_the_sims_where_all_three_win(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    reply = place_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER, ROSTER_2_OVER], amount=50)
+
+    assert (reply["success"], reply["new_balance"], reply["price"]) == (True, 950.0, 300)
+    bet = db.session.get(Bet, reply["bet_id"])
+    assert bet.description == ("Alice A vs Bob B: Alice A -150 + Alice A O/U 110.50: Over + Bob B O/U 95.00: Over")
+    # Of the 7 sims where roster 1 wins and tops 110.5, roster 2 tops 95 in 5.
+    assert (bet.odds, bet.probability, bet.potential_win) == ("+300", 0.25, 150.0)
+    assert [leg.price for leg in bet.legs] == [-150, -120, 105]
+    assert weekly_money(user, 10) == (1000.0, 950.0, -50.0, 50.0, 0.0, 1, 0)
+
+
+@pytest.mark.parametrize("send", [quote_parlay, place_parlay])
+@pytest.mark.parametrize(("legs", "error", "rule", "faulty"), PARLAY_REFUSALS)
+def test_each_parlay_refusal_names_its_rule_and_legs(
+    logged_in_client, user, betting_period, seeded_analytics, send, legs, error, rule, faulty
+):
+    reply = send(logged_in_client, legs)
+
+    assert reply == {"success": False, "error": error, "rule": rule, "legs": faulty}
+    assert db.session.query(Bet).count() == 0
+    db.session.refresh(user)
+    assert user.account_balance == 1000.0
+
+
+@pytest.mark.parametrize("send", [quote_parlay, place_parlay])
+def test_a_parlay_leg_without_a_price_is_not_offered(logged_in_client, user, betting_period, seeded_analytics, send):
+    db.session.execute(text("UPDATE betting_odds_highest_scorer SET odds = NULL WHERE team_id = 1"))
+    db.session.commit()
+
+    reply = send(logged_in_client, [ROSTER_1_OVER, ROSTER_1_HIGHEST])
+
+    assert reply == {"success": False, "error": "Not offered", "rule": "no_price", "legs": ["2026-w10-highest_scorer"]}
+
+
+@pytest.mark.parametrize("send", [quote_parlay, place_parlay])
+def test_a_parlay_on_a_run_without_its_scores_is_not_offered(
+    logged_in_client, user, betting_period, seeded_analytics, send
+):
+    db.session.execute(text("DELETE FROM simulation_totals"))
+    db.session.commit()
+
+    reply = send(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])
+
+    assert reply == {"success": False, "error": "Not offered", "rule": "no_price", "legs": []}
+
+
+@pytest.mark.parametrize("send", [quote_parlay, place_parlay])
+def test_a_leg_quoted_at_another_run_has_changed_and_the_reply_carries_the_windows_run(
+    logged_in_client, user, betting_period, seeded_analytics, send
+):
+    move_a_quote("betting_odds_team_ou", "team_id = 1")
+
+    reply = send(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])
+
+    assert reply == {
+        "success": False,
+        "error": "Odds have changed",
+        "rule": "odds_changed",
+        "legs": ["2026-w10-team_total-1"],
+        "run_id": RUN_ID,
+    }
+    assert db.session.query(Bet).count() == 0
+
+
+@pytest.mark.parametrize("send", [quote_parlay, place_parlay])
+def test_a_page_showing_another_runs_prices_has_seen_every_leg_change(
+    logged_in_client, user, betting_period, seeded_analytics, send
+):
+    reply = send(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER], run_id="2026w10-20261109T140000")
+
+    assert reply == {
+        "success": False,
+        "error": "Odds have changed",
+        "rule": "odds_changed",
+        "legs": ["2026-w10-moneyline-1v2", "2026-w10-team_total-1"],
+        "run_id": RUN_ID,
+    }
+    assert db.session.query(Bet).count() == 0
+
+
+@pytest.mark.parametrize(("legs", "error", "rule", "faulty"), PARLAY_REFUSALS)
+def test_the_quote_logs_only_the_refusals_the_owner_reviews(
+    logged_in_client, user, betting_period, seeded_analytics, legs, error, rule, faulty
+):
+    quote_parlay(logged_in_client, legs)
+    place_parlay(logged_in_client, legs)
+
+    logged = [
+        (row.user_id, row.week, row.run_id, json.loads(row.legs), row.rule) for row in db.session.query(ParlayRefusal)
+    ]
+    if rule in ("same_market", "impossible", "redundant"):
+        assert logged == [(user.id, 10, RUN_ID, legs, rule)]
+        assert db.session.query(ParlayRefusal).one().created_at is not None
+    else:
+        assert logged == []
+
+
+def test_moved_odds_and_missing_prices_are_not_logged(logged_in_client, user, betting_period, seeded_analytics):
+    quote_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER], run_id="2026w10-20261109T140000")
+    db.session.execute(text("UPDATE betting_odds_highest_scorer SET odds = NULL WHERE team_id = 1"))
+    db.session.commit()
+    quote_parlay(logged_in_client, [ROSTER_1_OVER, ROSTER_1_HIGHEST])
+
+    assert db.session.query(ParlayRefusal).count() == 0
+
+
+def test_a_quote_without_a_list_of_legs_is_refused(logged_in_client, user, betting_period, seeded_analytics):
+    reply = logged_in_client.post("/api/parlay_quote", json={"legs": ROSTER_1_WINS, "run_id": RUN_ID}).get_json()
+
+    assert reply == {"success": False, "error": "A parlay has 2 to 4 legs", "rule": "size", "legs": []}
+
+
+def test_a_parlay_is_not_quoted_while_the_window_is_paused(logged_in_client, user, betting_period, seeded_analytics):
+    pause_the_window()
+
+    reply = quote_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])
+
+    assert reply == {"success": False, "error": "Betting is paused until the odds update"}
+
+
+def test_an_anonymous_quote_needs_a_login(client, betting_period, seeded_analytics):
+    response = client.post("/api/parlay_quote", json={"legs": [ROSTER_1_WINS, ROSTER_1_OVER], "run_id": RUN_ID})
+
+    assert response.status_code == 401
+
+
+def test_my_bets_lists_a_parlays_legs_and_marks_no_card(logged_in_client, user, betting_period, seeded_analytics):
+    place_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])
+
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+
+    assert (listed["bet_type"], listed["description"]) == (
+        "parlay",
+        "Alice A vs Bob B: Alice A -150 + Alice A O/U 110.50: Over",
+    )
+    assert (listed["market"], listed["selection"], listed["line"]) == (None, None, None)
+    assert (listed["odds"], listed["price"], listed["probability"], listed["potential_win"]) == (
+        "+186",
+        186,
+        0.35,
+        186.0,
+    )
+    assert listed["legs"] == [
+        {"market": "2026-w10-moneyline-1v2", "selection": "1", "line": None, "price": -150, "odds": "-150"},
+        {"market": "2026-w10-team_total-1", "selection": "over", "line": 110.5, "price": -120, "odds": "-120"},
+    ]
+    assert (listed["removable"], listed["cash_out_offer"]) == (True, None)
+
+
+def test_a_parlay_is_removed_while_its_run_is_the_latest(logged_in_client, user, betting_period, seeded_analytics):
+    bet_id = place_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])["bet_id"]
+
+    reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
+
+    assert reply == {"success": True, "new_balance": 1000.0}
+    bet = db.session.get(Bet, bet_id)
+    assert bet.status == "removed"
+    assert [leg.status for leg in bet.legs] == ["void", "void"]
+
+
+def test_a_parlay_stays_once_one_legs_market_has_a_newer_run(logged_in_client, user, betting_period, seeded_analytics):
+    bet_id = place_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])["bet_id"]
+    move_a_quote("betting_odds_team_ou", "team_id = 1")
+
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+    reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
+
+    assert listed["removable"] is False
+    assert reply == {"success": False, "error": "Odds have changed since this bet was placed"}
+    assert db.session.get(Bet, bet_id).status == "pending"
+
+
+def test_a_one_leg_list_is_a_single(logged_in_client, user, betting_period, seeded_analytics):
+    reply = place_parlay(logged_in_client, [ROSTER_1_OVER])
+
+    assert reply == {
+        "success": True,
+        "new_balance": 900.0,
+        "bet_id": 1,
+        "market": "2026-w10-team_total-1",
+        "selection": "over",
+        "price": -120,
+        "legs": ["2026-w10-team_total-1"],
+    }
+    bet = db.session.get(Bet, 1)
+    assert (bet.bet_type, bet.description, bet.odds, bet.run_id) == (
+        "team_total",
+        "Alice A O/U 110.50: Over",
+        "-120",
+        RUN_ID,
+    )
+
+
+def test_a_one_leg_list_at_a_moved_line_is_refused_as_a_single(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    reply = place_parlay(logged_in_client, [{**ROSTER_1_OVER, "line": 111.25}])
+
+    assert reply == {
+        "success": False,
+        "error": "Odds have changed",
+        "run_id": RUN_ID,
+        "price": -120,
+        "odds": "-120",
+        "line": 110.5,
+    }
+    assert db.session.query(Bet).count() == 0

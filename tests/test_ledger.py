@@ -104,6 +104,7 @@ def test_stake_comes_off_the_stored_balance_not_the_loaded_one(
         "market": "2026-w10-team_total-1",
         "selection": "under",
         "price": 100,
+        "legs": ["2026-w10-team_total-1"],
     }
     assert _money(user)["starting_balance"] == 300.0
 

@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import db
 from app.migrations import run_schema_migrations
-from app.models import Bet, BettingPeriod, User, WeeklyStats
+from app.models import Bet, BettingPeriod, ParlayRefusal, User, WeeklyStats
 
 # The bets table as it stood before bets recorded their market.
 LEGACY_BETS_TABLE = """
@@ -106,6 +106,24 @@ def test_user_bets_relationship(db_session, user):
     db_session.session.refresh(user)
     assert len(user.bets) == 1
     assert user.bets[0].description == "Test bet"
+
+
+def test_parlay_refusals_is_a_table_of_its_own_created_with_the_rest(db_session, user):
+    refusal = ParlayRefusal(
+        user_id=user.id,
+        week=10,
+        run_id="2026w10-20261110T140000",
+        legs='[{"market": "2026-w10-moneyline-1v2", "selection": "1"}]',
+        rule="redundant",
+    )
+    db_session.session.add(refusal)
+    db_session.session.commit()
+
+    columns = {column["name"]: column for column in inspect(db_session.engine).get_columns("parlay_refusals")}
+    assert list(columns) == ["id", "user_id", "week", "run_id", "legs", "rule", "created_at"]
+    assert not columns["user_id"]["nullable"]
+    assert refusal.id == 1
+    assert refusal.created_at is not None
 
 
 def test_migrations_add_the_quote_and_cash_out_columns_and_rename_legacy_bet_types(file_backed_app, caplog):

@@ -1,12 +1,13 @@
+import json
 import logging
 
 from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 from sqlalchemy import Integer, case, cast, desc, distinct, func
 
-from .. import cashout, ledger, markets
+from .. import cashout, ledger, markets, parlays
 from ..database import db
-from ..models import Bet, BetLeg, User, WeeklyStats
+from ..models import Bet, BetLeg, ParlayRefusal, User, WeeklyStats
 from ..windows import betting_window
 from .helpers import friendly_description, get_current_week, get_team_mapping
 
@@ -19,6 +20,9 @@ MARKET_LABELS = {
     "first_place": "First Place",
     "make_playoffs": "Make Playoffs",
 }
+
+# The parlay refusals the owner counts to decide whether scorer legs stay (design §1.4).
+LOGGED_RULES = ("same_market", "impossible", "redundant")
 
 
 @betting_bp.route("/betting")
@@ -222,22 +226,16 @@ def place_bet():
         return _refuse("Insufficient balance")
 
     try:
-        market = markets.parse_key(data.get("market"))
-        if market.week is not None and market.week != week:
-            return _refuse("Not this week's market")
-
-        selection = str(data.get("selection"))
-        quote = markets.find_quote(market, selection)
-        if _quote_moved(market, quote, data):
-            return _refuse(
-                "Odds have changed", run_id=quote.run_id, price=quote.price, odds=quote.odds, line=quote.line
-            )
-        if quote.price is None:
-            return _refuse("Not offered")
-
-        return _record_bet(_new_bet(market, selection, quote, amount, week))
+        legs = data.get("legs") if isinstance(data.get("legs"), list) else []
+        if len(legs) > 1:
+            parlay = _quote_parlay(legs, data.get("run_id"), week, window)
+            return _record_bet(_new_parlay(parlay, amount, week))
+        # The page sends a lone pick as a one-leg list; other clients send it at the top level.
+        return _place_single(legs[0] if legs else data, data.get("run_id"), amount, week)
     except markets.MarketError as error:
         return _refuse(str(error))
+    except parlays.ParlayRefusal as refusal:
+        return _refuse_parlay(refusal, window)
     except Exception as error:
         # Roll back before logging: a failed transaction cannot reload current_user.
         db.session.rollback()
@@ -245,28 +243,99 @@ def place_bet():
         return _refuse(str(error))
 
 
-def _quote_moved(market, quote, data):
+def _place_single(pick, run_id, amount, week):
+    market = markets.parse_key(pick.get("market"))
+    if market.week is not None and market.week != week:
+        return _refuse("Not this week's market")
+
+    selection = str(pick.get("selection"))
+    quote = markets.find_quote(market, selection)
+    if _quote_moved(market, quote, run_id, pick.get("line")):
+        return _refuse("Odds have changed", run_id=quote.run_id, price=quote.price, odds=quote.odds, line=quote.line)
+    if quote.price is None:
+        return _refuse("Not offered")
+
+    return _record_bet(_new_bet(market, selection, quote, amount, week))
+
+
+def _quote_moved(market, quote, run_id, line):
     """Whether the bettor was shown another run's price, or a team total at another line."""
-    if data.get("run_id") != quote.run_id:
+    if run_id != quote.run_id:
         return True
     if market.name != "team_total":
         return False
     try:
-        return round(float(data.get("line")), 2) != round(quote.line, 2)
+        return round(float(line), 2) != round(quote.line, 2)
     except (TypeError, ValueError):
         return True
 
 
-def _new_bet(market, selection, quote, amount, week):
-    leg = BetLeg(
-        season=market.season,
-        week=market.week,
-        market=market.key,
-        selection=selection,
-        line=quote.line,
-        price=quote.price,
-        probability=quote.probability,
+@betting_bp.route("/api/parlay_quote", methods=["POST"])
+@login_required
+def parlay_quote():
+    data = request.get_json()
+    legs = data.get("legs")
+    week = get_current_week()
+
+    window = betting_window(week)
+    if window.state != "open":
+        return _refuse_window(window)
+    if not isinstance(legs, list):
+        return _refuse("A parlay has 2 to 4 legs", rule="size", legs=[])
+
+    try:
+        parlay = _quote_parlay(legs, data.get("run_id"), week, window)
+    except parlays.ParlayRefusal as refusal:
+        if refusal.rule in LOGGED_RULES:
+            _log_refusal(legs, week, window.run_id, refusal.rule)
+        return _refuse_parlay(refusal, window)
+    except Exception as error:
+        db.session.rollback()
+        logging.exception(f"Parlay quote for user {current_user.id} failed: {data}")
+        return _refuse(str(error))
+
+    return jsonify(
+        {
+            "success": True,
+            "run_id": parlay.run_id,
+            "probability": parlay.probability,
+            "odds": parlay.odds,
+            "price": parlay.price,
+            "legs": [
+                {
+                    "market": leg.market.key,
+                    "selection": leg.selection,
+                    "line": leg.line,
+                    "odds": leg.quote.odds,
+                    "price": leg.quote.price,
+                    "probability": leg.quote.probability,
+                }
+                for leg in parlay.legs
+            ],
+        }
     )
+
+
+def _quote_parlay(legs, run_id, week, window):
+    """The parlay at the window's run; a page showing another run's prices has seen every leg change."""
+    if run_id != window.run_id:
+        raise parlays.ParlayRefusal("Odds have changed", "odds_changed", [leg.get("market") for leg in legs])
+    return parlays.quote(legs, week, window.run_id)
+
+
+def _log_refusal(legs, week, run_id, rule):
+    db.session.add(ParlayRefusal(user_id=current_user.id, week=week, run_id=run_id, legs=json.dumps(legs), rule=rule))
+    db.session.commit()
+
+
+def _refuse_parlay(refusal, window):
+    details = {"rule": refusal.rule, "legs": list(refusal.legs)}
+    if refusal.rule == "odds_changed":
+        details["run_id"] = window.run_id
+    return _refuse(str(refusal), **details)
+
+
+def _new_bet(market, selection, quote, amount, week):
     return Bet(
         user_id=current_user.id,
         bet_type=market.name,
@@ -278,7 +347,35 @@ def _new_bet(market, selection, quote, amount, week):
         probability=quote.probability,
         run_id=quote.run_id,
         potential_win=markets.potential_win(amount, quote.price),
-        legs=[leg],
+        legs=[_new_leg(market, selection, quote)],
+    )
+
+
+def _new_parlay(parlay, amount, week):
+    return Bet(
+        user_id=current_user.id,
+        bet_type="parlay",
+        description=" + ".join(_describe(leg.market, leg.selection, leg.quote, week) for leg in parlay.legs),
+        week=week,
+        amount=amount,
+        odds=parlay.odds,
+        price=parlay.price,
+        probability=parlay.probability,
+        run_id=parlay.run_id,
+        potential_win=markets.potential_win(amount, parlay.price),
+        legs=[_new_leg(leg.market, leg.selection, leg.quote) for leg in parlay.legs],
+    )
+
+
+def _new_leg(market, selection, quote):
+    return BetLeg(
+        season=market.season,
+        week=market.week,
+        market=market.key,
+        selection=selection,
+        line=quote.line,
+        price=quote.price,
+        probability=quote.probability,
     )
 
 
@@ -308,17 +405,19 @@ def _record_bet(bet):
     db.session.refresh(current_user)
     new_balance = current_user.account_balance
     logging.info(f"User {bet.user_id} placed {bet.bet_type} bet {bet.description}, new balance {new_balance}")
-    leg = bet.legs[0]
-    return jsonify(
-        {
-            "success": True,
-            "new_balance": new_balance,
-            "bet_id": bet.id,
-            "market": leg.market,
-            "selection": leg.selection,
-            "price": bet.price,
-        }
-    )
+    reply = {
+        "success": True,
+        "new_balance": new_balance,
+        "bet_id": bet.id,
+        "market": None,
+        "selection": None,
+        "price": bet.price,
+        "legs": [leg.market for leg in bet.legs],
+    }
+    # A parlay's picks are its legs; only a single is one market and selection.
+    if len(bet.legs) == 1:
+        reply.update(market=bet.legs[0].market, selection=bet.legs[0].selection)
+    return jsonify(reply)
 
 
 @betting_bp.route("/api/my_bets")
@@ -359,23 +458,35 @@ def _bet_summary(bet, week_is_open, offer):
         # An offer needs a newer run and removal needs the bet's own, so a bet never has both.
         "removable": week_is_open and offer is None and _run_is_latest(bet),
         "cash_out_offer": offer.amount if offer else None,
+        "legs": [
+            {
+                "market": leg.market,
+                "selection": leg.selection,
+                "line": leg.line,
+                "price": leg.price,
+                "odds": f"{leg.price:+d}",
+            }
+            for leg in bet.legs
+        ],
     }
-    if bet.legs:
+    # A parlay marks no card side, so only a single names its market and selection.
+    if len(bet.legs) == 1:
         leg = bet.legs[0]
         summary.update(market=leg.market, selection=leg.selection, line=leg.line)
     return summary
 
 
 def _run_is_latest(bet):
-    """Whether the bet's market still shows the run it was priced from; a legacy bet has no market to check."""
-    if not bet.legs:
-        return True
-    leg = bet.legs[0]
+    """Whether every leg's market still shows the run the bet was priced from; a legacy bet has none to check."""
+    return all(_quotes_run(leg, bet.run_id) for leg in bet.legs)
+
+
+def _quotes_run(leg, run_id):
     try:
         quote = markets.find_quote(markets.parse_key(leg.market), leg.selection)
     except markets.MarketError:
         return False
-    return quote.run_id == bet.run_id
+    return quote.run_id == run_id
 
 
 @betting_bp.route("/api/remove_bet/<int:bet_id>", methods=["DELETE"])

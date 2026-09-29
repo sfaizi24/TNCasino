@@ -78,6 +78,20 @@ class BetLeg(db.Model):
     bet = db.relationship(Bet, backref="legs")
 
 
+class ParlayRefusal(db.Model):
+    """A parlay quote refused by a rule the owner reviews: the legs as the page sent them, and the rule."""
+
+    __tablename__ = "parlay_refusals"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.String, db.ForeignKey("users.id"), nullable=False)
+    week = db.Column(db.Integer, nullable=False)
+    run_id = db.Column(db.String, nullable=False)
+    legs = db.Column(db.Text, nullable=False)
+    rule = db.Column(db.String, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
+
+
 class WeeklyStats(db.Model):
     __tablename__ = "weekly_stats"
 
