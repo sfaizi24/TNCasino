@@ -5,11 +5,11 @@ from datetime import UTC, datetime, timedelta
 
 from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user
-from sqlalchemy import inspect
+from sqlalchemy import inspect, or_
 
 from .. import ledger, settlement
 from ..database import db
-from ..models import Bet
+from ..models import Bet, BetLeg
 from .helpers import admin_required, friendly_description, get_current_week, query_analytics
 
 admin_bp = Blueprint("admin", __name__)
@@ -109,7 +109,9 @@ def get_pending_bets():
     week = request.args.get("week", get_current_week(), type=int)
 
     try:
-        bets = db.session.query(Bet).filter_by(week=week, status="pending").all()
+        # A futures bet stays listed after its week, for its Win and Loss buttons once its market is decided.
+        listed = or_(Bet.week == week, Bet.legs.any(BetLeg.week.is_(None)))
+        bets = db.session.query(Bet).filter(Bet.status == "pending", listed).order_by(Bet.id).all()
 
         bets_data = []
         for bet in bets:
@@ -154,7 +156,8 @@ def settle_bet():
         if len(bet.legs) > 1:
             return jsonify({"success": False, "error": "Parlays settle from the Settle Week card"})
 
-        if not ledger.settle(bet, won):
+        week = _open_result_week(bet, get_current_week())
+        if not ledger.settle(bet, won, week=week):
             db.session.rollback()
             return jsonify({"success": False, "error": "Bet already settled"})
 
@@ -256,26 +259,37 @@ def _settle_as_shown(result, shown, week):
     """Settle one bet in its own transaction if its outcome is still the one shown; return why not, or None."""
     if result is None:
         bet = db.session.get(Bet, shown["id"])
-        return "already settled" if bet is not None and bet.week == week else "not found"
+        return "already settled" if bet is not None and bet.status != "pending" else "not found"
     if result.outcome == settlement.UNDECIDED:
         return "undecided"
     if result.outcome != shown["outcome"]:
         return f"scores changed: now {result.outcome}"
 
+    result_week = _open_result_week(result.bet, week)
     if result.outcome == settlement.PUSH:
-        closed = ledger.push(result.bet, leg_statuses=result.leg_statuses)
+        closed = ledger.push(result.bet, leg_statuses=result.leg_statuses, week=result_week)
     else:
         closed = ledger.settle(
             result.bet,
             won=result.outcome == settlement.WON,
             potential_win=result.potential_win,
             leg_statuses=result.leg_statuses,
+            week=result_week,
         )
     if not closed:
         db.session.rollback()
         return "already settled"
     db.session.commit()
     return None
+
+
+def _open_result_week(bet, settling_week):
+    """The week a bet's result posts to: a futures bet's is the week it settles in, opened first; any other its own."""
+    is_futures = bool(bet.legs) and all(leg.week is None for leg in bet.legs)
+    if not is_futures:
+        return bet.week
+    ledger.open_week(bet.user_id, settling_week)
+    return settling_week
 
 
 @admin_bp.route("/api/admin/void_bet", methods=["POST"])

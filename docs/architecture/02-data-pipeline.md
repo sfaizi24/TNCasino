@@ -90,7 +90,7 @@ Checks one week: rows per expected source, coverage of `QB/RB/WR/TE/K/DST`, and 
 | **09** playoff_odds | `rosters`, `users`, `matchups`; latest run in `montecarlo.db` | Adds each simulation's current-week result to current standings and ranks teams. Only the current week is simulated, not the rest of the schedule. | `odds.db`: `betting_odds_first_place`, `betting_odds_make_playoffs`, `standings_probability_matrix`; 5 PNGs |
 | **10** prediction_accuracy | `projections_with_sleeper`, `player_week_stats`, `team_projections_summary`, `league.db.player_stats`, `matchups`, `betting_odds_team_ou` | MAE/RMSE/bias per source, position, and tier vs. actual points; O/U and pick accuracy. | Nothing (inline plots only) |
 
-The pipeline's `playoffs` and `accuracy` steps replace notebooks 09 and 10: `playoffs` simulates every regular-season week left rather than the current week alone ([03 §6](03-modeling-and-odds.md#6-playoff-odds)), and `accuracy` grades the previous week and stores the results in `prediction_accuracy` and `team_accuracy` ([03 §7](03-modeling-and-odds.md#7-prediction-accuracy)).
+The pipeline's `playoffs` and `accuracy` steps replace notebooks 09 and 10: `playoffs` simulates every regular-season week left rather than the current week alone, and the playoff weeks after it, and writes `betting_odds_last_place` and `betting_odds_champion` beside notebook 09's three tables ([03 §6](03-modeling-and-odds.md#6-playoff-odds)), and `accuracy` grades the previous week and stores the results in `prediction_accuracy` and `team_accuracy` ([03 §7](03-modeling-and-odds.md#7-prediction-accuracy)).
 
 ## Configuration
 

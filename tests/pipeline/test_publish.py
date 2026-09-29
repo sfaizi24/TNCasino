@@ -335,6 +335,56 @@ def test_matchup_totals_and_the_standings_matrix_publish_their_latest_run(local,
     assert [row["run_id"] for row in target_rows(target, table)] == ["b"]
 
 
+@pytest.mark.parametrize("table", ["betting_odds_last_place", "betting_odds_champion"])
+def test_futures_publish_under_the_simulation_they_were_priced_from(settings, local, target, table):
+    add_simulation(settings, local["odds"], WEEK_3_SIMULATION, 3, "2026-09-16T03:01:00+00:00")
+    add_simulation(settings, local["odds"], WEEK_4_SIMULATION, 4, "2026-09-23T03:01:00+00:00")
+    # Week 4's futures were repriced by a playoffs-only rerun three days after the simulation they read.
+    add_rows(
+        local["odds"],
+        table,
+        [
+            {"season": 2026, "week": 3, "run_id": WEEK_3_SIMULATION, "created_at": "2026-09-16 03:05:00", "team_id": 1},
+            {"season": 2026, "week": 3, "run_id": WEEK_3_SIMULATION, "created_at": "2026-09-16 03:05:00", "team_id": 2},
+            {"season": 2026, "week": 4, "run_id": WEEK_4_SIMULATION, "created_at": "2026-09-26 11:00:00", "team_id": 1},
+            {"season": 2026, "week": 4, "run_id": WEEK_4_SIMULATION, "created_at": "2026-09-26 11:00:00", "team_id": 2},
+        ],
+    )
+
+    tables, _ = read_tables(local, 2026, "L2026")
+    write_tables(target, tables)
+
+    published = [(row["week"], row["run_id"], row["team_id"]) for row in target_rows(target, table)]
+    assert published == [
+        (3, WEEK_3_SIMULATION, 1),
+        (3, WEEK_3_SIMULATION, 2),
+        (4, WEEK_4_SIMULATION, 1),
+        (4, WEEK_4_SIMULATION, 2),
+    ]
+    simulation_runs = {row["run_id"] for row in target_rows(target, "simulation_runs")}
+    assert {run_id for _, run_id, _ in published} == simulation_runs
+
+
+def test_the_seasons_league_settings_publish_as_sleeper_leagues(local, target):
+    settings_2026 = json.dumps({"num_teams": 12, "playoff_teams": 8, "playoff_week_start": 15})
+    add_rows(
+        local["league"],
+        "leagues",
+        [
+            {"league_id": "L2025", "season": "2025", "settings": json.dumps({"num_teams": 12})},
+            {"league_id": "L2026", "season": "2026", "settings": settings_2026},
+        ],
+    )
+
+    tables, _ = read_tables(local, 2026, "L2026")
+    write_tables(target, tables)
+
+    assert target_rows(target, "sleeper_leagues") == [
+        {"league_id": "L2026", "season": "2026", "settings": settings_2026}
+    ]
+    assert "leagues" not in table_names(target)
+
+
 def test_the_flask_users_table_is_never_replaced(local, target):
     with target.begin() as conn:
         conn.execute(text("CREATE TABLE users (id INTEGER, email TEXT)"))

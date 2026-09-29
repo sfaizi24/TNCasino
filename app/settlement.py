@@ -3,15 +3,18 @@
 Every bet whose market key names the scores it depends on gets an outcome, won, lost, push or
 undecided, and a reason the admin reads beside it before confirming. A decided outcome comes from the
 win rule in `pipeline/markets.py`, applied to the week's scores as a one-row score matrix, so a bet
-settles by the rule its market was priced with. Futures and bets placed before market keys are always
-undecided and settle by hand. A parlay is judged leg by leg and settles all or nothing; its pushed legs
-drop out and the rest are re-priced on the matrix of the run it was placed at. Nothing here moves money
-or commits: the admin routes settle through the ledger.
+settles by the rule its market was priced with. A parlay is judged leg by leg and settles all or
+nothing; its pushed legs drop out and the rest are re-priced on the matrix of the run it was placed at.
+The standings futures wait for the regular season's last week, which judges every one still pending
+from the final standings; the champion and bets placed before market keys settle by hand. Nothing here
+moves money or commits: the admin routes settle through the ledger.
 """
 
+import json
 from dataclasses import dataclass
 
 import numpy as np
+from sqlalchemy import or_
 
 from pipeline import markets as win_rules
 
@@ -20,16 +23,19 @@ from .database import db
 from .markets import MarketError, parse_key, potential_win, price_from_odds
 from .matrices import MissingMatrix, leg_outcome, score_matrix
 from .models import Bet
-from .routes.helpers import get_team_mapping, query_analytics
+from .routes.helpers import get_league_id_for_week, get_team_mapping, query_analytics
 
 WON = "won"
 LOST = "lost"
 PUSH = "push"
 UNDECIDED = "undecided"
 
+# The futures a finishing position decides, judged once the regular season's last week is played.
+STANDINGS_MARKETS = ("first_place", "make_playoffs", "last_place")
+
 
 class SettlementError(Exception):
-    """Published scores a week cannot be settled from, with a message the admin can act on."""
+    """Published data a week cannot be settled from, with a message the admin can act on."""
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,40 @@ class BetOutcome:
     reason: str
     potential_win: float | None = None  # set when pushed legs changed what the parlay pays
     leg_statuses: dict | None = None  # leg id → won | lost | push, set for parlays
+
+
+@dataclass(frozen=True)
+class LeagueSettings:
+    playoff_week_start: int
+    playoff_teams: int
+    num_teams: int
+
+
+@dataclass
+class Standing:
+    roster_id: int
+    owner: str
+    wins: int = 0
+    losses: int = 0
+    ties: int = 0
+    points_for: float = 0.0
+
+    @property
+    def record(self):
+        ties = f"-{self.ties}" if self.ties else ""
+        return f"{self.wins}-{self.losses}{ties}"
+
+
+@dataclass(frozen=True)
+class FinalStandings:
+    """The regular season's standings, best first, and why they are not final yet while a week is unplayed."""
+
+    settings: LeagueSettings
+    table: list[Standing]
+    incomplete: str | None
+
+    def rank(self, roster_id):
+        return next(rank for rank, standing in enumerate(self.table, start=1) if standing.roster_id == roster_id)
 
 
 def team_scores(week):
@@ -70,22 +110,117 @@ def team_scores(week):
     return scores
 
 
+def league_settings(league_id):
+    """The league's playoff format, from the settings Sleeper publishes with it."""
+    rows = query_analytics(
+        "SELECT settings FROM sleeper_leagues WHERE league_id = :league_id", {"league_id": league_id}
+    )
+    if not rows:
+        raise SettlementError(f"League {league_id} has no published settings; publish the league step")
+
+    settings = json.loads(rows[0]["settings"])
+    return LeagueSettings(settings["playoff_week_start"], settings["playoff_teams"], settings["num_teams"])
+
+
+def standings_before(week, league_id):
+    """Every roster's record and points for from the league's games before `week`, best first."""
+    rosters = query_analytics(
+        """
+        SELECT r.roster_id, u.username, u.display_name
+        FROM sleeper_rosters r
+        LEFT JOIN sleeper_users u ON r.owner_id = u.user_id
+        WHERE r.league_id = :league_id
+        """,
+        {"league_id": league_id},
+    )
+    standings = {
+        row["roster_id"]: Standing(
+            row["roster_id"], row["username"] or row["display_name"] or f"Team {row['roster_id']}"
+        )
+        for row in rosters
+    }
+
+    games = query_analytics(
+        """
+        SELECT a.roster_id, a.points, b.points AS opponent_points
+        FROM sleeper_matchups a
+        JOIN sleeper_matchups b
+          ON a.league_id = b.league_id
+         AND a.week = b.week
+         AND a.matchup_id_number = b.matchup_id_number
+         AND a.roster_id <> b.roster_id
+        WHERE a.league_id = :league_id AND a.week < :week
+        """,
+        {"league_id": league_id, "week": week},
+    )
+    for game in games:
+        _add_game(standings[game["roster_id"]], game["points"] or 0, game["opponent_points"] or 0)
+
+    return sorted(standings.values(), key=lambda standing: (-standing.wins, -standing.points_for, standing.roster_id))
+
+
+def _add_game(standing, points, opponent_points):
+    standing.points_for += points
+    if points > opponent_points:
+        standing.wins += 1
+    elif points < opponent_points:
+        standing.losses += 1
+    else:
+        standing.ties += 1
+
+
+def final_standings(week):
+    """The regular season's standings when `week` is its last week, else None."""
+    league_id = get_league_id_for_week(week)
+    if league_id is None:
+        return None
+    settings = league_settings(league_id)
+    if week != settings.playoff_week_start - 1:
+        return None
+    incomplete = _incomplete_season(league_id, week, settings.num_teams)
+    return FinalStandings(settings, standings_before(week + 1, league_id), incomplete)
+
+
+def _incomplete_season(league_id, last_week, num_teams):
+    """Why the standings are not final yet, naming the first week in which a roster has no score; None once final."""
+    rows = query_analytics(
+        """
+        SELECT week, COUNT(DISTINCT roster_id) AS scored
+        FROM sleeper_matchups
+        WHERE league_id = :league_id AND week <= :last_week AND points IS NOT NULL AND points <> 0
+        GROUP BY week
+        """,
+        {"league_id": league_id, "last_week": last_week},
+    )
+    scored = {row["week"]: row["scored"] for row in rows}
+    for week in range(1, last_week + 1):
+        if scored.get(week, 0) < num_teams:
+            return f"regular season not complete: {scored.get(week, 0)} of {num_teams} rosters scored in week {week}"
+    return None
+
+
 def outcomes_for_week(week, scores):
-    bets = db.session.query(Bet).filter_by(week=week, status="pending").order_by(Bet.id).all()
-    return [outcome_for(bet, scores) for bet in bets]
+    """The week's pending bets and, in the regular season's last week, every pending standings future too."""
+    standings = final_standings(week)
+    listed = Bet.week == week
+    if standings is not None:
+        listed = or_(listed, Bet.bet_type.in_(STANDINGS_MARKETS))
+
+    bets = db.session.query(Bet).filter(Bet.status == "pending", listed).order_by(Bet.id).all()
+    return [outcome_for(bet, scores, standings) for bet in bets]
 
 
-def outcome_for(bet, scores):
+def outcome_for(bet, scores, standings=None):
     if not bet.legs:
         return BetOutcome(bet, UNDECIDED, "placed before market keys: settle by hand")
     if len(bet.legs) > 1:
         return _parlay(bet, scores)
 
     [leg] = bet.legs
-    return BetOutcome(bet, *_judge_leg(leg, scores))
+    return BetOutcome(bet, *_judge_leg(leg, scores, standings))
 
 
-def _judge_leg(leg, scores):
+def _judge_leg(leg, scores, standings=None):
     try:
         market = parse_key(leg.market)
     except MarketError as error:
@@ -99,7 +234,11 @@ def _judge_leg(leg, scores):
         return _team_total(market, leg, scores)
     if market.name in ("highest_scorer", "lowest_scorer"):
         return _scorer(market, leg, scores)
-    return UNDECIDED, "futures: settle by hand"
+    if market.name == "champion":
+        return UNDECIDED, "champion: settle by hand after the final"
+    if standings is None:
+        return UNDECIDED, "futures: judged from the final standings"
+    return _standings_future(market, leg, standings)
 
 
 def _parlay(bet, scores):
@@ -197,6 +336,31 @@ def _scorer(market, leg, scores):
     names = ", ".join(team.team for team in winners)
     reason = f"{label} {winners[0].points:.2f}: {names}"
     return _judge(rule(matrix, columns[picked_id])), reason
+
+
+def _standings_future(market, leg, standings):
+    if standings.incomplete:
+        return UNDECIDED, standings.incomplete
+
+    roster_id = market.teams[0] if market.teams else int(leg.selection)
+    rank = standings.rank(roster_id)
+    settings = standings.settings
+    if market.name == "first_place":
+        won = rank == 1
+    elif market.name == "make_playoffs":
+        won = rank <= settings.playoff_teams
+    else:
+        won = rank == settings.num_teams
+
+    standing = standings.table[rank - 1]
+    reason = f"{_ordinal(rank)} of {settings.num_teams}: {standing.record}, {standing.points_for:,.2f} pts"
+    return (WON if won else LOST), reason
+
+
+def _ordinal(number):
+    if number % 100 in (11, 12, 13):
+        return f"{number}th"
+    return f"{number}" + {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
 
 
 def _score_matrix(scores):

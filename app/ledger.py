@@ -68,10 +68,13 @@ def remove(bet):
     return True
 
 
-def settle(bet, won, potential_win=None, leg_statuses=None):
-    """A win pays `potential_win` when given, as a parlay whose pushed legs dropped out does, and records it."""
+def settle(bet, won, potential_win=None, leg_statuses=None, week=None):
+    """A win pays `potential_win` when given, as a parlay whose pushed legs dropped out does, and records it.
+
+    The result posts to `week`, by default the bet's own; the stake always leaves the bet's own week.
+    """
     if not won:
-        return _close(bet, "lost", result=-bet.amount, payout=0.0, leg_statuses=leg_statuses)
+        return _close(bet, "lost", result=-bet.amount, payout=0.0, leg_statuses=leg_statuses, week=week)
 
     win = bet.potential_win if potential_win is None else potential_win
     return _close(
@@ -81,13 +84,14 @@ def settle(bet, won, potential_win=None, leg_statuses=None):
         payout=bet.amount + win,
         leg_statuses=leg_statuses,
         potential_win=potential_win,
+        week=week,
         bets_won=WeeklyStats.bets_won + 1,
     )
 
 
-def push(bet, leg_statuses=None):
+def push(bet, leg_statuses=None, week=None):
     """A result exactly on the line: the stake comes back and the bet still counts as placed."""
-    return _close(bet, "push", result=0.0, payout=bet.amount, leg_statuses=leg_statuses)
+    return _close(bet, "push", result=0.0, payout=bet.amount, leg_statuses=leg_statuses, week=week)
 
 
 def void(bet):
@@ -116,12 +120,11 @@ def cash_out(bet, offer, run_id, week):
 
     _close_legs(bet, "cashed_out", cashed_out_at)
     _pay(bet.user_id, offer, result)
-    _update_weekly_stats(bet.user_id, bet.week, active_bets_amount=WeeklyStats.active_bets_amount - bet.amount)
-    _update_weekly_stats(bet.user_id, week, settled_pnl=WeeklyStats.settled_pnl + result)
+    _post_result(bet, week, result)
     return True
 
 
-def _close(bet, status, result, payout, leg_statuses=None, potential_win=None, **counters):
+def _close(bet, status, result, payout, leg_statuses=None, potential_win=None, week=None, **counters):
     settled_at = datetime.now(UTC)
     close = (
         update(Bet)
@@ -135,14 +138,14 @@ def _close(bet, status, result, payout, leg_statuses=None, potential_win=None, *
 
     _close_legs(bet, status, settled_at, leg_statuses)
     _pay(bet.user_id, payout, result)
-    _update_weekly_stats(
-        bet.user_id,
-        bet.week,
-        active_bets_amount=WeeklyStats.active_bets_amount - bet.amount,
-        settled_pnl=WeeklyStats.settled_pnl + result,
-        **counters,
-    )
+    _post_result(bet, bet.week if week is None else week, result, **counters)
     return True
+
+
+def _post_result(bet, week, result, **counters):
+    """The stake leaves the bet's own week; the result and the counters post to `week`."""
+    _update_weekly_stats(bet.user_id, bet.week, active_bets_amount=WeeklyStats.active_bets_amount - bet.amount)
+    _update_weekly_stats(bet.user_id, week, settled_pnl=WeeklyStats.settled_pnl + result, **counters)
 
 
 def _close_legs(bet, status, settled_at, leg_statuses=None):

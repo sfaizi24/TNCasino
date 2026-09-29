@@ -1,10 +1,12 @@
-"""Playoffs step: price the first-place and make-the-playoffs futures from simulated final standings.
+"""Playoffs step: price the season's futures from simulated final standings and the playoff bracket they seed.
 
-The current week comes from the simulate step's draws. Each later regular-season week is scraped, matched and
-simulated here from the rosters as they stand, and every simulated season is ranked on top of the record to date.
+The current week comes from the simulate step's draws. Each later week, the playoff weeks included, is scraped,
+matched and simulated here from the rosters as they stand; every simulated season is ranked on top of the record to
+date, and its seeds play the bracket on the playoff weeks' scores.
 """
 
 import json
+import math
 import sqlite3
 import time
 from collections import defaultdict
@@ -21,7 +23,7 @@ from pipeline.settings import sleeper_get
 from pipeline.sources import SOURCE_NAMES, load_source
 from pipeline.sources.base import ProjectionSource
 from pipeline.steps import clean, lineups, match, odds, scrape, stats
-from pipeline.steps.league import insert_rows, load_league_settings
+from pipeline.steps.league import LeagueSettings, insert_rows, load_league_settings
 
 NAME = "playoffs"
 
@@ -33,8 +35,14 @@ TOLERANCE = 1e-6
 TOP_N = 5
 STARTER_COLUMNS = ["roster_id", "owner", "slot", "sleeper_player_id", "position", "nfl_team", "mu", "sigma"]
 
-FUTURES_DDL = """
-CREATE TABLE IF NOT EXISTS betting_odds_first_place (
+MARKET_TABLES = {
+    "first_place": "betting_odds_first_place",
+    "make_playoffs": "betting_odds_make_playoffs",
+    "last_place": "betting_odds_last_place",
+    "champion": "betting_odds_champion",
+}
+MARKET_DDL = """
+CREATE TABLE IF NOT EXISTS {table} (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id TEXT NOT NULL,
   week INTEGER NOT NULL,
@@ -47,19 +55,8 @@ CREATE TABLE IF NOT EXISTS betting_odds_first_place (
   season INTEGER NOT NULL,
   UNIQUE (run_id, week, team_id)
 );
-CREATE TABLE IF NOT EXISTS betting_odds_make_playoffs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id TEXT NOT NULL,
-  week INTEGER NOT NULL,
-  team_id INTEGER NOT NULL,
-  team_name TEXT NOT NULL,
-  owner TEXT NOT NULL,
-  probability REAL NOT NULL,
-  american_odds TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  season INTEGER NOT NULL,
-  UNIQUE (run_id, week, team_id)
-);
+"""
+STANDINGS_DDL = """
 CREATE TABLE IF NOT EXISTS standings_probability_matrix (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id TEXT NOT NULL,
@@ -75,6 +72,7 @@ CREATE TABLE IF NOT EXISTS standings_probability_matrix (
   UNIQUE (run_id, week, team_id, position)
 );
 """
+FUTURES_DDL = "".join(MARKET_DDL.format(table=table) for table in MARKET_TABLES.values()) + STANDINGS_DDL
 
 # Sleeper keeps a roster's points as whole points plus hundredths; notebook 09 added the hundredths unscaled.
 RECORDS = """
@@ -110,71 +108,87 @@ def run(ctx: StepContext) -> StepResult:
     league = load_league_settings(league_conn, settings.league_id)
     if settings.week >= league.playoff_week_start:
         return StepResult({}, warnings=["playoffs have started; no futures markets"])
-    divisions = division_count(league_conn, settings.league_id)
-    if divisions > 0:
-        raise RuntimeError(f"the league has {divisions} divisions, but these standings rank one table")
+    refuse_unsupported_league(read_sleeper_settings(league_conn, settings.league_id))
 
-    future_weeks = list(range(settings.week + 1, league.playoff_week_start))
+    season_weeks = list(range(settings.week + 1, league.playoff_week_start))
+    rounds = int(math.log2(league.playoff_teams))
+    playoff_weeks = list(range(league.playoff_week_start, league.playoff_week_start + rounds))
+    future_weeks = season_weeks + playoff_weeks
     refuse_weeks_already_run(ctx.db("projections"), settings.season, future_weeks)
 
     teams = lineups.load_teams(league_conn, settings.league_id, league.waiver_budget)
     columns = {team.roster_id: column for column, team in enumerate(teams)}
-    current_week = simulated_current_week(ctx, columns)
+    simulation = odds.latest_simulation(ctx)
+    current_week = simulated_current_week(ctx, simulation, columns)
     n_sims = len(current_week.scores)
     try:
-        future, projections, warnings = simulate_future_weeks(ctx, future_weeks, league.slots, teams, columns, n_sims)
+        scores, projections, warnings = simulate_future_weeks(ctx, future_weeks, league.slots, teams, columns, n_sims)
     finally:
         clear_future_weeks(ctx.db("projections"), settings.season, future_weeks)
-    weeks = [current_week, *future]
+    weeks = [current_week]
+    for week in season_weeks:
+        pairs = column_pairs(fetch_pairings(settings.league_id, week), columns)
+        weeks.append(SimulatedWeek(week, scores[week], pairs))
     records = record_to_date(league_conn, settings.league_id, list(columns))
     warnings += standings_warnings(weeks, records, settings.week)
 
-    counts = finishing_counts(records, weeks)
-    first_place = counts[:, 0] / n_sims
-    make_playoffs = counts[:, : league.playoff_teams].sum(axis=1) / n_sims
-    check_totals(first_place, make_playoffs, league.playoff_teams)
-    save_tables(
-        ctx,
-        {
-            "betting_odds_first_place": market_rows(teams, first_place),
-            "betting_odds_make_playoffs": market_rows(teams, make_playoffs),
-            "standings_probability_matrix": matrix_rows(teams, counts, n_sims),
-        },
-    )
-    print_futures(teams, first_place, make_playoffs)
+    positions = final_standings(records, weeks)
+    counts = standings.position_counts(positions)
+    chances = futures_chances(counts, positions, [scores[week] for week in playoff_weeks], league)
+    check_totals(chances, league.playoff_teams)
+    tables = {MARKET_TABLES[market]: market_rows(teams, chance) for market, chance in chances.items()}
+    tables["standings_probability_matrix"] = matrix_rows(teams, counts, n_sims)
+    save_tables(ctx, simulation["run_id"], tables)
+    print_futures(teams, chances)
 
     owners = [team.owner for team in teams]
-    first_place_by_owner = pd.Series(first_place, index=owners)
-    make_playoffs_by_owner = pd.Series(make_playoffs, index=owners)
+    by_owner = {market: pd.Series(chance, index=owners) for market, chance in chances.items()}
     written = []
     if not ctx.options.get("no_charts"):
         written = [
             playoff_charts.playoff_probability(
-                settings.images_dir, settings.week, make_playoffs_by_owner, league.playoff_teams
+                settings.images_dir, settings.week, by_owner["make_playoffs"], league.playoff_teams
             ),
-            playoff_charts.first_place_race(settings.images_dir, settings.week, first_place_by_owner),
+            playoff_charts.first_place_race(settings.images_dir, settings.week, by_owner["first_place"]),
         ]
 
     summary = {
         "future_weeks": future_weeks,
+        "playoff_weeks": playoff_weeks,
         "projections": projections,
-        "first_place": leaders(first_place_by_owner),
-        "make_playoffs": leaders(make_playoffs_by_owner),
+        **{market: leaders(chance) for market, chance in by_owner.items()},
         "n_sims": n_sims,
         "elapsed_s": round(time.perf_counter() - started, 2),
     }
     return StepResult(summary, warnings, written)
 
 
-def division_count(conn: sqlite3.Connection, league_id: str) -> int:
-    (sleeper_settings,) = conn.execute("SELECT settings FROM leagues WHERE league_id = ?", (league_id,)).fetchone()
-    return json.loads(sleeper_settings).get("divisions") or 0
+def read_sleeper_settings(conn: sqlite3.Connection, league_id: str) -> dict:
+    """The league's settings as Sleeper sent them, the ones LeagueSettings leaves out included."""
+    (settings,) = conn.execute("SELECT settings FROM leagues WHERE league_id = ?", (league_id,)).fetchone()
+    return json.loads(settings)
 
 
-def simulated_current_week(ctx: StepContext, columns: dict[int, int]) -> SimulatedWeek:
+def refuse_unsupported_league(sleeper_settings: dict) -> None:
+    """The standings rank one table, and the champion is priced on Sleeper's fixed bracket: no reseeding, a round a
+    week and no byes."""
+    divisions = sleeper_settings.get("divisions") or 0
+    if divisions > 0:
+        raise RuntimeError(f"the league has {divisions} divisions, but these standings rank one table")
+    seed_type = sleeper_settings["playoff_seed_type"]
+    if seed_type != 0:
+        raise RuntimeError(f"playoff_seed_type is {seed_type}, but the bracket is priced without reseeding (0)")
+    round_type = sleeper_settings["playoff_round_type"]
+    if round_type != 0:
+        raise RuntimeError(f"playoff_round_type is {round_type}, but the bracket is priced a round a week (0)")
+    playoff_teams = sleeper_settings["playoff_teams"]
+    if not math.log2(playoff_teams).is_integer():
+        raise RuntimeError(f"playoff_teams is {playoff_teams}, but a bracket without byes needs a power of two")
+
+
+def simulated_current_week(ctx: StepContext, simulation: sqlite3.Row, columns: dict[int, int]) -> SimulatedWeek:
     """The first N_SIMS sims of the simulate step's latest run; a team it did not simulate scores 0."""
     settings = ctx.settings
-    simulation = odds.latest_simulation(ctx)
     draws = odds.load_draws(settings, simulation["draws_path"]).iloc[:N_SIMS]
     scores = draws.reindex(columns=list(columns), fill_value=0.0).to_numpy()
     ctx.log(f"week {settings.week}: {len(scores)} sims of simulation {simulation['run_id']}")
@@ -188,9 +202,10 @@ def simulate_future_weeks(
     teams: list[lineups.Team],
     columns: dict[int, int],
     n_sims: int,
-) -> tuple[list[SimulatedWeek], list[dict], list[str]]:
-    """Project, pick and simulate each week after the current one. Also returns a summary entry per week, and the
-    warnings: the sub-steps' own, and one per dropped source listing the weeks it was dropped for."""
+) -> tuple[dict[int, np.ndarray], list[dict], list[str]]:
+    """Project, pick and simulate each week after the current one, returning its scores by week. Also returns a
+    summary entry per week, and the warnings: the sub-steps' own, and one per dropped source listing the weeks it was
+    dropped for."""
     settings = ctx.settings
     league_conn = ctx.db("league")
     sources = future_sources(ctx.options.get("sources"))
@@ -198,7 +213,7 @@ def simulate_future_weeks(
     players = lineups.load_players(league_conn)
     params = load_params(settings.model_version)
 
-    simulated = []
+    scores = {}
     entries = []
     dropped_weeks = defaultdict(list)
     warnings = []
@@ -206,9 +221,7 @@ def simulate_future_weeks(
         week_started = time.perf_counter()
         projected = project_week(ctx, week, sources, sleeper_players)
         starters, empty_slots = pick_starters(ctx, week, teams, players, slots)
-        scores = team_scores(starters, params, n_sims, settings.seed + week, columns)
-        pairs = column_pairs(fetch_pairings(settings.league_id, week), columns)
-        simulated.append(SimulatedWeek(week, scores, pairs))
+        scores[week] = team_scores(starters, params, n_sims, settings.seed + week, columns)
 
         entries.append(
             {"week": week, "sources": projected.sources, "n_players": projected.n_players, "empty_slots": empty_slots}
@@ -225,7 +238,7 @@ def simulate_future_weeks(
 
     for (website, failed_checks), weeks in dropped_weeks.items():
         warnings.append(f"dropped {website} for weeks {', '.join(weeks)}: {failed_checks} failed")
-    return simulated, entries, warnings
+    return scores, entries, warnings
 
 
 def future_sources(requested: list[str] | None) -> list[ProjectionSource]:
@@ -379,23 +392,39 @@ def standings_warnings(weeks: list[SimulatedWeek], records: pd.DataFrame, week: 
     return warnings
 
 
-def finishing_counts(records: pd.DataFrame, weeks: list[SimulatedWeek]) -> np.ndarray:
-    """counts[team, place - 1] over the simulated seasons, with teams in column order."""
+def final_standings(records: pd.DataFrame, weeks: list[SimulatedWeek]) -> np.ndarray:
+    """positions[sim, team]: each team's place in each simulated season, with teams in column order."""
     wins, ties, points = standings.season_totals(
         records["wins"].to_numpy(),
         records["ties"].to_numpy(),
         records["points"].to_numpy(),
         [(week.scores, week.pairs) for week in weeks],
     )
-    return standings.position_counts(standings.finishing_positions(wins, ties, points))
+    return standings.finishing_positions(wins, ties, points)
 
 
-def check_totals(first_place: np.ndarray, make_playoffs: np.ndarray, playoff_teams: int) -> None:
-    """Every simulated season crowns one first-place team and sends exactly playoff_teams to the playoffs."""
-    if abs(first_place.sum() - 1) > TOLERANCE:
-        raise RuntimeError(f"first-place probabilities sum to {first_place.sum():.6f}, not 1")
-    if abs(make_playoffs.sum() - playoff_teams) > TOLERANCE:
-        raise RuntimeError(f"make-playoffs probabilities sum to {make_playoffs.sum():.6f}, not {playoff_teams}")
+def futures_chances(
+    counts: np.ndarray, positions: np.ndarray, playoff_scores: list[np.ndarray], league: LeagueSettings
+) -> dict[str, np.ndarray]:
+    """Each team's chance in every market: first, top playoff_teams and last in the standings, and the bracket won."""
+    n_sims, n_teams = positions.shape
+    seeds = standings.playoff_seeds(positions, league.playoff_teams)
+    champions = standings.play_bracket(seeds, playoff_scores)
+    return {
+        "first_place": counts[:, 0] / n_sims,
+        "make_playoffs": counts[:, : league.playoff_teams].sum(axis=1) / n_sims,
+        "last_place": counts[:, -1] / n_sims,
+        "champion": np.bincount(champions, minlength=n_teams) / n_sims,
+    }
+
+
+def check_totals(chances: dict[str, np.ndarray], playoff_teams: int) -> None:
+    """Every simulated season has one team first, one last and one champion, and sends playoff_teams to the playoffs."""
+    expected = {"first_place": 1, "make_playoffs": playoff_teams, "last_place": 1, "champion": 1}
+    for market, total in expected.items():
+        chance_sum = chances[market].sum()
+        if abs(chance_sum - total) > TOLERANCE:
+            raise RuntimeError(f"{market} probabilities sum to {chance_sum:.6f}, not {total}")
 
 
 def market_rows(teams: list[lineups.Team], probabilities: np.ndarray) -> list[dict]:
@@ -432,22 +461,29 @@ def matrix_rows(teams: list[lineups.Team], counts: np.ndarray, n_sims: int) -> l
     return rows
 
 
-def save_tables(ctx: StepContext, tables: dict[str, list[dict]]) -> None:
-    """Replace the week's rows in each table, whichever run wrote them, so a week has one set of futures."""
+def save_tables(ctx: StepContext, simulation_run_id: str, tables: dict[str, list[dict]]) -> None:
+    """Replace the week's rows in each table, whichever run wrote them, so a week has one set of futures. Rows carry
+    the run id of the simulation they were priced from, so a rerun of this step alone leaves the week's run as it was."""
     settings = ctx.settings
     conn = ctx.db("odds")
     conn.executescript(FUTURES_DDL)
-    stamp = {"run_id": ctx.run_id, "week": settings.week, "season": settings.season, "created_at": timestamp(utc_now())}
+    stamp = {
+        "run_id": simulation_run_id,
+        "week": settings.week,
+        "season": settings.season,
+        "created_at": timestamp(utc_now()),
+    }
     for table, rows in tables.items():
         conn.execute(f"DELETE FROM {table} WHERE season = ? AND week = ?", (settings.season, settings.week))
         insert_rows(conn, table, [stamp | row for row in rows])
     conn.commit()
 
 
-def print_futures(teams: list[lineups.Team], first_place: np.ndarray, make_playoffs: np.ndarray) -> None:
+def print_futures(teams: list[lineups.Team], chances: dict[str, np.ndarray]) -> None:
+    first_place, make_playoffs = chances["first_place"], chances["make_playoffs"]
     order = sorted(range(len(teams)), key=lambda column: (-make_playoffs[column], -first_place[column]))
-    rows = [[teams[column].owner, f"{first_place[column]:.1%}", f"{make_playoffs[column]:.1%}"] for column in order]
-    print_table(["owner", "first place", "make playoffs"], rows)
+    rows = [[teams[column].owner, *(f"{chance[column]:.1%}" for chance in chances.values())] for column in order]
+    print_table(["owner", *(market.replace("_", " ") for market in chances)], rows)
 
 
 def leaders(probabilities: pd.Series) -> list[dict]:

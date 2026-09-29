@@ -19,6 +19,8 @@ MARKET_LABELS = {
     "lowest_scorer": "Lowest Scorer",
     "first_place": "First Place",
     "make_playoffs": "Make Playoffs",
+    "last_place": "Last Place",
+    "champion": "Champion",
 }
 
 # The parlay refusals the owner counts to decide whether scorer legs stay (design §1.4).

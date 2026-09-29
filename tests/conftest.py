@@ -150,9 +150,12 @@ ANALYTICS_TABLES = [
     "betting_odds_lowest_scorer",
     "betting_odds_first_place",
     "betting_odds_make_playoffs",
+    "betting_odds_last_place",
+    "betting_odds_champion",
     "team_lineups",
     "team_distribution_curves",
     "team_matchup_margin_curves",
+    "sleeper_leagues",
     "sleeper_rosters",
     "sleeper_users",
     "sleeper_matchups",
@@ -267,6 +270,16 @@ def create_analytics_tables(session):
         )
     """)
     )
+    for table in ("betting_odds_last_place", "betting_odds_champion"):
+        session.execute(
+            text(f"""
+            CREATE TABLE {table} (
+                id INTEGER PRIMARY KEY, run_id TEXT, week INTEGER, season INTEGER,
+                team_id INTEGER, team_name TEXT, owner TEXT,
+                probability REAL, american_odds TEXT, created_at TIMESTAMP
+            )
+        """)
+        )
     session.execute(
         text("""
         CREATE TABLE team_lineups (
@@ -297,6 +310,16 @@ def create_analytics_tables(session):
             right_x_values TEXT, right_y_values TEXT,
             created_at TIMESTAMP,
             PRIMARY KEY (week, team_owner, opponent_owner)
+        )
+    """)
+    )
+    session.execute(
+        text("""
+        CREATE TABLE sleeper_leagues (
+            league_id TEXT PRIMARY KEY, name TEXT, season TEXT, season_type TEXT, sport TEXT, status TEXT,
+            total_rosters INTEGER, roster_positions TEXT, scoring_settings TEXT, settings TEXT,
+            previous_league_id TEXT, bracket_id TEXT, draft_id TEXT, avatar TEXT,
+            created_at TIMESTAMP, updated_at TIMESTAMP
         )
     """)
     )
@@ -370,6 +393,14 @@ def seed_analytics(session):
                ('u2', 'bob', 'Bob B'),
                ('u3', 'old-alice', 'Alice A')
     """)
+    )
+    # Two rosters, one playoff spot, and week 10 the last week of the regular season.
+    session.execute(
+        text("""
+        INSERT INTO sleeper_leagues (league_id, name, season, total_rosters, settings)
+        VALUES ('league1', 'Test League', '2026', 2, :settings)
+    """),
+        {"settings": json.dumps({"num_teams": 2, "playoff_teams": 1, "playoff_week_start": 11})},
     )
     session.execute(
         text("""
@@ -450,6 +481,20 @@ def seed_analytics(session):
     )
     session.execute(
         text("""
+        INSERT INTO betting_odds_last_place (run_id, week, season, team_id, owner, probability, american_odds)
+        VALUES (:run_id, 10, 2026, 1, 'Alice A', 0.20, '+400'), (:run_id, 10, 2026, 2, 'Bob B', 0.30, '+230')
+    """),
+        {"run_id": RUN_ID},
+    )
+    session.execute(
+        text("""
+        INSERT INTO betting_odds_champion (run_id, week, season, team_id, owner, probability, american_odds)
+        VALUES (:run_id, 10, 2026, 1, 'Alice A', 0.30, '+233'), (:run_id, 10, 2026, 2, 'Bob B', 0.15, '+567')
+    """),
+        {"run_id": RUN_ID},
+    )
+    session.execute(
+        text("""
         INSERT INTO team_lineups (roster_id, owner, week, slot, player_name, position, mu, var)
         VALUES (1, 'Alice A', 10, 'QB', 'Patrick Mahomes', 'QB', 22.5, 7.0),
                (1, 'Alice A', 10, 'RB1', 'Derrick Henry', 'RB', 15.0, 8.0),
@@ -505,6 +550,20 @@ def set_points(session, points):
             text("UPDATE sleeper_matchups SET points = :points WHERE week = 10 AND roster_id = :roster_id"),
             {"points": score, "roster_id": roster_id},
         )
+    session.commit()
+
+
+def play_weeks(session, points):
+    """Publish the scores of weeks 1 to 9 as matchup 1 of the seeded league: each roster's points, week by week."""
+    for roster_id, weekly_points in points.items():
+        for week, score in enumerate(weekly_points, start=1):
+            session.execute(
+                text("""
+                INSERT INTO sleeper_matchups (league_id, week, roster_id, matchup_id_number, points)
+                VALUES ('league1', :week, :roster_id, 1, :points)
+            """),
+                {"week": week, "roster_id": roster_id, "points": score},
+            )
     session.commit()
 
 

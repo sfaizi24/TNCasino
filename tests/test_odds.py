@@ -201,8 +201,37 @@ def test_get_make_playoffs(client, seeded_analytics, betting_period):
 
 
 @pytest.mark.parametrize(
+    ("url", "owner", "odds", "win_prob", "team_id", "market"),
+    [
+        ("/api/last_place", "Bob B", "+230", 30.0, 2, "2026-last_place"),
+        ("/api/champion", "Alice A", "+233", 30.0, 1, "2026-champion"),
+    ],
+)
+def test_last_place_and_champion_list_like_first_place(
+    client, seeded_analytics, betting_period, url, owner, odds, win_prob, team_id, market
+):
+    data = client.get(url).get_json()
+
+    assert len(data) == 2
+    assert data[0] == {
+        "owner": owner,
+        "win_prob": win_prob,
+        "odds": odds,
+        "market": market,
+        "run_id": RUN_ID,
+        "team_id": team_id,
+        "week": 10,
+    }
+
+
+@pytest.mark.parametrize(
     ("table", "url"),
-    [("betting_odds_first_place", "/api/first_place"), ("betting_odds_make_playoffs", "/api/make_playoffs")],
+    [
+        ("betting_odds_first_place", "/api/first_place"),
+        ("betting_odds_make_playoffs", "/api/make_playoffs"),
+        ("betting_odds_last_place", "/api/last_place"),
+        ("betting_odds_champion", "/api/champion"),
+    ],
 )
 def test_futures_list_only_the_highest_published_week(client, seeded_analytics, betting_period, db_session, table, url):
     db_session.session.execute(
@@ -339,7 +368,8 @@ def test_league_overview_returns_standings_with_projection_and_win_prob(client, 
     data = resp.get_json()
 
     assert data["week"] == 10
-    assert data["playoff_cutoff"] == 8
+    # The seeded league's published settings give it one playoff spot.
+    assert data["playoff_cutoff"] == 1
     assert len(data["teams"]) == 2
 
     alice = next(t for t in data["teams"] if t["label"] == "alice")
@@ -367,6 +397,18 @@ def test_league_overview_orders_by_wins_then_points(client, seeded_analytics, be
     assert teams[0]["record"] == "1-0"
     assert teams[1]["label"] == "alice"
     assert teams[1]["record"] == "0-1"
+
+
+def test_league_overview_draws_the_playoff_line_from_the_published_settings(
+    client, seeded_analytics, betting_period, db_session
+):
+    settings = {"num_teams": 12, "playoff_teams": 8, "playoff_week_start": 15}
+    db_session.session.execute(
+        text("UPDATE sleeper_leagues SET settings = :settings"), {"settings": json.dumps(settings)}
+    )
+    db_session.session.commit()
+
+    assert client.get("/api/league_overview").get_json()["playoff_cutoff"] == 8
 
 
 def test_league_overview_empty_when_no_matchups(client, analytics_tables, betting_period):

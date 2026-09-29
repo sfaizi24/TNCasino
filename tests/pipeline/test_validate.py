@@ -66,10 +66,22 @@ BREAKS = [
     ("simulation_draws", "odds", "UPDATE simulation_runs SET n_teams = 3", "4000 rows, not 1000 sims x 3 teams"),
     ("frozen_tables", "league", "DELETE FROM projections_rosters", "in projections_rosters"),
     (
+        "probabilities",
+        "odds",
+        "UPDATE betting_odds_champion SET probability = -0.25 WHERE team_id = 3",
+        "betting_odds_champion.probability = -0.25",
+    ),
+    (
         "owners",
         "odds",
         "UPDATE betting_odds_highest_scorer SET owner = 'mallory' WHERE team_id = 1",
         "'mallory' in betting_odds_highest_scorer.owner",
+    ),
+    (
+        "owners",
+        "odds",
+        "UPDATE betting_odds_last_place SET owner = 'mallory' WHERE team_id = 4",
+        "'mallory' in betting_odds_last_place.owner",
     ),
     ("unique_orderings", "odds", "UPDATE betting_odds_team_ou SET owner = 'alice' WHERE team_id = 2", "'alice' x2"),
     (
@@ -194,10 +206,16 @@ def write_lineups(conn: sqlite3.Connection, settings: Settings) -> None:
 
 
 def write_futures(conn: sqlite3.Connection, settings: Settings) -> None:
-    """The playoffs step's tables: both markets priced for every roster, and each roster's finishing positions."""
+    """The playoffs step's tables: every market priced for every roster, and each roster's finishing positions."""
     conn.executescript(playoffs.FUTURES_DDL)
     stamp = {"run_id": SIMULATION_RUN_ID, "week": settings.week, "season": settings.season}
-    for table, probability in [("betting_odds_first_place", 0.25), ("betting_odds_make_playoffs", 0.5)]:
+    markets = [
+        ("betting_odds_first_place", 0.25),
+        ("betting_odds_make_playoffs", 0.5),
+        ("betting_odds_last_place", 0.25),
+        ("betting_odds_champion", 0.25),
+    ]
+    for table, probability in markets:
         rows = [
             stamp
             | {
@@ -298,6 +316,13 @@ def test_futures_missing_in_the_regular_season_are_a_warning(tmp_path):
     assert result.warnings == [
         "frozen_tables: no standings for week 4 in standings_probability_matrix; has the playoffs step run?"
     ]
+
+
+def test_every_futures_market_offered_is_counted(settings):
+    result = run_validate(settings)
+
+    details = {check["name"]: check["detail"] for check in result.summary["checks"]}
+    assert details["frozen_tables"] == "9 tables have rows for week 4; 4 futures markets offered"
 
 
 def test_empty_futures_markets_are_fine_once_the_standings_are_written(tmp_path):

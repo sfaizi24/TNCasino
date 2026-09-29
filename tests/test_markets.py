@@ -19,6 +19,8 @@ KEYS = [
     ("2026-w04-lowest_scorer", Market("lowest_scorer", 2026, 4)),
     ("2026-first_place", Market("first_place", 2026)),
     ("2026-make_playoffs-4", Market("make_playoffs", 2026, None, (4,))),
+    ("2026-last_place", Market("last_place", 2026)),
+    ("2026-champion", Market("champion", 2026)),
 ]
 
 
@@ -42,6 +44,8 @@ def test_a_market_spells_its_key(key, market):
         ("lowest_scorer", {"season": 2026, "week": 12, "team_id": 4}, "2026-w12-lowest_scorer"),
         ("first_place", {"season": 2026, "week": 4, "team_id": 4}, "2026-first_place"),
         ("make_playoffs", {"season": 2026, "week": 4, "team_id": 4}, "2026-make_playoffs-4"),
+        ("last_place", {"season": 2026, "week": 4, "team_id": 4}, "2026-last_place"),
+        ("champion", {"season": 2026, "week": 4, "team_id": 4}, "2026-champion"),
     ],
 )
 def test_key_for_row_names_the_market_the_row_prices(name, row, key):
@@ -70,6 +74,10 @@ def test_key_for_row_names_the_market_the_row_prices(name, row, key):
         "2026-first_place-4",
         "2026-make_playoffs",
         "2026-w04-make_playoffs-4",
+        "2026-w04-last_place",
+        "2026-last_place-4",
+        "2026-w14-champion",
+        "2026-champion-4",
         "2026-w04-spread-4v1",
         "2026-w04-spread-4",
         "2026-w04-matchup_total-1v4",
@@ -99,6 +107,8 @@ def test_a_spread_is_keyed_by_its_matchups_moneyline_row(seeded_analytics):
         ("2026-w10-lowest_scorer", "2", "+230", 0.30, None),
         ("2026-first_place", "2", "+150", 0.30, None),
         ("2026-make_playoffs-1", "yes", "-400", 0.80, None),
+        ("2026-last_place", "2", "+230", 0.30, None),
+        ("2026-champion", "1", "+233", 0.30, None),
     ],
 )
 def test_find_quote_reads_each_market_from_its_table(seeded_analytics, key, selection, odds, probability, line):
@@ -123,6 +133,8 @@ def test_find_quote_reads_each_market_from_its_table(seeded_analytics, key, sele
         ("2026-first_place", "7"),
         ("2026-make_playoffs-1", "1"),
         ("2026-make_playoffs-1", "no"),
+        ("2026-last_place", "yes"),
+        ("2026-champion", "7"),
     ],
 )
 def test_find_quote_refuses_a_selection_the_market_does_not_offer(seeded_analytics, key, selection):
@@ -140,6 +152,8 @@ def test_find_quote_refuses_a_selection_the_market_does_not_offer(seeded_analyti
         "2026-w11-lowest_scorer",
         "2025-first_place",
         "2026-make_playoffs-7",
+        "2025-last_place",
+        "2025-champion",
     ],
 )
 def test_find_quote_refuses_a_market_with_no_published_row(seeded_analytics, key):
@@ -159,18 +173,19 @@ def test_find_quote_reads_only_the_latest_published_season(seeded_analytics, db_
         markets.find_quote(markets.parse_key("2026-w10-highest_scorer"), "1")
 
 
-def test_futures_are_quoted_from_the_highest_published_week(seeded_analytics, db_session):
+@pytest.mark.parametrize("name", ["first_place", "last_place", "champion"])
+def test_futures_are_quoted_from_the_highest_published_week(seeded_analytics, db_session, name):
     db_session.session.execute(
         text(
-            "INSERT INTO betting_odds_first_place (run_id, week, season, team_id, owner, probability, american_odds) "
+            f"INSERT INTO betting_odds_{name} (run_id, week, season, team_id, owner, probability, american_odds) "
             "VALUES ('2026w12-20261124T140000', 12, 2026, 1, 'Alice A', 0.55, '-122')"
         )
     )
-    first_place = markets.parse_key("2026-first_place")
+    market = markets.parse_key(f"2026-{name}")
 
-    assert markets.find_quote(first_place, "1").run_id == "2026w12-20261124T140000"
+    assert markets.find_quote(market, "1").run_id == "2026w12-20261124T140000"
     with pytest.raises(MarketError, match="Unknown selection"):
-        markets.find_quote(first_place, "2")
+        markets.find_quote(market, "2")
 
 
 def test_a_side_without_a_price_is_quoted_without_one(seeded_analytics, db_session):

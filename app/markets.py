@@ -29,6 +29,8 @@ SHAPES = {
     "lowest_scorer": (True, ()),
     "first_place": (False, ()),
     "make_playoffs": (False, ("team_id",)),
+    "last_place": (False, ()),
+    "champion": (False, ()),
 }
 
 # A spread line is the selected roster's, a multiple of 0.5 no further from zero than the margin curves reach.
@@ -92,6 +94,20 @@ QUOTE_SQL = {
         WHERE season = :season AND team_id = :team1
           AND season = (SELECT MAX(season) FROM betting_odds_make_playoffs)
           AND week = (SELECT MAX(week) FROM betting_odds_make_playoffs WHERE season = :season)
+    """,
+    "last_place": """
+        SELECT run_id, CAST(team_id AS TEXT) AS selection, american_odds AS odds, probability, NULL AS line
+        FROM betting_odds_last_place
+        WHERE season = :season
+          AND season = (SELECT MAX(season) FROM betting_odds_last_place)
+          AND week = (SELECT MAX(week) FROM betting_odds_last_place WHERE season = :season)
+    """,
+    "champion": """
+        SELECT run_id, CAST(team_id AS TEXT) AS selection, american_odds AS odds, probability, NULL AS line
+        FROM betting_odds_champion
+        WHERE season = :season
+          AND season = (SELECT MAX(season) FROM betting_odds_champion)
+          AND week = (SELECT MAX(week) FROM betting_odds_champion WHERE season = :season)
     """,
 }
 

@@ -10,7 +10,7 @@ flowchart LR
     LN --> SIM["50,000 draws per player,<br/>summed per team (07)"]
     SIM --> MK["Weekly markets:<br/>ML, O/U, high/low (07)"]
     SIM --> CV["Chart curves:<br/>density, CDF, margin (07)"]
-    SIM --> ST["Standings sims:<br/>1st place, playoffs (09)"]
+    SIM --> ST["Season sims: first place, playoffs,<br/>last place, champion (playoffs step)"]
 ```
 
 ## 1. Player distributions
@@ -122,6 +122,7 @@ Scores are compared exactly, in float64. A selection's chance is its share of al
 | **Highest / lowest scorer** | `betting_odds_highest_scorer`, `_lowest_scorer` | Share of simulations in which each team has the max/min score (ties credit every tied team) |
 | **First place** | `betting_odds_first_place` | Notebook 09: P(rank 1) after adding each simulated week to current standings |
 | **Make playoffs** | `betting_odds_make_playoffs` | Notebook 09: P(rank ≤ 8). Offered in the app as the `make_playoffs` market |
+| **Last place**, **Champion** | `betting_odds_last_place`, `betting_odds_champion` | The `playoffs` step only: P(last in the standings) and P(winning the bracket) ([§6](#6-playoff-odds)) |
 
 Notebook 09 ranking: +1 win for the higher simulated score (an exact tie counts as a loss for both), then sort by wins, then total points for. Only rows with 0.01 ≤ p ≤ 0.99 are stored.
 
@@ -192,25 +193,28 @@ The pairwise margin table lets the analytics page compare any two teams, not jus
 
 ## 6. Playoff odds
 
-The `playoffs` step (`pipeline/steps/playoffs.py`) replaces notebook 09. The notebook ranked teams after the current week only; the step simulates every week left in the regular season, 20,000 seasons per run.
+The `playoffs` step (`pipeline/steps/playoffs.py`) replaces notebook 09. The notebook ranked teams after the current week only; the step simulates every week left in the regular season and the playoff weeks after it, 20,000 seasons per run, and prices four futures from them.
 
 1. **Current week.** The first 20,000 draws of the simulate step's latest run for the week, paired by `league.db.matchups`.
-2. **Each later week** (`week + 1` to `playoff_week_start − 1`):
-   - *Projections.* The sources that publish future weeks (Sleeper, ESPN, FantasySharks) are scraped, then cleaned, matched and turned into player μ/σ exactly as the weekly steps do. Sleeper is always scraped because the others are checked against it, and a failing Sleeper stops the step; any other source that fails its checks is dropped for that week, with its rows deleted and one warning naming the weeks. `--sources` narrows the others. These projections live only for the run: once the later weeks are simulated, or the step fails part-way, their rows in `projections`, `projections_with_sleeper` and `player_week_stats` are deleted, and the current week's are never touched. Because of that cleanup the step refuses a week the weekly steps have already moved past (a later regular-season week has `team_lineups` rows): repricing week 4's futures after week 5's run would otherwise delete week 5's projections.
+2. **Each later week** (`week + 1` to `playoff_week_start − 1`, then one week per playoff round from `playoff_week_start`):
+   - *Projections.* The sources that publish future weeks (Sleeper, ESPN, FantasySharks) are scraped, then cleaned, matched and turned into player μ/σ exactly as the weekly steps do. Sleeper is always scraped because the others are checked against it, and a failing Sleeper stops the step; any other source that fails its checks is dropped for that week, with its rows deleted and one warning naming the weeks. `--sources` narrows the others. These projections live only for the run: once the later weeks are simulated, or the step fails part-way, their rows in `projections`, `projections_with_sleeper` and `player_week_stats` are deleted, and the current week's are never touched. Because of that cleanup the step refuses a week the weekly steps have already moved past (a later week, playoff weeks included, has `team_lineups` rows): repricing week 4's futures after week 5's run would otherwise delete week 5's projections.
    - *Lineups.* Each roster starts its best lineup from its own players, with the lineups step's eligibility and slot rules but **no replacement players**, since nobody can know who will be on waivers in six weeks. An empty slot scores 0.
    - *Draws.* The same sampler as the simulate step, seeded with `seed + week`.
-   - *Pairings.* Sleeper's `/league/{id}/matchups/{week}`, which lists the whole regular season in advance.
-3. **Standings.** Start from each roster's record to date (`wins`, `ties` and points for = `fpts + fpts_decimal / 100`; notebook 09 added the hundredths unscaled) and add every simulated week: the higher score wins, an exact tie is a tie for both, and every score counts toward points for. Rank by wins, then ties, then points for, then lower `roster_id` (`pipeline/standings.py`).
+   - *Pairings.* Regular-season weeks only: Sleeper's `/league/{id}/matchups/{week}`, which lists the whole regular season in advance. The playoff weeks need none; the bracket pairs the teams.
+3. **Standings.** Start from each roster's record to date (`wins`, `ties` and points for = `fpts + fpts_decimal / 100`; notebook 09 added the hundredths unscaled) and add every simulated regular-season week: the higher score wins, an exact tie is a tie for both, and every score counts toward points for. Rank by wins, then ties, then points for, then lower `roster_id` (`pipeline/standings.py`). The standings end at `playoff_week_start − 1`.
+4. **Bracket.** Each simulated season's top `playoff_teams` are seeded in finishing order and play Sleeper's fixed bracket on the playoff weeks' scores (`standings.play_bracket`): seed *i* opens against seed `playoff_teams + 1 − i`, and later rounds pair the winners in bracket order without reseeding, so with eight teams the winner of 1v8 meets the winner of 4v5, the winner of 2v7 meets the winner of 3v6, and those two meet in the final. There are no byes; each round is one week, so eight teams play weeks `playoff_week_start` to `playoff_week_start + 2`. The higher score advances, and **a tied playoff game advances the higher seed**.
 
 | Market | Table | Probability |
 |---|---|---|
-| **First place** | `betting_odds_first_place` | Share of seasons a team finishes 1st |
+| **First place** | `betting_odds_first_place` | Share of seasons a team finishes 1st (the #1 seed) |
 | **Make playoffs** | `betting_odds_make_playoffs` | Share of seasons it finishes in the top `playoff_teams` (league setting; 8 in 2026) |
+| **Last place** | `betting_odds_last_place` | Share of seasons it finishes `num_teams`th |
+| **Champion** | `betting_odds_champion` | Share of seasons it wins the bracket's final |
 | — | `standings_probability_matrix` | Every team at every finishing position, including 0% |
 
-The step fails unless first place sums to 1 and make playoffs to `playoff_teams`, each within 1e-6. The two betting tables keep only 0.01 ≤ p ≤ 0.99, as before; the matrix is published too, though the web app does not read it yet. All three tables carry `run_id` and `season`, and a rerun replaces the week's rows whichever run wrote them, so a week has one set of futures.
+The step fails unless first place, last place and the champion each sum to 1 and make playoffs to `playoff_teams`, each within 1e-6. The four betting tables keep only 0.01 ≤ p ≤ 0.99, as before: a team sure of a finish, or with no chance of it, is not offered. The matrix keeps every number; it is published too, though the web app does not read it yet. All five tables carry `season` and the `run_id` of the simulation the step read, not the pipeline run's, and a rerun replaces the week's rows whichever run wrote them, so a week has one set of futures and a rerun of the step alone leaves its run id as it was.
 
-Limits: weeks are independent draws from today's rosters, so trades, waiver moves and injuries after today are not modeled. A league with divisions is refused, since division winners would change who makes the playoffs. From `playoff_week_start` on the step writes nothing and warns that the playoffs have started.
+Limits: weeks are independent draws from today's rosters, so trades, waiver moves and injuries after today are not modeled. The step refuses, naming the setting, a league with divisions (division winners would change who makes the playoffs), a `playoff_seed_type` other than 0 (reseeding), a `playoff_round_type` other than 0 (two-week rounds), and a `playoff_teams` that is not a power of two (a bracket with byes). From `playoff_week_start` on the step writes nothing and warns that the playoffs have started, so no futures, the champion included, are priced during the playoffs.
 
 ## 7. Prediction accuracy
 
