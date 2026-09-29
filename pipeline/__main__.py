@@ -143,7 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--exclude-sources",
         type=website_list,
         default=[],
-        help="comma-separated source websites to leave out of the fit, e.g. fantasypros.com",
+        help="comma-separated source websites to leave out of the fit, e.g. fanduel.com",
     )
     fit_model.set_defaults(handler=fit_model_command)
 

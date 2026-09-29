@@ -39,7 +39,7 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 | M | Notebook 03 rewrites **all weeks** in place with one-off fixes (e.g. specific players). | notebook 03 |
 | M | Name matching is heuristic with one hardcoded override; unmatched projections are silently dropped from μ/σ. | notebook 04 |
 | M | Scrapers have no common interface; `scrape_and_save` signatures differ, default DB paths are relative to the working directory, and default seasons disagree (`"2024"` vs `"2025"`). | `backend/scrapers/scraper_*.py` |
-| M | ESPN, FantasyPros, FirstDown depend on page structure; FantasyPros and FirstDown can't request a specific week. | [02](02-data-pipeline.md#projection-sources) |
+| M | ESPN and FirstDown depend on page structure; FirstDown can't request a specific week. | [02](02-data-pipeline.md#projection-sources) |
 | M | Odds conversion is copy-pasted between notebooks 07 and 09, with different edge-case outputs. | notebooks 07/09 |
 | M | Playoff odds (09) simulate only the current week, not the remaining schedule. | notebook 09 |
 | L | Notebook 08 hardcodes 12 teams/6 matchups and fails in playoff weeks. | notebook 08 |
