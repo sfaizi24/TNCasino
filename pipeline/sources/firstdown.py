@@ -6,16 +6,11 @@ The page's table shows half-PPR points, so we read the snapshot, which carries P
 import json
 import re
 
-import requests
-
 from pipeline.names import split_full_name
-from pipeline.sources.base import Projection, ProjectionSource
+from pipeline.sources.base import Projection, ProjectionSource, get
 from pipeline.sources.teams import normalize_team
 
 URL = "https://www.firstdown.studio/rankings"
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
-)
 WEBSITE = "firstdown.studio"
 
 POSITIONS = frozenset({"QB", "RB", "WR", "TE", "K"})
@@ -31,9 +26,7 @@ class FirstDownSource(ProjectionSource):
     positions = POSITIONS
 
     def fetch(self, season: int, week: int) -> list[Projection]:
-        response = requests.get(URL, headers={"User-Agent": USER_AGENT}, timeout=30)
-        response.raise_for_status()
-        return parse(response.text, season, week)
+        return parse(get(URL).text, season, week)
 
 
 def parse(html: str, season: int, week: int) -> list[Projection]:

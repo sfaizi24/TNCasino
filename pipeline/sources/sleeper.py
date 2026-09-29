@@ -1,8 +1,6 @@
 """Sleeper's weekly PPR projections from its public JSON API. Every other source is checked against these."""
 
-import requests
-
-from pipeline.sources.base import POSITIONS, Projection, ProjectionSource
+from pipeline.sources.base import POSITIONS, Projection, ProjectionSource, get
 from pipeline.sources.teams import normalize_team
 
 URL = (
@@ -18,8 +16,7 @@ class SleeperSource(ProjectionSource):
     supports_future_weeks = True
 
     def fetch(self, season: int, week: int) -> list[Projection]:
-        response = requests.get(URL.format(season=season, week=week), timeout=30)
-        response.raise_for_status()
+        response = get(URL.format(season=season, week=week))
         return parse(response.json(), season, week)
 
 

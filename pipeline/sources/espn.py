@@ -2,17 +2,12 @@
 
 import json
 
-import requests
-
-from pipeline.sources.base import Projection, ProjectionSource
+from pipeline.sources.base import Projection, ProjectionSource, get
 from pipeline.sources.teams import DEF_NAMES
 
 URL = (
     "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{season}/segments/0/leaguedefaults/3"
     "?scoringPeriodId={week}&view=kona_player_info"
-)
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
 )
 WEBSITE = "espn.com"
 
@@ -65,9 +60,8 @@ class EspnSource(ProjectionSource):
     supports_future_weeks = True
 
     def fetch(self, season: int, week: int) -> list[Projection]:
-        headers = {"User-Agent": USER_AGENT, "x-fantasy-filter": json.dumps(player_filter(week))}
-        response = requests.get(URL.format(season=season, week=week), headers=headers, timeout=30)
-        response.raise_for_status()
+        headers = {"x-fantasy-filter": json.dumps(player_filter(week))}
+        response = get(URL.format(season=season, week=week), headers=headers)
         return parse(response.json(), season, week)
 
 
