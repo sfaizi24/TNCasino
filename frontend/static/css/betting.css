@@ -626,6 +626,31 @@
     cursor: not-allowed;
 }
 
+.tnc-mc-parlay {
+    padding: 7px 10px;
+    background: transparent;
+    color: var(--tnc-blue);
+    border: 1px solid var(--tnc-blue);
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: var(--tnc-fw-semi);
+    font-size: var(--tnc-fs-12);
+    font-family: inherit;
+    white-space: nowrap;
+    transition: all 120ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.tnc-mc-parlay:hover:not(:disabled) {
+    background: var(--tnc-blue-tint);
+}
+
+.tnc-mc-parlay:disabled {
+    color: var(--tnc-fg-muted);
+    border-color: var(--tnc-border);
+    cursor: default;
+}
+
+/* The field takes its own line; the buttons under it share the next. */
 @media (max-width: 480px) {
     .tnc-mc-stake-row {
         flex-wrap: wrap;
@@ -635,8 +660,161 @@
         flex: 1 1 100%;
     }
 
-    .tnc-mc-place {
-        flex: 1 1 100%;
+    .tnc-mc-place,
+    .tnc-mc-parlay {
+        flex: 1 1 0;
+    }
+}
+
+.tnc-slip {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 90;
+    width: 360px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px 12px;
+    background: var(--tnc-surface);
+    border: 1px solid var(--tnc-border);
+    border-radius: var(--tnc-r-lg);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.tnc-slip-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tnc-slip-title {
+    font-size: var(--tnc-fs-14);
+    font-weight: var(--tnc-fw-bold);
+    color: var(--tnc-fg);
+}
+
+.tnc-slip-count {
+    font-size: var(--tnc-fs-11);
+    color: var(--tnc-fg-muted);
+}
+
+.tnc-slip-clear {
+    margin-left: auto;
+    height: 26px;
+    padding: 0 12px;
+    background: transparent;
+    border: 1px solid var(--tnc-border);
+    border-radius: 4px;
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-11);
+    font-weight: var(--tnc-fw-semi);
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.tnc-slip-clear:hover {
+    color: var(--tnc-loss);
+    border-color: var(--tnc-loss);
+}
+
+.tnc-slip-legs {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.tnc-slip-leg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 3px 3px 3px 10px;
+    background: var(--tnc-bg);
+    border: 1px solid var(--tnc-border);
+    border-radius: 5px;
+    font-size: var(--tnc-fs-13);
+    font-weight: var(--tnc-fw-medium);
+    color: var(--tnc-fg);
+}
+
+.tnc-slip-leg.is-flagged {
+    border-color: var(--tnc-loss);
+    background: var(--tnc-loss-tint);
+}
+
+.tnc-slip-leg-label {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tnc-slip-rm {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-16);
+    line-height: 1;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.tnc-slip-rm:hover {
+    color: var(--tnc-loss);
+    background: var(--tnc-surface);
+}
+
+.tnc-slip-note,
+.tnc-slip-quote,
+.tnc-slip-refusal {
+    font-size: var(--tnc-fs-12);
+    line-height: 1.35;
+}
+
+.tnc-slip-note {
+    color: var(--tnc-fg-muted);
+}
+
+.tnc-slip-quote {
+    color: var(--tnc-fg-muted);
+}
+
+.tnc-slip-quote strong {
+    color: var(--tnc-blue);
+    font-size: var(--tnc-fs-14);
+    font-weight: var(--tnc-fw-bold);
+}
+
+.tnc-slip-refusal {
+    color: var(--tnc-loss);
+    font-weight: var(--tnc-fw-semi);
+}
+
+.tnc-slip-stake {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+/* On a phone the slip is a sheet across the bottom; it scrolls inside itself rather than cover the whole page. */
+@media (max-width: 719px) {
+    .tnc-slip {
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: auto;
+        max-height: 60vh;
+        border-bottom: none;
+        border-radius: var(--tnc-r-xl) var(--tnc-r-xl) 0 0;
+        padding-bottom: calc(12px + env(safe-area-inset-bottom));
     }
 }
 

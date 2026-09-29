@@ -1,5 +1,6 @@
 const isAuth = window.isAuthenticated;
 const QUICK_STAKES = [10, 25, 50, 100];
+const QUOTE_DELAY_MS = 250;
 
 // The endpoint listing each kind of card.
 const SOURCES = {
@@ -30,6 +31,7 @@ const ACTIVE_GROUPS = [
     { label: 'HIGH', types: ['highest_scorer'] },
     { label: 'LOW', types: ['lowest_scorer'] },
     { label: 'FUTURES', types: ['first_place', 'make_playoffs'] },
+    { label: 'PARLAY', types: ['parlay'] },
 ];
 
 const state = {
@@ -42,7 +44,14 @@ const state = {
     opens: {},
     lineupCache: {},
     rows: { ml: [], ou: [], hi: [], lo: [], fp: [], mp: [] },
+    slip: emptySlip(),
 };
+
+let quoteTimer = null;
+
+function emptySlip() {
+    return { legs: [], quote: null, refusal: null, stake: '' };
+}
 
 function americanToDecimal(odds) {
     const n = typeof odds === 'string' ? parseInt(odds, 10) : odds;
@@ -61,6 +70,12 @@ function fmtOdds(odds) {
 
 function fmtPct(p) {
     return `${(p * 100).toFixed(0)}%`;
+}
+
+// Digits and at most one dot: what Number() reads as a stake.
+function cleanStake(value) {
+    const [whole, ...rest] = value.replace(/[^0-9.]/g, '').split('.');
+    return rest.length ? `${whole}.${rest.join('')}` : whole;
 }
 
 // A kickoff or publish time in the visitor's own zone: "Thu 8:15 PM".
@@ -137,6 +152,29 @@ function isFuture(kind) {
     return kind === 'fp' || kind === 'mp';
 }
 
+// The pick's short name in the slip: "Bob B +105", "Alice A Over 110.50", "Bob B highest scorer".
+function legLabel(kind, row, side) {
+    if (kind === 'ml') return `${side.label} ${fmtOdds(side.odds)}`;
+    if (kind === 'ou') return `${row.owner} ${side.label} ${row.line.toFixed(2)}`;
+    if (kind === 'hi') return `${row.owner} highest scorer`;
+    return `${row.owner} lowest scorer`;
+}
+
+function legFor(kind, row, side) {
+    return {
+        kind,
+        market: row.market,
+        selection: side.selection,
+        line: row.line ?? null,
+        run_id: row.run_id,
+        label: legLabel(kind, row, side),
+    };
+}
+
+function inSlip(market, selection) {
+    return state.slip.legs.some(leg => leg.market === market && leg.selection === selection);
+}
+
 function chevronSvg() {
     return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
 }
@@ -155,6 +193,16 @@ function renderPlacedStrip(bets) {
             `).join('')}
         </div>
     `;
+}
+
+// Futures run past the week, so only the weekly markets can join a parlay.
+function renderParlayButton(key) {
+    const { kind, row } = cardForKey(key);
+    if (isFuture(kind)) return '';
+    if (inSlip(row.market, state.picks[key])) {
+        return '<button class="tnc-mc-parlay" data-action="parlay" disabled>In parlay</button>';
+    }
+    return '<button class="tnc-mc-parlay" data-action="parlay">Add to parlay</button>';
 }
 
 function renderStakeSection(key, odds) {
@@ -180,6 +228,7 @@ function renderStakeSection(key, odds) {
                     <input class="tnc-mc-input" data-action="stake" placeholder="Stake" inputmode="decimal" value="${stake}">
                     <span class="tnc-mc-payout tnc-tab-num"${payout > 0 ? '' : ' style="display:none;"'}>${payout > 0 ? `Pays out ${fmtMoney(payout)}` : ''}</span>
                 </div>
+                ${renderParlayButton(key)}
                 <button class="tnc-mc-place" data-action="place"${stakeNum > 0 ? '' : ' disabled'}${closedAttrs()}>Place Bet</button>
             </div>
         </div>
@@ -331,7 +380,7 @@ function renderCard(kind, row, idx) {
     `;
 }
 
-// The card side a bet backs. A bet placed before markets existed has no market and matches none.
+// The card side a bet or slip leg backs. A parlay, or a bet placed before markets existed, has no market and matches none.
 function sideForBet(bet) {
     for (const kind of Object.keys(state.rows)) {
         for (const row of state.rows[kind]) {
@@ -345,6 +394,7 @@ function sideForBet(bet) {
 
 // A chip names the pick and leaves the market to its group, except in Futures, whose group holds two.
 function chipLabel(bet) {
+    if (bet.bet_type === 'parlay') return `${bet.legs.length}-leg parlay`;
     const match = sideForBet(bet);
     if (!match) return bet.description.replace(` ${bet.odds}`, '');
     const { kind, row, side } = match;
@@ -395,6 +445,76 @@ function renderActiveBets() {
     `;
 }
 
+function isFlagged(leg) {
+    return Boolean(state.slip.refusal?.legs?.includes(leg.market));
+}
+
+function renderSlipLeg(leg, index) {
+    return `
+        <div class="tnc-slip-leg${isFlagged(leg) ? ' is-flagged' : ''}">
+            <span class="tnc-slip-leg-label">${leg.label}</span>
+            <button class="tnc-slip-rm" data-action="slip-remove" data-index="${index}" aria-label="Remove ${leg.label}">&times;</button>
+        </div>
+    `;
+}
+
+function renderSlipStatus() {
+    const { legs, quote, refusal } = state.slip;
+    if (legs.length < 2) return '<p class="tnc-slip-note">Add another leg</p>';
+    if (refusal) return `<p class="tnc-slip-refusal">${refusal.error}</p>`;
+    if (!quote) return '<p class="tnc-slip-note">Pricing&hellip;</p>';
+    return `
+        <p class="tnc-slip-quote tnc-tab-num">
+            <strong>${fmtOdds(quote.odds)}</strong> &middot; ${fmtPct(quote.probability)} chance
+        </p>
+    `;
+}
+
+function slipPayout() {
+    const stake = Number(state.slip.stake) || 0;
+    if (!state.slip.quote || stake <= 0) return 0;
+    return stake * americanToDecimal(state.slip.quote.odds);
+}
+
+function renderSlipStake() {
+    const payout = slipPayout();
+    return `
+        <div class="tnc-slip-stake">
+            <div class="tnc-mc-quick">
+                ${QUICK_STAKES.map(v => `<button data-action="slip-quick" data-amount="${v}">$${v}</button>`).join('')}
+            </div>
+            <div class="tnc-mc-stake-row">
+                <div class="tnc-mc-stake-field">
+                    <input class="tnc-mc-input" id="slipStake" data-action="slip-stake" placeholder="Stake" inputmode="decimal" value="${state.slip.stake}">
+                    <span class="tnc-mc-payout tnc-tab-num" id="slipPayout"${payout > 0 ? '' : ' style="display:none;"'}>${payout > 0 ? `Pays out ${fmtMoney(payout)}` : ''}</span>
+                </div>
+                <button class="tnc-mc-place" id="slipPlace" data-action="slip-place"${payout > 0 ? '' : ' disabled'}${closedAttrs()}>Place parlay</button>
+            </div>
+        </div>
+    `;
+}
+
+function renderSlip() {
+    const container = document.getElementById('slip');
+    const legs = state.slip.legs;
+    if (!isAuth || !legs.length) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = `
+        <div class="tnc-slip">
+            <div class="tnc-slip-head">
+                <span class="tnc-slip-title">Parlay</span>
+                <span class="tnc-slip-count">${legs.length} ${legs.length === 1 ? 'leg' : 'legs'}</span>
+                <button class="tnc-slip-clear" data-action="slip-clear">Clear</button>
+            </div>
+            <div class="tnc-slip-legs">${legs.map(renderSlipLeg).join('')}</div>
+            ${renderSlipStatus()}
+            ${legs.length > 1 ? renderSlipStake() : ''}
+        </div>
+    `;
+}
+
 function renderList({ kind, title }) {
     const heading = title ? `<h2 class="tnc-fu-head">${title}</h2>` : '';
     return heading + state.rows[kind].map((row, idx) => renderCard(kind, row, idx)).join('');
@@ -421,6 +541,7 @@ function render() {
     renderWindow();
     renderActiveBets();
     renderGrid();
+    renderSlip();
 }
 
 function setBalance(value) {
@@ -469,12 +590,15 @@ async function loadLineup(owner) {
     state.lineupCache[owner] = await r.json();
 }
 
-// A newer run is live: show its prices and its window, and drop the picks made on the old ones.
+// A newer run is live: show its prices and its window, drop the picks made on the old ones and move the slip onto it.
 async function reloadTab() {
-    const kinds = TABS[state.tab].map(list => list.kind);
-    await Promise.all([...kinds.map(loadRows), loadWindow(), loadBets()]);
+    const tabKinds = TABS[state.tab].map(list => list.kind);
+    const slipKinds = state.slip.legs.map(leg => leg.kind);
+    const kinds = new Set([...tabKinds, ...slipKinds]);
+    await Promise.all([...[...kinds].map(loadRows), loadWindow(), loadBets()]);
     state.picks = {};
     state.stakes = {};
+    refreshSlipLegs();
     render();
 }
 
@@ -482,6 +606,67 @@ async function reloadTab() {
 async function reloadWindow() {
     await Promise.all([loadWindow(), loadBets()]);
     render();
+}
+
+// Every change to the legs voids the last quote and asks for a new one.
+function setSlipLegs(legs) {
+    state.slip.legs = legs;
+    state.slip.quote = null;
+    state.slip.refusal = null;
+    scheduleQuote();
+}
+
+// A slip leg as the rows now loaded offer it, or null once they no longer do.
+function currentLeg(leg) {
+    const match = sideForBet(leg);
+    if (!match || match.side.odds == null) return null;
+    return legFor(match.kind, match.row, match.side);
+}
+
+// Legs whose run, line or price moved are re-quoted; legs whose market is gone are dropped.
+function refreshSlipLegs() {
+    const legs = state.slip.legs.map(currentLeg).filter(leg => leg !== null);
+    if (JSON.stringify(legs) !== JSON.stringify(state.slip.legs)) setSlipLegs(legs);
+}
+
+function parlayPayload(legs) {
+    return {
+        legs: legs.map(leg => ({ market: leg.market, selection: leg.selection, line: leg.line })),
+        run_id: legs[0].run_id,
+    };
+}
+
+function scheduleQuote() {
+    clearTimeout(quoteTimer);
+    if (state.slip.legs.length < 2) return;
+    quoteTimer = setTimeout(quoteSlip, QUOTE_DELAY_MS);
+}
+
+// Moved odds reload the tab, which moves the legs onto the new run and so quotes them again.
+async function refuseSlip(result) {
+    state.slip.quote = null;
+    state.slip.refusal = result;
+    if (result.rule === 'odds_changed') await reloadTab();
+    else if (!result.rule) await reloadWindow();
+}
+
+async function quoteSlip() {
+    const legs = state.slip.legs;
+    try {
+        const r = await fetch('/api/parlay_quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parlayPayload(legs)),
+        });
+        const result = await r.json();
+        // The slip changed while this quote was out; the change asked for its own.
+        if (state.slip.legs !== legs) return;
+        if (result.success) state.slip.quote = result;
+        else await refuseSlip(result);
+    } catch (e) {
+        console.error('Error quoting parlay', e);
+    }
+    renderSlip();
 }
 
 function payloadForKey(key, amount) {
@@ -517,7 +702,7 @@ function updatePayoutInPlace(card) {
 
 function handleStakeInput(card, input) {
     const key = card.dataset.key;
-    const cleaned = input.value.replace(/[^0-9.]/g, '');
+    const cleaned = cleanStake(input.value);
     if (cleaned !== input.value) input.value = cleaned;
     state.stakes[key] = cleaned;
     updatePayoutInPlace(card);
@@ -568,6 +753,95 @@ async function handlePlace(card) {
         setBalance(oldBalance);
         toast('Failed to place bet', 'error');
     }
+}
+
+function handleAddToParlay(card) {
+    const key = card.dataset.key;
+    const { kind, row } = cardForKey(key);
+    const side = sidesOf(kind, row).find(s => s.selection === state.picks[key]);
+    setSlipLegs([...state.slip.legs, legFor(kind, row, side)]);
+    delete state.picks[key];
+    delete state.stakes[key];
+    renderGrid();
+    renderSlip();
+}
+
+function handleSlipRemove(index) {
+    setSlipLegs(state.slip.legs.filter((leg, i) => i !== index));
+    renderGrid();
+    renderSlip();
+}
+
+function handleSlipClear() {
+    clearTimeout(quoteTimer);
+    state.slip = emptySlip();
+    renderGrid();
+    renderSlip();
+}
+
+function updateSlipInPlace() {
+    const payout = slipPayout();
+    const payoutEl = document.getElementById('slipPayout');
+    payoutEl.textContent = payout > 0 ? `Pays out ${fmtMoney(payout)}` : '';
+    payoutEl.style.display = payout > 0 ? '' : 'none';
+    document.getElementById('slipPlace').disabled = !(payout > 0) || !bettingOpen();
+}
+
+function handleSlipStakeInput(input) {
+    const cleaned = cleanStake(input.value);
+    if (cleaned !== input.value) input.value = cleaned;
+    state.slip.stake = cleaned;
+    updateSlipInPlace();
+}
+
+function handleSlipQuick(amount) {
+    state.slip.stake = String(amount);
+    document.getElementById('slipStake').value = String(amount);
+    updateSlipInPlace();
+}
+
+async function handleSlipPlace() {
+    const stake = Number(state.slip.stake);
+    if (!stake || stake <= 0) return;
+    if (stake > state.balance) {
+        toast('Insufficient balance', 'error');
+        return;
+    }
+
+    const oldBalance = state.balance;
+    setBalance(state.balance - stake);
+
+    try {
+        const r = await fetch('/api/place_bet', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...parlayPayload(state.slip.legs), amount: stake }),
+        });
+        const result = await r.json();
+        if (result.success) {
+            setBalance(result.new_balance);
+            state.slip = emptySlip();
+            await loadBets();
+            render();
+            toast('Parlay placed!');
+        } else {
+            setBalance(oldBalance);
+            toast(result.error || 'Failed to place parlay', 'error');
+            if (result.rule) await refuseSlip(result);
+            else await reloadWindow();
+        }
+    } catch (e) {
+        console.error('Error placing parlay', e);
+        setBalance(oldBalance);
+        toast('Failed to place parlay', 'error');
+    }
+}
+
+function handleSlipClick(action, target) {
+    if (action === 'slip-remove') handleSlipRemove(parseInt(target.dataset.index, 10));
+    else if (action === 'slip-clear') handleSlipClear();
+    else if (action === 'slip-quick') handleSlipQuick(parseInt(target.dataset.amount, 10));
+    else if (action === 'slip-place') handleSlipPlace();
 }
 
 async function handleCancel(betId) {
@@ -670,15 +944,24 @@ function bindEvents() {
             handleCashOut(parseInt(target.dataset.betId, 10));
             return;
         }
+        if (target.closest('#slip')) {
+            handleSlipClick(action, target);
+            return;
+        }
         const card = target.closest('.tnc-mc');
         if (!card) return;
         if (action === 'pick') handlePick(card, target);
         else if (action === 'quick') handleQuick(card, parseInt(target.dataset.amount, 10));
         else if (action === 'place') handlePlace(card);
+        else if (action === 'parlay') handleAddToParlay(card);
         else if (action === 'show') handleShow(card);
     });
 
     document.body.addEventListener('input', e => {
+        if (e.target.dataset.action === 'slip-stake') {
+            handleSlipStakeInput(e.target);
+            return;
+        }
         if (e.target.dataset.action !== 'stake') return;
         const card = e.target.closest('.tnc-mc');
         if (card) handleStakeInput(card, e.target);
