@@ -30,6 +30,7 @@ class FanDuelSource(ProjectionSource):
     name = "fanduel"
     website = WEBSITE
     supports_future_weeks = False
+    has_week_stamp = False
 
     def fetch(self, season: int, week: int) -> list[Projection]:
         items = []

@@ -93,7 +93,11 @@ def read_projections(conn: sqlite3.Connection, season: int, week: int, website: 
 
 
 def scrape_source(
-    ctx: StepContext, source: ProjectionSource, sleeper_players: list[dict], sleeper_rows: list[Projection]
+    ctx: StepContext,
+    source: ProjectionSource,
+    sleeper_players: list[dict],
+    sleeper_rows: list[Projection],
+    future_week: bool = False,
 ) -> tuple[list[Projection], SourceReport, float]:
     """Fetch and verify one source. A fetch that raises fails this source, not the step."""
     season = ctx.settings.season
@@ -109,7 +113,16 @@ def scrape_source(
     elapsed_s = time.perf_counter() - started
 
     previous_rows = read_projections(ctx.db("projections"), season, week - 1, source.website)
-    report = verify_source(rows, week, sleeper_players, sleeper_rows, previous_rows, source.positions)
+    report = verify_source(
+        rows,
+        week,
+        sleeper_players,
+        sleeper_rows,
+        previous_rows,
+        source.positions,
+        future_week=future_week,
+        has_week_stamp=source.has_week_stamp,
+    )
     return rows, report, elapsed_s
 
 

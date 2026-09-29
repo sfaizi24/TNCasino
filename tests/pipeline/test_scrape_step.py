@@ -22,6 +22,7 @@ class FakeSource:
     """Serves the Sleeper fixture's players under its own website, stamped with the requested week."""
 
     positions = POSITIONS
+    has_week_stamp = True
 
     def __init__(self, name: str, rows: list[Projection]):
         self.name = name
@@ -122,8 +123,8 @@ def test_full_run_stores_every_source_that_passes(settings, sources):
     result = run_scrape(settings)
 
     assert stored_counts(settings) == {website: 188 for website in WEBSITES}
-    assert [entry["status"] for entry in result.summary["sources"]] == ["ok"] * 6
-    assert (result.summary["n_ok_sources"], result.summary["dropped"]) == (6, [])
+    assert [entry["status"] for entry in result.summary["sources"]] == ["ok"] * len(WEBSITES)
+    assert (result.summary["n_ok_sources"], result.summary["dropped"]) == (len(WEBSITES), [])
     assert result.warnings == []
 
 
@@ -158,6 +159,19 @@ def test_sleeper_runs_first_so_the_others_are_checked_against_it(settings, sourc
     assert espn_value["detail"].startswith("QB r=1.00 MAD=0.00 n=24, RB r=1.00")
 
 
+def test_source_that_names_no_week_reports_week_stamp_as_na(settings, sources):
+    sources["fanduel"].has_week_stamp = False
+
+    entries = entries_by_source(run_scrape(settings, ["sleeper", "fanduel"]))
+
+    assert checks_by_name(entries["sleeper.com"])["week_stamp"]["detail"] == "all 188 rows are for week 4"
+    assert checks_by_name(entries["fanduel.com"])["week_stamp"] == {
+        "name": "week_stamp",
+        "status": "ok",
+        "detail": "n/a: the source names no week, so rows carry the requested one",
+    }
+
+
 def test_failing_source_is_dropped_and_its_stale_rows_deleted(settings, sources, fixture_rows):
     run_scrape(settings)
     sources["espn"].rows = [row for row in fixture_rows if row.position != "WR"]
@@ -166,7 +180,7 @@ def test_failing_source_is_dropped_and_its_stale_rows_deleted(settings, sources,
 
     assert stored_counts(settings) == {website: 188 for website in WEBSITES if website != "espn.com"}
     assert entries_by_source(result)["espn.com"]["status"] == "fail"
-    assert (result.summary["n_ok_sources"], result.summary["dropped"]) == (5, ["espn.com"])
+    assert (result.summary["n_ok_sources"], result.summary["dropped"]) == (len(WEBSITES) - 1, ["espn.com"])
     assert result.warnings == ["dropped espn.com (position_counts)"]
 
 
@@ -205,8 +219,9 @@ def test_full_run_fails_without_sleeper(settings, sources):
 
 
 def test_full_run_needs_three_usable_sources(settings, sources):
-    for name in ["fantasypros", "firstdown", "fanduel"]:
-        sources[name].error = TimeoutError("no response")
+    for name in SOURCE_NAMES:
+        if name not in {"sleeper", "espn", "fantasysharks"}:
+            sources[name].error = TimeoutError("no response")
     assert run_scrape(settings).summary["n_ok_sources"] == 3
 
     sources["fantasysharks"].error = TimeoutError("no response")
@@ -228,18 +243,13 @@ def test_subset_run_lists_the_sources_it_left_alone_as_kept(settings, sources):
     result = run_scrape(settings, ["fantasysharks"])
 
     summary = result.summary
-    assert [(entry["source"], entry["status"], entry["n_rows"]) for entry in summary["sources"]] == [
-        ("sleeper.com", "kept", 188),
-        ("espn.com", "kept", 188),
-        ("fantasysharks.com", "ok", 188),
-        ("fantasypros.com", "kept", 0),
-        ("firstdown.com", "kept", 0),
-        ("fanduel.com", "kept", 0),
-    ]
+    entries = [(entry["source"], entry["status"], entry["n_rows"]) for entry in summary["sources"]]
+    assert entries[:3] == [("sleeper.com", "kept", 188), ("espn.com", "kept", 188), ("fantasysharks.com", "ok", 188)]
+    assert entries[3:] == [(website, "kept", 0) for website in WEBSITES[3:]]
     kept = summary["sources"][0]
     assert (kept["elapsed_s"], kept["checks"]) == (0, [])
     assert summary["n_ok_sources"] == 3
-    assert [sources[name].fetches for name in SOURCE_NAMES] == [1, 1, 1, 0, 0, 0]
+    assert [sources[name].fetches for name in SOURCE_NAMES] == [1, 1, 1] + [0] * (len(SOURCE_NAMES) - 3)
     assert result.warnings == []
 
 

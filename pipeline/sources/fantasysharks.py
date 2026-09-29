@@ -2,19 +2,16 @@
 
 import re
 
-import requests
 from bs4 import BeautifulSoup
 
-from pipeline.sources.base import Projection, ProjectionSource
+from pipeline.sources.base import Projection, ProjectionSource, get
 from pipeline.sources.teams import DEF_NAMES, normalize_team, team_from_def_name
 
 URL = (
     "https://www.fantasysharks.com/apps/bert/forecasts/projections.php"
     "?League=-1&Position={code}&scoring=2&Segment={segment}&uid=4"
 )
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
-)
+CRAWL_DELAY_S = 60  # robots.txt: "Crawl-delay: 60"
 WEBSITE = "fantasysharks.com"
 
 # Position -> (the page's Position parameter, the label its Position menu shows as selected).
@@ -43,9 +40,7 @@ class FantasySharksSource(ProjectionSource):
         pages = {}
         for position, (code, _) in PAGES.items():
             url = URL.format(code=code, segment=segment)
-            response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
-            response.raise_for_status()
-            pages[position] = response.text
+            pages[position] = get(url, spacing_s=CRAWL_DELAY_S).text
         return parse(pages, season, week)
 
 

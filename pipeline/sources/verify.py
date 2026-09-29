@@ -56,15 +56,17 @@ def verify_source(
     sleeper_rows: list[Projection],
     previous_rows: list[Projection],
     positions: frozenset[str],
+    future_week: bool = False,
+    has_week_stamp: bool = True,
 ) -> SourceReport:
     """`sleeper_players` are nfl_players rows; `sleeper_rows` Sleeper's projections for the week, empty if unknown."""
     checks = [
         position_agreement(rows, sleeper_players),
         duplicate_positions(rows),
         position_counts(rows, positions),
-        value_agreement(rows, sleeper_rows),
+        value_agreement(rows, sleeper_rows, future_week),
         team_codes(rows),
-        week_stamp(rows, week),
+        week_stamp(rows, week, has_week_stamp),
         freshness(rows, previous_rows),
         top_players(rows, sleeper_players),
     ]
@@ -154,7 +156,7 @@ def position_counts(rows: list[Projection], positions: frozenset[str]) -> Check:
     return Check("position_counts", "ok", ", ".join(f"{position} {counts[position]}" for position in counted))
 
 
-def value_agreement(rows: list[Projection], sleeper_rows: list[Projection]) -> Check:
+def value_agreement(rows: list[Projection], sleeper_rows: list[Projection], future_week: bool = False) -> Check:
     """Per position, Pearson r and median absolute difference against Sleeper on the players both project."""
     if not sleeper_rows:
         return Check("value_agreement", "ok", "n/a: no Sleeper projections to compare with")
@@ -173,9 +175,7 @@ def value_agreement(rows: list[Projection], sleeper_rows: list[Projection]) -> C
         points, baseline = np.array(pairs[position]).T
         r = correlation(points, baseline)
         mad = float(np.median(np.abs(points - baseline)))
-        status = "ok"
-        if r < MIN_CORRELATION or mad > MAX_MEDIAN_DIFFERENCE:
-            status = "warn" if position in WARN_ONLY_POSITIONS else "fail"
+        status = agreement_status(position, r, mad, future_week)
         statuses.append(status)
         part = f"{position} r={r:.2f} MAD={mad:.2f} n={len(points)}"
         parts.append(part if status == "ok" else f"{part} ({status})")
@@ -183,6 +183,17 @@ def value_agreement(rows: list[Projection], sleeper_rows: list[Projection]) -> C
     if not parts:
         return Check("value_agreement", "ok", f"n/a: fewer than {MIN_PAIRS} players per position matched Sleeper")
     return Check("value_agreement", worst(statuses), ", ".join(parts))
+
+
+def agreement_status(position: str, r: float, mad: float, future_week: bool) -> str:
+    """Quarterback projections for a later week sit so close together that a low r alone is only a warning."""
+    if r >= MIN_CORRELATION and mad <= MAX_MEDIAN_DIFFERENCE:
+        return "ok"
+    if position in WARN_ONLY_POSITIONS:
+        return "warn"
+    if future_week and position == "QB" and mad <= MAX_MEDIAN_DIFFERENCE:
+        return "warn"
+    return "fail"
 
 
 def correlation(points: np.ndarray, baseline: np.ndarray) -> float:
@@ -206,8 +217,10 @@ def team_codes(rows: list[Projection]) -> Check:
     return Check("team_codes", status, with_examples(detail, unknown))
 
 
-def week_stamp(rows: list[Projection], week: int) -> Check:
+def week_stamp(rows: list[Projection], week: int, has_week_stamp: bool = True) -> Check:
     """Each row carries the week its payload says it is for; a source serving another week fails."""
+    if not has_week_stamp:
+        return Check("week_stamp", "ok", "n/a: the source names no week, so rows carry the requested one")
     if not rows:
         return Check("week_stamp", "ok", "n/a: no rows")
     wrong_weeks = Counter(row.week for row in rows if row.week != week)

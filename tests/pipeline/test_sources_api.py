@@ -6,9 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import requests
 
-from pipeline.sources import espn, fantasysharks, sleeper
-from pipeline.sources.base import Projection
+from pipeline.sources import base, espn, fantasysharks, firstdown, sleeper
+from pipeline.sources.base import REQUEST_SPACING_S, TIMEOUT_S, USER_AGENT, Projection
 from pipeline.sources.teams import CANONICAL_TEAMS
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -39,6 +40,43 @@ def names(rows: list[Projection]) -> set[tuple[str, str]]:
 
 def rows_per_position(rows: list[Projection]) -> dict[str, int]:
     return dict(Counter(row.position for row in rows))
+
+
+class Clock:
+    """A fake for base.time's clock: time passes only when something sleeps, and each sleep is recorded."""
+
+    def __init__(self):
+        self.now = 1000.0
+        self.sleeps = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr(base.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(base.time, "sleep", clock.sleep)
+    monkeypatch.setattr(base, "_last_request_at", {})
+    return clock
+
+
+def serve(monkeypatch, body_for_url) -> list[dict]:
+    """Answers base.get's requests with body_for_url(url) and returns the list each request is recorded in."""
+    sent = []
+
+    def fake_get(url, headers, timeout):
+        sent.append({"url": url, "headers": headers, "timeout": timeout})
+        body = body_for_url(url)
+        return SimpleNamespace(text=body, json=lambda: json.loads(body), raise_for_status=lambda: None)
+
+    monkeypatch.setattr(base.requests, "get", fake_get)
+    return sent
 
 
 @pytest.fixture(scope="module")
@@ -220,24 +258,107 @@ def test_sharks_page_showing_no_week_raises(sharks_pages):
         fantasysharks.parse({"K": html}, 2026, 4)
 
 
-def test_sharks_fetch_requests_the_six_pages_for_the_week_segment(monkeypatch, sharks_pages):
+def test_sharks_fetch_requests_the_six_pages_a_crawl_delay_apart(monkeypatch, clock, sharks_pages):
     position_by_code = {code: position for position, (code, _) in fantasysharks.PAGES.items()}
-    requested = []
 
-    def fake_get(url, headers, timeout):
-        requested.append(url)
+    def page_for(url):
         code = int(re.search(r"Position=(\d+)", url).group(1))
-        return SimpleNamespace(text=sharks_pages[position_by_code[code]], raise_for_status=lambda: None)
+        return sharks_pages[position_by_code[code]]
 
-    monkeypatch.setattr(fantasysharks.requests, "get", fake_get)
+    sent = serve(monkeypatch, page_for)
 
     rows = fantasysharks.SOURCE.fetch(2026, 4)
 
-    assert len(requested) == 6
-    assert all("Segment=886" in url for url in requested)
+    assert len(sent) == 6
+    assert all("Segment=886" in request["url"] for request in sent)
+    assert all(request["headers"] == {"User-Agent": USER_AGENT} for request in sent)
+    assert clock.sleeps == [60] * 5
     assert len(rows) == 228
 
 
 def test_sharks_fetch_needs_the_season_segment_offset():
     with pytest.raises(ValueError, match="season 2027"):
         fantasysharks.SOURCE.fetch(2027, 1)
+
+
+# Requests
+
+
+def test_get_identifies_the_pipeline_and_times_out(monkeypatch, clock):
+    sent = serve(monkeypatch, lambda url: "")
+
+    base.get("https://a.example/page")
+
+    assert sent == [{"url": "https://a.example/page", "headers": {"User-Agent": USER_AGENT}, "timeout": TIMEOUT_S}]
+
+
+def test_get_merges_extra_headers(monkeypatch, clock):
+    sent = serve(monkeypatch, lambda url: "")
+
+    base.get("https://a.example/page", headers={"Accept": "application/json"})
+
+    assert sent[0]["headers"] == {"User-Agent": USER_AGENT, "Accept": "application/json"}
+
+
+def test_get_waits_out_the_spacing_before_the_next_request_to_a_host(monkeypatch, clock, capsys):
+    serve(monkeypatch, lambda url: "")
+
+    base.get("https://a.example/1")
+    assert clock.sleeps == []
+
+    clock.now += 1.0
+    base.get("https://a.example/2")
+
+    assert clock.sleeps == [REQUEST_SPACING_S - 1.0]
+    assert capsys.readouterr().out == "  [fetch] a.example: waiting 1s before the next request\n"
+
+
+def test_get_does_not_wait_before_a_request_to_another_host(monkeypatch, clock):
+    serve(monkeypatch, lambda url: "")
+
+    base.get("https://a.example/page")
+    base.get("https://b.example/page")
+
+    assert clock.sleeps == []
+
+
+def test_get_raises_on_a_bad_status(monkeypatch, clock):
+    def refuse():
+        raise requests.HTTPError("403 Client Error: Forbidden")
+
+    monkeypatch.setattr(base.requests, "get", lambda url, headers, timeout: SimpleNamespace(raise_for_status=refuse))
+
+    with pytest.raises(requests.HTTPError, match="403"):
+        base.get("https://a.example/page")
+
+
+def test_sleeper_fetch_goes_through_get(monkeypatch, clock):
+    payload = (FIXTURES / "sleeper" / "projections_2026_w4.json").read_text(encoding="utf-8")
+    sent = serve(monkeypatch, lambda url: payload)
+
+    rows = sleeper.SOURCE.fetch(2026, 4)
+
+    assert sent[0]["url"] == sleeper.URL.format(season=2026, week=4)
+    assert sent[0]["headers"] == {"User-Agent": USER_AGENT}
+    assert len(rows) == 188
+
+
+def test_espn_fetch_sends_the_filter_with_the_pipelines_user_agent(monkeypatch, clock):
+    payload = (FIXTURES / "espn" / "projections_2026_w4.json").read_text(encoding="utf-8")
+    sent = serve(monkeypatch, lambda url: payload)
+
+    rows = espn.SOURCE.fetch(2026, 4)
+
+    assert sent[0]["url"] == espn.URL.format(season=2026, week=4)
+    assert sent[0]["headers"] == {"User-Agent": USER_AGENT, "x-fantasy-filter": json.dumps(espn.player_filter(4))}
+    assert len(rows) == 130
+
+
+def test_firstdown_fetch_goes_through_get(monkeypatch, clock):
+    html = (FIXTURES / "firstdown" / "rankings.html").read_text(encoding="utf-8")
+    sent = serve(monkeypatch, lambda url: html)
+
+    rows = firstdown.SOURCE.fetch(2026, 3)
+
+    assert sent == [{"url": firstdown.URL, "headers": {"User-Agent": USER_AGENT}, "timeout": TIMEOUT_S}]
+    assert len(rows) == 197

@@ -39,7 +39,7 @@ DEF_NAMES: dict[str, tuple[str, str]] = {
 
 CANONICAL_TEAMS = frozenset(DEF_NAMES)
 
-# FantasySharks (GBP, KCC, ...), FantasyPros (JAC), ESPN (WSH) and older data (OAK, SD, STL).
+# FantasySharks (GBP, KCC, ...), FanDuel (JAC), ESPN (WSH) and older data (OAK, SD, STL).
 ALIASES = {
     "ARZ": "ARI",
     "BLT": "BAL",
