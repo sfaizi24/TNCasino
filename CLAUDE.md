@@ -59,7 +59,8 @@ Ten Jupyter notebooks in `backend/notebooks/`, run sequentially. See `docs/archi
 - **`simulation_totals` is append-only** — the pipeline's publish step stores each published run's score matrix there before the staging-and-swap and never replaces the table; every other published table is swapped whole.
 - **The betting window comes from the runs, the lock is the kill switch** — `app/windows.py` opens betting while the latest published run's `window_closes_at` is in the future and pauses it after; the next publish reopens it. The admin's `lock_time` is the hard close: the lazy lock flips `is_locked` for good, so set it at the week's last kickoff (Sunday's first game), never Thursday's.
 - **Every requirement is pinned exactly** — `requirements.txt` names the version each package resolved to on 2026-09-29. An upgrade is an edit to that file, tested locally before it reaches CI; `pip install -r requirements.txt` on a machine with older packages upgrades them.
-- **Tests**: `python -m pytest` — 826 tests (app tests on in-memory SQLite, pipeline tests on scratch SQLite files), about 40 s. CI runs lint + tests on every push/PR.
+- **Cash-out exists only after a reprice** — a pending single can be removed for a full refund while its own run is still the latest; once a newer run has repriced it, `app/cashout.py` offers 95% of fair value from that run instead, and the ledger posts only the profit or loss to the week the cash-out is taken.
+- **Tests**: `python -m pytest` — 877 tests (app tests on in-memory SQLite, pipeline tests on scratch SQLite files), about 40 s. CI runs lint + tests on every push/PR.
 - **`.env` required** — needs `SECRET_KEY`, `DATABASE_URL`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `ADMIN_EMAILS`. Local dev also needs `OAUTHLIB_INSECURE_TRANSPORT=1` and `OAUTHLIB_RELAX_TOKEN_SCOPE=1`. Prod sets `ANALYTICS_IMAGES_DIR=/var/lib/tncasino/analytics` so the analytics charts live outside the git working tree; local dev falls back to `backend/data/images/`.
 
 ## Code Quality Philosophy
@@ -86,9 +87,10 @@ app/                  — Flask application package
   __init__.py         — App factory, config, extensions, blueprint registration. Also exposes `app` for gunicorn.
   __main__.py         — `python -m app` entry point for local dev
   auth.py             — Google OAuth, login_manager, admin email allowlist
+  cashout.py          — What a pending bet is worth now: Offer, NoOffer, offer_for, offers_for
   database.py         — SQLAlchemy instance
   extensions.py       — Shared Flask extensions (CSRFProtect)
-  ledger.py           — The only code that moves money: open_week, place, remove, settle, push, void
+  ledger.py           — The only code that moves money: open_week, place, remove, settle, push, void, cash_out
   markets.py          — Market keys and their quotes: parse_key, key_for_row, find_quote, price_from_odds, potential_win
   migrations.py       — Schema migrations (run on startup)
   models.py           — SQLAlchemy models (User, Bet, BetLeg, WeeklyStats, BettingPeriod)
@@ -99,7 +101,7 @@ app/                  — Flask application package
     pages.py          — Public pages: /, /about, /analytics, static files
     account.py        — User account: /account, /account/update-profile
     odds.py           — Odds API: /api/matchups, /api/team_performance, etc. (12 routes)
-    betting.py        — Betting: /betting, /leaderboard, /api/place_bet, /api/betting_window, etc. (7 routes)
+    betting.py        — Betting: /betting, /leaderboard, /api/place_bet, /api/betting_window, /api/cash_out, etc. (8 routes)
     admin.py          — Admin: /admin, /admin/pipeline, /api/admin/* (12 routes)
 
 scripts/              — Standalone CLI tools (invoked as `python -m scripts.<name>`)

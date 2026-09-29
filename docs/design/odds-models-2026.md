@@ -460,6 +460,19 @@ a window is open, with the bet storing its run, price, chance and legs.
 **Runner-up.** Futures-only cash-out first, at the same 95%: weekly Wednesday runs already move
 futures, so it needs no rerun. What would change my mind: the Thursday rerun slipping past week 6.
 
+**Implementation notes (B9, 2026-09-29).** `app/cashout.py` prices a pending single at the bet's
+own line: a weekly bet from the week's latest run's score matrix in `simulation_totals` through
+the win rule in `pipeline/markets.py`, a futures bet from the latest futures quote once the week's
+simulation run has standings through at least the previous week. There is no offer while the
+bet's own run is still the latest (removal is the way out), outside an open window, or when the
+chance is 0 or 1, the selection is gone from the market or the roster is missing from the matrix.
+`ledger.cash_out` closes the bet with status `cashed_out` (legs the same), pays the offer and
+posts only offer minus stake to the week the cash-out is taken, so the returned stake never
+reaches a leaderboard. The account page's weekly P&L now shows `settled_pnl`, the figure the
+leaderboard ranks by. The bet keeps `cash_out_amount`, `cash_out_run_id` and `cashed_out_at` for
+the week-6 margin review. §3.7's own-line-beside-today's on each chip is not built. Built by a
+Claude Code cloud session from `docs/briefs/b9-cash-out.md`; merged 2026-09-29 (52aebf2), 877 tests.
+
 ---
 
 ## 3. Thursday rerun and windows
@@ -1081,7 +1094,9 @@ first, because every later package stores or reads it.
 - **B8.** The parlay slip, the refusal rules with a refusal log, the per-worker matrix cache,
   parlay settlement. Driving risk: the page and the cache.
 - **B9.** Offers from the latest run for futures and weekly bets, and the week the profit posts to.
-  Driving risk: futures and weekly bets reach their chances by different paths.
+  Driving risk: futures and weekly bets reach their chances by different paths. Shipped
+  2026-09-29 (merge 52aebf2); a playoffs-only rerun ends removal on that week's futures bets
+  (doc 08), so rerun from `simulate` until the playoffs step stamps the simulation run it read.
 - **B10.** Matchup totals, head to head, spreads, alternate lines, last place, top 3 or 4, exact
   seed. Head to head and half-point spreads need only B1; matchup totals and the futures need B4;
   alternate lines need B3.
