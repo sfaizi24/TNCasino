@@ -64,18 +64,20 @@ offer      = round(0.95 × fair value, 2)
 |---|---|---|
 | Latest run | `betting_window(bet.week).run_id` | the `run_id` of the market's latest futures quote |
 | Window that must be open | the bet's week | the current week |
-| `p_win` | the share of that run's `simulation_totals` sims the bet wins, through the market's win rule, at the leg's own line and selection | the quote's `probability` |
+| `p_win` | the share of that run's `simulation_totals` sims in which every leg wins, through each leg's market's win rule, at the leg's own line and selection | the quote's `probability` |
+
+A single is the one-leg case, so a parlay's offer is the joint chance of its legs in the latest run times its payout, the same rule: $100 on a two-leg parlay at +186 pays $286, and a rerun in which both legs win in 4 of 10 sims makes it worth $114.40 and offers $108.68. A parlay never holds a futures leg today; futures legs will follow the same path once their per-simulation standings are published.
 
 The 5% margin covers news the latest run has not seen and keeps holding a bet the better choice when the odds have barely moved. The latest run must differ from the bet's `run_id`, so a bet is either removable or offered, never both. `my_bets` carries each bet's offer as `cash_out_offer`, and `POST /api/cash_out/<id>` sends back the offer the page showed. The route recomputes it and refuses without moving money when:
 
 | Refusal | When |
 |---|---|
 | `"Bet not found"` | the bet is not the user's or not pending, or another request closed it first |
-| `"No offer for this bet"` | the bet has no legs (a legacy bet) or more than one (a parlay), or its market key fails to parse |
+| `"No offer for this bet"` | the bet has no legs (a legacy bet), or a leg's market key fails to parse |
 | `"Betting is paused until the odds update"`, `"Betting is closed for week 4"` | the window is not open; the admin's lock reads as closed |
 | `"Odds have not changed since this bet was placed; remove it instead"` | the latest run is the bet's own |
 | `"No offer until the next run: the standings are behind"` | futures: the run's `standings_through_week` is below the current week − 1 |
-| `"No offer: the latest run cannot price this bet"` | the bet wins in every sim or in none, the latest run has no stored matrix or no column for a roster in the key, the futures market or selection is gone from the latest run, or the offer rounds below one cent |
+| `"No offer: the latest run cannot price this bet"` | the bet (every leg of a parlay together) wins in every sim or in none, the latest run has no stored matrix or no column for a roster in the key, the futures market or selection is gone from the latest run, or the offer rounds below one cent |
 | `"Offer has changed"` | the recomputed offer differs from the one sent at two decimals; the reply adds the new `offer` |
 
 Only the profit or loss of a cash-out, `offer − amount`, reaches `total_pnl` and a leaderboard, and it posts to the week the cash-out is taken, not the bet's week, so cashing out a week-4 futures bet in week 9 leaves week 4's leaderboard as it was. The bet keeps its row with status `cashed_out`, the result, and the offer, run and time it was taken at, which is the log the margin is reviewed against. The account page lists it as Cashed out with its signed result. The leaderboard counts it as placed: the popular-bet counts include it with neither a win nor a loss and show Cashed out when every bet in the group was, and the best- and worst-bet lists, which read only won and lost bets, leave it out.
@@ -135,7 +137,7 @@ On the seeded test run, roster 1 beats roster 2 in 11 of 20 sims and tops its 11
 
 An `"Odds have changed"` reply adds the window's `run_id`, so the page reloads the tab and quotes again. A quote refused as `same_market`, `impossible` or `redundant` writes one `parlay_refusals` row ([04](04-data-model.md#postgresql-production)): the user, week and run, the legs as the page sent them in JSON, and the rule. Malformed legs, moved odds and missing prices are not logged, and neither are refusals at placement, which follows a quote. Nothing reads the log yet; it is for the owner's SQL after weeks 5 and 6, to decide whether scorer legs stay in parlays ([design §1.4](../design/odds-models-2026.md#14-which-legs-belong)).
 
-A placed parlay is a `bets` row with `bet_type` `parlay`, the joint `odds`, `price` and `probability`, the run's `run_id` and the `potential_win` of the joint price, and one `bet_legs` row per leg holding the leg's own single price, chance and line. Its `description` joins the legs' single descriptions with ` + `: `Alice A vs Bob B: Alice A -150 + Alice A O/U 110.50: Over`. It is removable while every leg's market still shows the bet's run. It has no cash-out: `cashout.py` offers nothing on a bet with more than one leg, so a parlay is removed or rides to settlement ([Settlement](#settlement)). The leaderboard counts it like any bet, except the popular-bet groups, which are the four single markets.
+A placed parlay is a `bets` row with `bet_type` `parlay`, the joint `odds`, `price` and `probability`, the run's `run_id` and the `potential_win` of the joint price, and one `bet_legs` row per leg holding the leg's own single price, chance and line. Its `description` joins the legs' single descriptions with ` + `: `Alice A vs Bob B: Alice A -150 + Alice A O/U 110.50: Over`. It is removable while every leg's market still shows the bet's run; once a newer run has moved the odds it is offered a cash-out at the joint chance of its legs in that run, like a single ([Cash-out](#cash-out)), or rides to settlement ([Settlement](#settlement)). The leaderboard counts it like any bet, except the popular-bet groups, which are the four single markets.
 
 ### Payout math
 

@@ -920,6 +920,45 @@ def test_a_parlay_stays_once_one_legs_market_has_a_newer_run(logged_in_client, u
     assert db.session.get(Bet, bet_id).status == "pending"
 
 
+# The rerun's 10 sims: roster 1 wins and tops 110.5 in the first four, so the parlay placed at 7 of 20
+# sims (+186, paying $286 on $100) is worth $114.40 there and offered $108.68.
+PARLAY_RERUN_SCORES = np.array([[120.0, 100.0]] * 4 + [[105.0, 100.0]] * 3 + [[115.0, 125.0]] * 2 + [[100.0, 110.0]])
+
+
+def test_a_parlay_is_cashed_out_at_the_joint_chance_of_the_rerun(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    bet_id = place_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])["bet_id"]
+    publish_a_rerun(RERUN_ID, PARLAY_RERUN_SCORES)
+
+    reply = cash_out(logged_in_client, bet_id, offer=108.68)
+
+    assert reply == {"success": True, "new_balance": pytest.approx(1008.68), "cash_out_amount": 108.68}
+    db.session.refresh(user)
+    assert (user.account_balance, user.total_pnl) == pytest.approx((1008.68, 8.68))
+    bet = db.session.get(Bet, bet_id)
+    assert (bet.status, bet.result, bet.cash_out_amount, bet.cash_out_run_id) == (
+        "cashed_out",
+        8.68,
+        108.68,
+        RERUN_ID,
+    )
+    assert bet.settled_at == bet.cashed_out_at
+    assert [(leg.status, leg.settled_at) for leg in bet.legs] == [("cashed_out", bet.cashed_out_at)] * 2
+    assert weekly_money(user, 10) == pytest.approx((1000.0, 1008.68, 8.68, 0.0, 8.68, 1, 0))
+
+
+def test_my_bets_offers_a_parlay_a_cash_out_once_a_rerun_moves_its_odds(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    place_parlay(logged_in_client, [ROSTER_1_WINS, ROSTER_1_OVER])
+    publish_a_rerun(RERUN_ID, PARLAY_RERUN_SCORES)
+
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+
+    assert (listed["bet_type"], listed["cash_out_offer"], listed["removable"]) == ("parlay", 108.68, False)
+
+
 def test_a_one_leg_list_is_a_single(logged_in_client, user, betting_period, seeded_analytics):
     reply = place_parlay(logged_in_client, [ROSTER_1_OVER])
 

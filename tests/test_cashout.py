@@ -56,6 +56,14 @@ def _bet(user, market, selection, line=None, price=100, amount=100.0, run_id=OLD
     return bet
 
 
+def _parlay(user, legs, price, probability, run_id=RUN_ID, amount=100.0):
+    bet = _bet(user, legs[0].market, legs[0].selection, price=price, amount=amount, run_id=run_id, legs=legs)
+    bet.bet_type = "parlay"
+    bet.probability = probability
+    db.session.commit()
+    return bet
+
+
 def _add_newer_run(totals=None):
     """Publish a week 10 run after the seeded one, with its score matrix when one is given."""
     db.session.execute(
@@ -194,13 +202,6 @@ def test_no_offer_for_a_legacy_bet(user):
     assert _refusal(bet) == NO_OFFER
 
 
-def test_no_offer_for_a_parlay(user):
-    legs = [_leg("2026-w10-moneyline-1v2", "1"), _leg("2026-w10-highest_scorer", "1")]
-    bet = _bet(user, "2026-w10-moneyline-1v2", "1", legs=legs)
-
-    assert _refusal(bet) == NO_OFFER
-
-
 def test_no_offer_when_the_market_key_does_not_parse(user):
     bet = _bet(user, "2026-w10-moneyline-1v2", "1")
     bet.legs[0].market = "2026-w10-parlay"
@@ -250,6 +251,77 @@ def test_no_offer_under_a_cent(user):
     assert _refusal(bet) == CANNOT_PRICE
 
 
+# Parlays placed on the seeded run, where roster 1 wins and tops 110.5 in 7 of 20 sims (+186), and
+# roster 2 also tops 95 in 5 of those (+300).
+ROSTER_1_WINS = ("2026-w10-moneyline-1v2", "1", None, -150)
+ROSTER_1_OVER = ("2026-w10-team_total-1", "over", 110.5, -120)
+ROSTER_2_OVER = ("2026-w10-team_total-2", "over", 95.0, 105)
+
+# The newer run's 10 sims. Roster 1 wins and tops 110.5 in the first four, with roster 2 over 95 in
+# three of them; it wins under its line in three, and loses in the last three.
+NEWER_TOTALS = np.array(
+    [
+        [120.0, 100.0],
+        [120.0, 100.0],
+        [120.0, 100.0],
+        [125.0, 90.0],
+        [105.0, 100.0],
+        [105.0, 100.0],
+        [105.0, 100.0],
+        [115.0, 125.0],
+        [115.0, 125.0],
+        [100.0, 110.0],
+    ]
+)
+
+
+def _legs(*picks):
+    return [_leg(market, selection, line, price) for market, selection, line, price in picks]
+
+
+def test_a_parlay_is_offered_at_the_joint_chance_of_its_legs_in_the_newer_run(user):
+    # $100 at +186 pays $286; in the newer run roster 1 wins and tops 110.5 in 4 of 10 sims.
+    bet = _parlay(user, _legs(ROSTER_1_WINS, ROSTER_1_OVER), price=186, probability=7 / 20)
+    _add_newer_run(NEWER_TOTALS)
+
+    offer = offer_for(bet)
+
+    assert offer == Offer(bet.id, 108.68, offer.fair_value, 0.4, NEWER_RUN)
+    assert round(offer.fair_value, 2) == 114.4
+
+
+def test_a_three_leg_parlay_is_offered_at_the_sims_where_all_three_win(user):
+    # $50 at +300 pays $200; in the newer run all three legs win in 3 of 10 sims.
+    legs = _legs(ROSTER_1_WINS, ROSTER_1_OVER, ROSTER_2_OVER)
+    bet = _parlay(user, legs, price=300, probability=5 / 20, amount=50.0)
+    _add_newer_run(NEWER_TOTALS)
+
+    offer = offer_for(bet)
+
+    assert offer == Offer(bet.id, 57.0, offer.fair_value, 0.3, NEWER_RUN)
+    assert round(offer.fair_value, 2) == 60.0
+
+
+def test_no_offer_for_a_parlay_whose_legs_cannot_all_win_in_the_newer_run(user):
+    # Roster 1 wins only under its line, and tops it only in a loss.
+    bet = _parlay(user, _legs(ROSTER_1_WINS, ROSTER_1_OVER), price=186, probability=7 / 20)
+    _add_newer_run(np.array([[105.0, 100.0]] * 5 + [[115.0, 120.0]] * 5))
+
+    assert _refusal(bet) == CANNOT_PRICE
+
+
+def test_no_offer_for_a_parlay_while_its_run_is_the_latest(user):
+    bet = _parlay(user, _legs(ROSTER_1_WINS, ROSTER_1_OVER), price=186, probability=7 / 20)
+
+    assert _refusal(bet) == UNCHANGED
+
+
+def test_no_offer_for_a_parlay_while_betting_is_paused(user):
+    bet = _parlay(user, _legs(ROSTER_1_WINS, ROSTER_1_OVER), price=186, probability=7 / 20, run_id=OLDER_RUN)
+
+    assert _refusal(bet, now=datetime.fromisoformat(WINDOW_CLOSES_AT)) == "Betting is paused until the odds update"
+
+
 def test_offers_for_reads_a_weeks_window_and_matrix_once(user, monkeypatch):
     decode_totals = win_rules.decode_totals
     betting_window = cashout.betting_window
@@ -264,26 +336,21 @@ def test_offers_for_reads_a_weeks_window_and_matrix_once(user, monkeypatch):
 
     monkeypatch.setattr(win_rules, "decode_totals", counted(decode_totals, "decode"))
     monkeypatch.setattr(cashout, "betting_window", counted(betting_window, "window"))
-    first = _bet(user, "2026-w10-moneyline-1v2", "1")
-    second = _bet(user, "2026-w10-highest_scorer", "2")
+    single = _bet(user, "2026-w10-highest_scorer", "2")
+    parlay = _parlay(user, _legs(ROSTER_1_WINS, ROSTER_1_OVER), price=186, probability=0.5, run_id=OLDER_RUN)
 
-    offers = offers_for([first, second])
+    offers = offers_for([single, parlay])
 
-    assert offers.keys() == {first.id, second.id}
+    assert offers.keys() == {single.id, parlay.id}
+    assert offers[parlay.id].probability == pytest.approx(7 / 20)
     assert calls == ["window", "decode"]
 
 
 def test_offers_for_leaves_out_the_bets_without_an_offer(user):
     priced = _bet(user, "2026-w10-moneyline-1v2", "1")
     legacy = _bet(user, "2026-w10-highest_scorer", "1", run_id=None, legs=[])
-    parlay = _bet(
-        user,
-        "2026-w10-moneyline-1v2",
-        "2",
-        legs=[_leg("2026-w10-moneyline-1v2", "2"), _leg("2026-w10-lowest_scorer", "2")],
-    )
     unchanged = _bet(user, "2026-w10-lowest_scorer", "2", run_id=RUN_ID)
 
-    offers = offers_for([priced, legacy, parlay, unchanged])
+    offers = offers_for([priced, legacy, unchanged])
 
     assert offers == {priced.id: offer_for(priced)}
