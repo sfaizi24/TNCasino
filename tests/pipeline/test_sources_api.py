@@ -42,43 +42,6 @@ def rows_per_position(rows: list[Projection]) -> dict[str, int]:
     return dict(Counter(row.position for row in rows))
 
 
-class Clock:
-    """A fake for base.time's clock: time passes only when something sleeps, and each sleep is recorded."""
-
-    def __init__(self):
-        self.now = 1000.0
-        self.sleeps = []
-
-    def monotonic(self) -> float:
-        return self.now
-
-    def sleep(self, seconds: float):
-        self.sleeps.append(seconds)
-        self.now += seconds
-
-
-@pytest.fixture
-def clock(monkeypatch):
-    clock = Clock()
-    monkeypatch.setattr(base.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(base.time, "sleep", clock.sleep)
-    monkeypatch.setattr(base, "_last_request_at", {})
-    return clock
-
-
-def serve(monkeypatch, body_for_url) -> list[dict]:
-    """Answers base.get's requests with body_for_url(url) and returns the list each request is recorded in."""
-    sent = []
-
-    def fake_get(url, headers, timeout):
-        sent.append({"url": url, "headers": headers, "timeout": timeout})
-        body = body_for_url(url)
-        return SimpleNamespace(text=body, json=lambda: json.loads(body), raise_for_status=lambda: None)
-
-    monkeypatch.setattr(base.requests, "get", fake_get)
-    return sent
-
-
 @pytest.fixture(scope="module")
 def sleeper_rows():
     return sleeper.parse(load_json("sleeper/projections_2026_w4.json"), 2026, 4)
@@ -258,14 +221,14 @@ def test_sharks_page_showing_no_week_raises(sharks_pages):
         fantasysharks.parse({"K": html}, 2026, 4)
 
 
-def test_sharks_fetch_requests_the_five_pages_a_crawl_delay_apart(monkeypatch, clock, sharks_pages):
+def test_sharks_fetch_requests_the_five_pages_a_crawl_delay_apart(serve, clock, sharks_pages):
     position_by_code = {code: position for position, (code, _) in fantasysharks.PAGES.items()}
 
     def page_for(url):
         code = int(re.search(r"Position=(\d+)", url).group(1))
         return sharks_pages[position_by_code[code]]
 
-    sent = serve(monkeypatch, page_for)
+    sent = serve(page_for)
 
     rows = fantasysharks.SOURCE.fetch(2026, 4)
 
@@ -285,24 +248,24 @@ def test_sharks_fetch_needs_the_season_segment_offset():
 # Requests
 
 
-def test_get_identifies_the_pipeline_and_times_out(monkeypatch, clock):
-    sent = serve(monkeypatch, lambda url: "")
+def test_get_identifies_the_pipeline_and_times_out(serve, clock):
+    sent = serve(lambda url: "")
 
     base.get("https://a.example/page")
 
     assert sent == [{"url": "https://a.example/page", "headers": {"User-Agent": USER_AGENT}, "timeout": TIMEOUT_S}]
 
 
-def test_get_merges_extra_headers(monkeypatch, clock):
-    sent = serve(monkeypatch, lambda url: "")
+def test_get_merges_extra_headers(serve, clock):
+    sent = serve(lambda url: "")
 
     base.get("https://a.example/page", headers={"Accept": "application/json"})
 
     assert sent[0]["headers"] == {"User-Agent": USER_AGENT, "Accept": "application/json"}
 
 
-def test_get_waits_out_the_spacing_before_the_next_request_to_a_host(monkeypatch, clock, capsys):
-    serve(monkeypatch, lambda url: "")
+def test_get_waits_out_the_spacing_before_the_next_request_to_a_host(serve, clock, capsys):
+    serve(lambda url: "")
 
     base.get("https://a.example/1")
     assert clock.sleeps == []
@@ -314,8 +277,8 @@ def test_get_waits_out_the_spacing_before_the_next_request_to_a_host(monkeypatch
     assert capsys.readouterr().out == "  [fetch] a.example: waiting 1s before the next request\n"
 
 
-def test_get_does_not_wait_before_a_request_to_another_host(monkeypatch, clock):
-    serve(monkeypatch, lambda url: "")
+def test_get_does_not_wait_before_a_request_to_another_host(serve, clock):
+    serve(lambda url: "")
 
     base.get("https://a.example/page")
     base.get("https://b.example/page")
@@ -333,9 +296,9 @@ def test_get_raises_on_a_bad_status(monkeypatch, clock):
         base.get("https://a.example/page")
 
 
-def test_sleeper_fetch_goes_through_get(monkeypatch, clock):
+def test_sleeper_fetch_goes_through_get(serve, clock):
     payload = (FIXTURES / "sleeper" / "projections_2026_w4.json").read_text(encoding="utf-8")
-    sent = serve(monkeypatch, lambda url: payload)
+    sent = serve(lambda url: payload)
 
     rows = sleeper.SOURCE.fetch(2026, 4)
 
@@ -344,9 +307,9 @@ def test_sleeper_fetch_goes_through_get(monkeypatch, clock):
     assert len(rows) == 188
 
 
-def test_espn_fetch_sends_the_filter_with_the_pipelines_user_agent(monkeypatch, clock):
+def test_espn_fetch_sends_the_filter_with_the_pipelines_user_agent(serve, clock):
     payload = (FIXTURES / "espn" / "projections_2026_w4.json").read_text(encoding="utf-8")
-    sent = serve(monkeypatch, lambda url: payload)
+    sent = serve(lambda url: payload)
 
     rows = espn.SOURCE.fetch(2026, 4)
 
@@ -355,9 +318,9 @@ def test_espn_fetch_sends_the_filter_with_the_pipelines_user_agent(monkeypatch, 
     assert len(rows) == 130
 
 
-def test_firstdown_fetch_goes_through_get(monkeypatch, clock):
+def test_firstdown_fetch_goes_through_get(serve, clock):
     html = (FIXTURES / "firstdown" / "rankings.html").read_text(encoding="utf-8")
-    sent = serve(monkeypatch, lambda url: html)
+    sent = serve(lambda url: html)
 
     rows = firstdown.SOURCE.fetch(2026, 3)
 

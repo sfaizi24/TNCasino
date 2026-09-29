@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from bs4 import BeautifulSoup
 
-from pipeline.sources import base, fanduel, fftoday, firstdown, load_source
+from pipeline.sources import fanduel, fftoday, firstdown, load_source
 from pipeline.sources.base import POSITIONS, USER_AGENT, Projection
 from pipeline.sources.teams import CANONICAL_TEAMS
 
@@ -280,43 +280,7 @@ def test_fftoday_skips_players_projected_for_nothing(fftoday_pages):
     assert ("Jahmyr", "Gibbs") not in {(row.first_name, row.last_name) for row in rows}
 
 
-class Clock:
-    """A fake for base.time's clock: time passes only when something sleeps, and each sleep is recorded."""
-
-    def __init__(self):
-        self.now = 1000.0
-        self.sleeps = []
-
-    def monotonic(self) -> float:
-        return self.now
-
-    def sleep(self, seconds: float):
-        self.sleeps.append(seconds)
-        self.now += seconds
-
-
-@pytest.fixture
-def clock(monkeypatch):
-    clock = Clock()
-    monkeypatch.setattr(base.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(base.time, "sleep", clock.sleep)
-    monkeypatch.setattr(base, "_last_request_at", {})
-    return clock
-
-
-def serve(monkeypatch, body_for_url) -> list[dict]:
-    """Answers base.get's requests with body_for_url(url) and returns the list each request is recorded in."""
-    sent = []
-
-    def fake_get(url, headers, timeout):
-        sent.append({"url": url, "headers": headers, "timeout": timeout})
-        return SimpleNamespace(text=body_for_url(url), raise_for_status=lambda: None)
-
-    monkeypatch.setattr(base.requests, "get", fake_get)
-    return sent
-
-
-def test_fftoday_fetch_follows_each_next_page_link_five_seconds_apart(monkeypatch, clock, fftoday_pages):
+def test_fftoday_fetch_follows_each_next_page_link_five_seconds_apart(serve, clock, fftoday_pages):
     position_by_code = {code: position for position, code in fftoday.POSITION_CODES.items()}
 
     def page_for(url):
@@ -324,7 +288,7 @@ def test_fftoday_fetch_follows_each_next_page_link_five_seconds_apart(monkeypatc
         page_index = 1 if "cur_page=1" in url else 0
         return fftoday_pages[position][page_index]
 
-    sent = serve(monkeypatch, page_for)
+    sent = serve(page_for)
 
     rows = fftoday.SOURCE.fetch(2026, 3)
 
