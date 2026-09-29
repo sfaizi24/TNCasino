@@ -14,11 +14,11 @@ flowchart LR
     end
     subgraph PG["Production PostgreSQL"]
         APPT[App tables<br/>users, bets, bet_legs,<br/>weekly_stats, betting_periods,<br/>parlay_refusals]
-        ANT[Analytics tables<br/>13 published tables]
+        ANT[Analytics tables<br/>16 published tables]
     end
-    L -- "4 tables (3 renamed)" --> ANT
+    L -- "5 tables (4 renamed)" --> ANT
     P -- team_lineups --> ANT
-    O -- 8 tables --> ANT
+    O -- 10 tables --> ANT
     M -. never published .-> X[ ]
     style X fill:none,stroke:none
 ```
@@ -29,7 +29,7 @@ Written by the `league` step, which mirrors Sleeper and the ESPN schedule, and b
 
 | Table | Key | Rows | Contents |
 |---|---|---|---|
-| `leagues` | league_id* | 1 | League settings; JSON blobs for roster positions and scoring |
+| `leagues` | league_id* | 1 | League settings; JSON blobs for roster positions, scoring and `settings` (Sleeper's league settings: `num_teams`, `playoff_teams`, `playoff_week_start`, `playoff_seed_type`, `playoff_round_type`, …). Published as `sleeper_leagues`. |
 | `users` | user_id* | 12 | Sleeper users: `username`, `display_name` (the **owner** key used everywhere else) |
 | `rosters` | (roster_id*, league_id*) | 22 | Team per league: `owner_id` → users, `team_name`, record, points, JSON player lists. Holds rows from more than one league ID. |
 | `matchups` | matchup_id* (`{league}_{week}_{roster}`) | 192 | One row per team per week: `week`, `roster_id`, `matchup_id_number` (the two teams sharing it play each other), `points` |
@@ -64,10 +64,10 @@ Written by the `simulate`, `odds` and `playoffs` steps (notebooks 07 and 09 in 2
 | `betting_odds_highest_scorer`, `_lowest_scorer` | (run_id*, week*, team_id*) | odds | `count`, `probability`, `odds` |
 | `team_distribution_curves` | (run_id*, week*, owner*) | odds | JSON arrays `x_values`, `density_values`, `cdf_values`; `mean`, `p10`, `p50`, `p90`, `n_sims` |
 | `team_matchup_margin_curves` | (run_id*, week*, team_owner*, opponent_owner*) | odds | Win/loss/tie probability, JSON `left_*`/`right_*` tail arrays |
-| `betting_odds_first_place`, `_make_playoffs` | id* (autoincrement), unique on (run_id, week, team_id) | playoffs | `run_id`, `week`, `team_id`, `owner`, `probability`, `american_odds`, `season` |
+| `betting_odds_first_place`, `_make_playoffs`, `_last_place`, `_champion` | id* (autoincrement), unique on (run_id, week, team_id) | playoffs | `run_id`, `week`, `team_id`, `team_name`, `owner`, `probability`, `american_odds`, `created_at`, `season`; the four tables have the same columns |
 | `standings_probability_matrix` | id*, unique on (run_id, week, team_id, position) | playoffs | P(team finishes in each position) |
 
-The `odds` step's tables carry the `run_id` of the simulation they were priced from. Rerunning `odds` replaces that run's rows, and each new `simulate` run adds a set beside the old ones; `publish` uploads only each week's latest run (newest `created_at`, then highest `run_id`). The 2025 curves had no run id, so the migration gave them their week's odds run. An `odds.db` whose `simulation_runs` predates `n_locked`, `window_closes_at` and `standings_through_week` gains them, at their defaults for the runs already recorded, the next time `simulate` records a run.
+The `odds` and `playoffs` steps' tables carry the `run_id` of the simulation they were priced from. The `playoffs` tables carried the pipeline run's id until B10b; since then a rerun of the `playoffs` step alone replaces the week's rows under the same simulation run id, so the week's futures keep a run that `simulation_runs` knows. Rerunning `odds` replaces that run's rows, and each new `simulate` run adds a set beside the old ones; `publish` uploads only each week's latest run (newest `created_at`, then highest `run_id`). The 2025 curves had no run id, so the migration gave them their week's odds run. An `odds.db` whose `simulation_runs` predates `n_locked`, `window_closes_at` and `standings_through_week` gains them, at their defaults for the runs already recorded, the next time `simulate` records a run.
 
 ## montecarlo.db — raw simulations (2025 only)
 
@@ -199,9 +199,10 @@ The analytics tables have **no foreign keys to the app tables or each other**. T
 
 | SQLite source | Postgres table |
 |---|---|
-| `odds.db` `betting_odds_matchup_ml`, `_team_ou`, `_highest_scorer`, `_lowest_scorer`, `_first_place`, `_make_playoffs` | same names |
+| `odds.db` `betting_odds_matchup_ml`, `_team_ou`, `_highest_scorer`, `_lowest_scorer`, `_first_place`, `_make_playoffs`, `_last_place`, `_champion` | same names |
 | `odds.db` `team_distribution_curves`, `team_matchup_margin_curves` | same names |
 | `projections.db` `team_lineups` | `team_lineups` |
+| `league.db` `leagues` | `sleeper_leagues` |
 | `league.db` `rosters` | `sleeper_rosters` |
 | `league.db` `users` | `sleeper_users` |
 | `league.db` `matchups` | `sleeper_matchups` |
@@ -225,7 +226,7 @@ sequenceDiagram
 
 Safety rails: refuses to target `users`, `bets`, `bet_legs`, `weekly_stats`, `betting_periods` or `parlay_refusals`. `--dry-run` still writes the staging tables to production to validate them, then drops them instead of swapping. Postgres column types come from pandas inference, so the analytics schema in prod is whatever `to_sql` produces (no primary keys or indexes).
 
-**The pipeline's `publish` step** (`pipeline/steps/publish.py`) stages, counts and swaps the same way, with the same refusals, but uploads the current season only and, of each table with a `run_id`, each week's latest run. Its `--dry-run` writes nothing. It replaces the 13 tables above and nine more:
+**The pipeline's `publish` step** (`pipeline/steps/publish.py`) stages, counts and swaps the same way, with the same refusals, but uploads the current season only and, of each table with a `run_id`, each week's latest run. Its `--dry-run` writes nothing. It replaces the 16 tables above and nine more:
 
 | SQLite source | Postgres table |
 |---|---|
@@ -234,7 +235,7 @@ Safety rails: refuses to target `users`, `bets`, `bet_legs`, `weekly_stats`, `be
 | `projections.db` `prediction_accuracy`, `team_accuracy` | same names |
 | `pipeline.db` `pipeline_runs`, `pipeline_steps`, `source_reviews` | same names |
 
-The matchup totals and the standings matrix are published for markets the app does not offer yet, and it reads neither. `pipeline_runs` and `pipeline_steps` keep every run of the season, because the dashboard lists them all.
+The matchup totals and the standings matrix are published for markets the app does not offer yet, and it reads neither. `sleeper_leagues` is the season's row of `leagues` with its columns as they are; the app reads `playoff_week_start`, `playoff_teams` and `num_teams` from its `settings` JSON. `pipeline_runs` and `pipeline_steps` keep every run of the season, because the dashboard lists them all.
 
 **`simulation_totals`** is the one table the step appends to instead of replacing. It holds the full score matrix of every run the step has published this season, so a bet can always be re-priced at the run it was placed at:
 

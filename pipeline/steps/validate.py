@@ -29,7 +29,12 @@ WEEKLY_ODDS_TABLES = [
 ]
 # The playoffs step's futures, which end when the playoffs start. A market is empty when every team is priced
 # outside its 1-99% band, so the standings matrix, written on every run, is what shows the step has run.
-FUTURES_TABLES = ["betting_odds_first_place", "betting_odds_make_playoffs"]
+FUTURES_TABLES = [
+    "betting_odds_first_place",
+    "betting_odds_make_playoffs",
+    "betting_odds_last_place",
+    "betting_odds_champion",
+]
 STANDINGS_TABLE = "standings_probability_matrix"
 RUN_TABLES = [*WEEKLY_ODDS_TABLES, *FUTURES_TABLES, STANDINGS_TABLE]
 SCORER_TABLES = ["betting_odds_highest_scorer", "betting_odds_lowest_scorer"]
@@ -54,6 +59,8 @@ PROBABILITY_COLUMNS = {
     "betting_odds_lowest_scorer": ["probability"],
     "betting_odds_first_place": ["probability"],
     "betting_odds_make_playoffs": ["probability"],
+    "betting_odds_last_place": ["probability"],
+    "betting_odds_champion": ["probability"],
     "standings_probability_matrix": ["probability"],
     "team_matchup_margin_curves": ["team_win_prob", "opponent_win_prob", "tie_prob"],
 }
@@ -65,6 +72,8 @@ OWNER_COLUMNS = {
     "betting_odds_lowest_scorer": ["owner"],
     "betting_odds_first_place": ["owner"],
     "betting_odds_make_playoffs": ["owner"],
+    "betting_odds_last_place": ["owner"],
+    "betting_odds_champion": ["owner"],
     "team_distribution_curves": ["owner"],
     "team_matchup_margin_curves": ["team_owner", "opponent_owner"],
 }

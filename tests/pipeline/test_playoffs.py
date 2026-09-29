@@ -15,17 +15,34 @@ from pipeline.sources.verify import Check, SourceReport
 from pipeline.steps import clean, league, lineups, match, odds, playoffs, scrape, simulate, stats
 
 LEAGUE_ID = "L2026"
-WEEK = 11  # the playoffs start in week 14, so the step projects, picks and simulates weeks 12 and 13 itself
+# The playoffs start in week 14 with a one-round bracket, so the step projects, picks and simulates weeks 12 and 13
+# of the regular season and the final in week 14 itself.
+WEEK = 11
 N_SIMS = 400
 RUN_ID = "2026w11-20261117T140000"
+SIMULATION_RUN_ID = "2026w11-20261117T120000"
 ROSTER_POSITIONS = ["QB", "RB", "WR", "FLEX", "BN", "BN"]
-LEAGUE_SETTINGS = {"playoff_teams": 2, "playoff_week_start": 14, "waiver_type": 2, "waiver_budget": 100, "num_teams": 4}
+LEAGUE_SETTINGS = {
+    "playoff_teams": 2,
+    "playoff_week_start": 14,
+    "playoff_seed_type": 0,
+    "playoff_round_type": 0,
+    "waiver_type": 2,
+    "waiver_budget": 100,
+    "num_teams": 4,
+}
 NFL_TEAMS = {1: "KC", 2: "BUF", 3: "DAL", 4: "SEA"}
 # Every roster has these five players; the second running back starts only when a starter cannot.
 ROSTER_PLAYERS = [("qb", "QB", 20.0), ("rb", "RB", 14.0), ("wr", "WR", 15.0), ("wr2", "WR", 12.0), ("rb2", "RB", 6.0)]
 PAIRINGS = {11: [(1, 2), (3, 4)], 12: [(1, 3), (2, 4)], 13: [(1, 4), (2, 3)]}
 FUTURE_SOURCES = {"sleeper", "espn", "fantasysharks"}
-FUTURES_TABLES = ["betting_odds_first_place", "betting_odds_make_playoffs", "standings_probability_matrix"]
+MARKET_TABLES = [
+    "betting_odds_first_place",
+    "betting_odds_make_playoffs",
+    "betting_odds_last_place",
+    "betting_odds_champion",
+]
+FUTURES_TABLES = [*MARKET_TABLES, "standings_probability_matrix"]
 
 
 class FakeSource:
@@ -163,10 +180,10 @@ def pairings(monkeypatch) -> dict[int, list[tuple[int, int]]]:
     return pairings
 
 
-def write_simulation(settings: Settings, draws: dict[int, np.ndarray]) -> None:
+def write_simulation(settings: Settings, draws: dict[int, np.ndarray], run_id: str = SIMULATION_RUN_ID) -> None:
     roster_ids = sorted(draws)
     matrix = np.column_stack([draws[roster_id] for roster_id in roster_ids]).astype(np.float32)
-    with StepContext(settings, run_id="2026w11-20261117T120000", options={}, step="simulate") as ctx:
+    with StepContext(settings, run_id=run_id, options={}, step="simulate") as ctx:
         draws_path = simulate.save_draws(settings, ctx.run_id, matrix, roster_ids)
         simulate.record_run(ctx, len(roster_ids), draws_path)
 
@@ -245,7 +262,7 @@ def probabilities_by_team(settings: Settings, table: str) -> dict[int, float]:
     return {row["team_id"]: row["probability"] for row in read_table(settings, table)}
 
 
-def test_every_simulated_season_crowns_one_team_and_sends_two_to_the_playoffs(settings):
+def test_every_simulated_season_crowns_one_team_first_one_last_one_champion_and_sends_two_to_the_playoffs(settings):
     run_playoffs(settings)
 
     probabilities = position_probabilities(settings)
@@ -253,29 +270,66 @@ def test_every_simulated_season_crowns_one_team_and_sends_two_to_the_playoffs(se
     assert probabilities.sum(axis=1) == pytest.approx(np.ones(4))
     assert probabilities[:, 0].sum() == pytest.approx(1.0)
     assert probabilities[:, :2].sum() == pytest.approx(2.0)
+    assert probabilities[:, 3].sum() == pytest.approx(1.0)
     expected_first_place = dict(enumerate(probabilities[:, 0], start=1))
     expected_make_playoffs = dict(enumerate(probabilities[:, :2].sum(axis=1), start=1))
+    expected_last_place = dict(enumerate(probabilities[:, 3], start=1))
     assert probabilities_by_team(settings, "betting_odds_first_place") == pytest.approx(expected_first_place)
     assert probabilities_by_team(settings, "betting_odds_make_playoffs") == pytest.approx(expected_make_playoffs)
+    assert probabilities_by_team(settings, "betting_odds_last_place") == pytest.approx(expected_last_place)
+    # Four evenly matched teams: each wins the title often enough to be offered, so the offered chances sum to 1.
+    champion = probabilities_by_team(settings, "betting_odds_champion")
+    assert list(champion) == [1, 2, 3, 4]
+    assert sum(champion.values()) == pytest.approx(1.0)
 
 
 def test_futures_are_priced_as_fair_american_odds(settings):
     run_playoffs(settings)
 
-    for table in ["betting_odds_first_place", "betting_odds_make_playoffs"]:
+    for table in MARKET_TABLES:
         for row in read_table(settings, table):
             assert row["american_odds"] == odds.probability_to_american_odds(row["probability"])
-            assert (row["run_id"], row["season"], row["week"]) == (RUN_ID, 2026, WEEK)
             assert (row["team_name"], row["owner"]) == (f"Team {row['team_id']}", f"owner{row['team_id']}")
+
+
+def test_every_row_carries_the_simulation_it_was_priced_from(settings):
+    run_playoffs(settings, run_id=RUN_ID)
+
+    for table in FUTURES_TABLES:
+        rows = read_table(settings, table)
+        assert rows
+        assert {(row["run_id"], row["season"], row["week"]) for row in rows} == {(SIMULATION_RUN_ID, 2026, WEEK)}
+
+
+def test_the_champion_wins_the_bracket_not_the_regular_season(settings, league_db, strengths):
+    """Team 1 is sure to finish first and team 2 second, but team 2 projects at six times team 1 in the final."""
+    set_record(league_db, 1, wins=10, losses=0)
+    set_record(league_db, 2, wins=6, losses=4)
+    set_record(league_db, 3, wins=0, losses=10)
+    set_record(league_db, 4, wins=0, losses=10)
+    strengths[1] = 0.5
+    strengths[2] = 3.0
+
+    summary = run_playoffs(settings).summary
+
+    assert summary["first_place"][0] == {"owner": "owner1", "probability": 1.0}
+    assert summary["champion"] == [
+        {"owner": "owner2", "probability": 1.0},
+        {"owner": "owner1", "probability": 0.0},
+        {"owner": "owner3", "probability": 0.0},
+        {"owner": "owner4", "probability": 0.0},
+    ]
+    assert read_table(settings, "betting_odds_champion") == []
 
 
 def test_the_summary_lists_each_future_week_and_the_leaders(settings):
     result = run_playoffs(settings)
 
     summary = result.summary
-    assert summary["future_weeks"] == [12, 13]
+    assert summary["future_weeks"] == [12, 13, 14]
+    assert summary["playoff_weeks"] == [14]
     week_entry = {"sources": ["espn.com", "fantasysharks.com", "sleeper.com"], "n_players": 20, "empty_slots": 0}
-    assert summary["projections"] == [{"week": 12} | week_entry, {"week": 13} | week_entry]
+    assert summary["projections"] == [{"week": week} | week_entry for week in [12, 13, 14]]
     assert summary["n_sims"] == N_SIMS
     first_place = probabilities_by_team(settings, "betting_odds_first_place")
     listed = {leader["owner"]: leader["probability"] for leader in summary["first_place"]}
@@ -296,6 +350,8 @@ def test_a_settled_race_is_not_offered_but_stays_in_the_matrix(settings, league_
     assert probabilities[3, 3] == 1.0
     assert read_table(settings, "betting_odds_first_place") == []
     assert list(probabilities_by_team(settings, "betting_odds_make_playoffs")) == [2, 3]
+    assert read_table(settings, "betting_odds_last_place") == []
+    assert list(probabilities_by_team(settings, "betting_odds_champion")) == [1, 2, 3]
     assert len(read_table(settings, "standings_probability_matrix")) == 16
 
 
@@ -318,8 +374,8 @@ def test_players_on_a_bye_or_ruled_out_leave_their_slots_empty(settings, league_
 
     summary = run_playoffs(settings).summary
 
-    # Week 12: roster 4 is on a bye (4 slots) and roster 2 has no quarterback (1); week 13 only the latter.
-    assert [week["empty_slots"] for week in summary["projections"]] == [5, 1]
+    # Week 12: roster 4 is on a bye (4 slots) and roster 2 has no quarterback (1); weeks 13 and 14 only the latter.
+    assert [week["empty_slots"] for week in summary["projections"]] == [5, 1, 1]
 
 
 def test_future_lineups_stay_in_memory(settings):
@@ -338,7 +394,7 @@ def test_the_later_weeks_projections_last_only_for_the_run(settings):
 
     result = run_playoffs(settings)
 
-    assert [week["n_players"] for week in result.summary["projections"]] == [20, 20]
+    assert [week["n_players"] for week in result.summary["projections"]] == [20, 20, 20]
     after = shared_rows(settings)
     assert weeks_held(after) == {table: [WEEK] for table in playoffs.SHARED_TABLES}
     assert after == current_week
@@ -372,12 +428,16 @@ def test_a_week_the_weekly_steps_have_moved_past_is_refused(settings):
 
 
 def test_a_source_failing_its_checks_is_dropped_for_the_week(settings, failing):
-    failing.update({("espn.com", 12), ("espn.com", 13)})
+    failing.update({("espn.com", 12), ("espn.com", 14)})
 
     result = run_playoffs(settings)
 
-    assert "dropped espn.com for weeks 12, 13: value_agreement failed" in result.warnings
-    assert [week["sources"] for week in result.summary["projections"]] == [["fantasysharks.com", "sleeper.com"]] * 2
+    assert "dropped espn.com for weeks 12, 14: value_agreement failed" in result.warnings
+    assert [week["sources"] for week in result.summary["projections"]] == [
+        ["fantasysharks.com", "sleeper.com"],
+        ["espn.com", "fantasysharks.com", "sleeper.com"],
+        ["fantasysharks.com", "sleeper.com"],
+    ]
 
 
 def test_sleeper_failing_its_checks_stops_the_step_before_anything_is_priced(settings, failing):
@@ -393,8 +453,8 @@ def test_only_the_requested_sources_are_scraped_but_sleeper_always_is(settings, 
     run_playoffs(settings, requested=["espn", "fantasypros"])
 
     assert {name: fake.weeks for name, fake in sources.items()} == {
-        "sleeper": [12, 13],
-        "espn": [12, 13],
+        "sleeper": [12, 13, 14],
+        "espn": [12, 13, 14],
         "fantasysharks": [],
         "fantasypros": [],  # it publishes the current week only
         "firstdown": [],
@@ -402,25 +462,37 @@ def test_only_the_requested_sources_are_scraped_but_sleeper_always_is(settings, 
     }
 
 
-def test_a_rerun_replaces_the_weeks_futures_and_leaves_other_weeks_alone(settings):
-    conn = connect(settings, "odds")
-    conn.executescript(playoffs.FUTURES_DDL)
-    conn.execute(
-        "INSERT INTO betting_odds_first_place (run_id, week, team_id, team_name, owner, probability, american_odds, "
-        "season) VALUES ('2026w10-20261110T140000', 10, 1, 'Team 1', 'owner1', 0.5, '-100', 2026)"
-    )
-    conn.commit()
-    conn.close()
-
+def test_a_rerun_on_the_same_simulation_keeps_its_run_id(settings):
     run_playoffs(settings, run_id="2026w11-20261117T140000")
     run_playoffs(settings, run_id="2026w11-20261117T150000")
 
     for table in FUTURES_TABLES:
-        runs = {(row["week"], row["run_id"]) for row in read_table(settings, table)}
-        assert (11, "2026w11-20261117T140000") not in runs
-        assert (11, "2026w11-20261117T150000") in runs
+        assert {row["run_id"] for row in read_table(settings, table)} == {SIMULATION_RUN_ID}
+    assert len(read_table(settings, "standings_probability_matrix")) == 16
+
+
+def test_a_rerun_on_a_newer_simulation_replaces_the_weeks_futures_and_leaves_other_weeks_alone(settings):
+    conn = connect(settings, "odds")
+    conn.executescript(playoffs.FUTURES_DDL)
+    conn.execute(
+        "INSERT INTO betting_odds_first_place (run_id, week, team_id, team_name, owner, probability, american_odds, "
+        "season) VALUES ('2026w10-20261110T120000', 10, 1, 'Team 1', 'owner1', 0.5, '-100', 2026)"
+    )
+    conn.commit()
+    conn.close()
+    run_playoffs(settings)
+    newer_simulation = "2026w11-20261118T120000"
+    rng = np.random.default_rng(WEEK + 1)
+    write_simulation(
+        settings, {roster_id: rng.normal(100.0, 15.0, N_SIMS) for roster_id in NFL_TEAMS}, newer_simulation
+    )
+
+    run_playoffs(settings)
+
+    for table in FUTURES_TABLES:
+        assert {row["run_id"] for row in read_table(settings, table) if row["week"] == WEEK} == {newer_simulation}
     first_place_runs = {row["run_id"] for row in read_table(settings, "betting_odds_first_place")}
-    assert "2026w10-20261110T140000" in first_place_runs
+    assert "2026w10-20261110T120000" in first_place_runs
     assert len(read_table(settings, "standings_probability_matrix")) == 16
 
 
@@ -431,12 +503,23 @@ def test_the_futures_close_once_the_playoffs_start(settings):
     assert not set(FUTURES_TABLES) & odds_tables(settings)
 
 
-def test_a_league_with_divisions_is_refused(settings, league_db):
-    league_db.execute("UPDATE leagues SET settings = ?", (json.dumps(LEAGUE_SETTINGS | {"divisions": 2}),))
+@pytest.mark.parametrize(
+    ("setting", "refusal"),
+    [
+        ({"divisions": 2}, "the league has 2 divisions"),
+        ({"playoff_seed_type": 1}, "playoff_seed_type is 1"),
+        ({"playoff_round_type": 1}, "playoff_round_type is 1"),
+        ({"playoff_teams": 3}, "playoff_teams is 3"),
+    ],
+)
+def test_a_league_the_standings_or_the_bracket_cannot_price_is_refused(settings, league_db, setting, refusal):
+    league_db.execute("UPDATE leagues SET settings = ?", (json.dumps(LEAGUE_SETTINGS | setting),))
     league_db.commit()
 
-    with pytest.raises(RuntimeError, match="2 divisions"):
+    with pytest.raises(RuntimeError, match=refusal):
         run_playoffs(settings)
+
+    assert not set(FUTURES_TABLES) & odds_tables(settings)
 
 
 def test_the_current_week_must_be_simulated_first(settings):
@@ -483,8 +566,22 @@ def test_points_to_date_read_sleepers_decimal_column_as_hundredths(league_db):
     assert records["points"].tolist() == pytest.approx([1100.36, 1100.0])
 
 
-def test_probabilities_that_do_not_add_up_stop_the_step():
-    with pytest.raises(RuntimeError, match="first-place probabilities sum to 0.900000, not 1"):
-        playoffs.check_totals(np.array([0.5, 0.4]), np.array([1.0, 1.0]), 2)
-    with pytest.raises(RuntimeError, match="make-playoffs probabilities sum to 1.500000, not 2"):
-        playoffs.check_totals(np.array([0.5, 0.5]), np.array([1.0, 0.5]), 2)
+@pytest.mark.parametrize(
+    ("market", "chances", "refusal"),
+    [
+        ("first_place", [0.5, 0.4], "first_place probabilities sum to 0.900000, not 1"),
+        ("make_playoffs", [1.0, 0.5], "make_playoffs probabilities sum to 1.500000, not 2"),
+        ("last_place", [0.7, 0.4], "last_place probabilities sum to 1.100000, not 1"),
+        ("champion", [0.0, 0.0], "champion probabilities sum to 0.000000, not 1"),
+    ],
+)
+def test_probabilities_that_do_not_add_up_stop_the_step(market, chances, refusal):
+    balanced = {
+        "first_place": np.array([0.5, 0.5]),
+        "make_playoffs": np.array([1.0, 1.0]),
+        "last_place": np.array([0.5, 0.5]),
+        "champion": np.array([0.5, 0.5]),
+    }
+
+    with pytest.raises(RuntimeError, match=refusal):
+        playoffs.check_totals(balanced | {market: np.array(chances)}, 2)
