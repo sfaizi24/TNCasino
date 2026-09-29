@@ -18,6 +18,8 @@ ROSTER_2_OVER = {"market": "2026-w10-team_total-2", "selection": "over", "line":
 ROSTER_1_HIGHEST = {"market": "2026-w10-highest_scorer", "selection": "1"}
 ROSTER_2_HIGHEST = {"market": "2026-w10-highest_scorer", "selection": "2"}
 ROSTER_2_LOWEST = {"market": "2026-w10-lowest_scorer", "selection": "2"}
+ROSTER_1_MINUS_4 = {"market": "2026-w10-spread-1v2", "selection": "1", "line": -4.0}
+ROSTER_2_PLUS_4 = {"market": "2026-w10-spread-1v2", "selection": "2", "line": 4.0}
 FUTURES = {"market": "2026-make_playoffs-1", "selection": "yes"}
 LAST_WEEK = {"market": "2026-w09-moneyline-1v2", "selection": "1"}
 
@@ -75,6 +77,37 @@ def test_three_legs_are_priced_at_the_sims_where_all_three_happen():
     assert parlay.odds == "+300"
     assert parlay.price == 300
     assert [leg.quote.odds for leg in parlay.legs] == ["-150", "-120", "+105"]
+
+
+def test_a_spread_leg_is_priced_at_its_own_line():
+    parlay = quote([ROSTER_1_MINUS_4, ROSTER_1_OVER], 10, RUN_ID)
+
+    # Roster 1 covers -4.0 in 9 sims and tops 110.5 in 9; it does both in the 6 where it scores 118 to 130.
+    assert (parlay.probability, parlay.odds) == (6 / 20, "+233")
+    assert parlay.legs[0] == Leg(parse_key("2026-w10-spread-1v2"), "1", -4.0, Quote(RUN_ID, "+122", 0.45, -4.0))
+
+
+def test_a_spread_leg_at_an_alternate_line_carries_that_line():
+    parlay = quote([{**ROSTER_2_PLUS_4, "line": 9.5}, ROSTER_1_OVER], 10, RUN_ID)
+
+    # Roster 2 +9.5 covers in 14 sims; roster 1 still tops 110.5 in 4 of them, at margins 5, 4, -26 and -23.
+    assert parlay.legs[0].line == 9.5
+    assert parlay.legs[0].quote == Quote(RUN_ID, "-233", 0.70, 9.5)
+    assert (parlay.probability, parlay.odds) == (4 / 20, "+400")
+
+
+def test_a_spread_leg_without_a_line_is_refused_as_a_leg():
+    faulty = {"market": "2026-w10-spread-1v2", "selection": "1"}
+
+    assert _refusal([faulty, ROSTER_1_OVER]) == ("Unknown line", "leg", ("2026-w10-spread-1v2",))
+
+
+def test_a_moneyline_adds_nothing_to_its_favourite_covering_the_spread():
+    assert _refusal([ROSTER_1_MINUS_4, ROSTER_1_WINS]) == (
+        "A leg adds nothing to this parlay",
+        "redundant",
+        ("2026-w10-moneyline-1v2",),
+    )
 
 
 def test_a_team_totals_line_matches_at_two_decimals():
@@ -135,6 +168,8 @@ def test_an_entry_that_names_no_market_is_refused_as_an_unknown_one(requests, na
         ([ROSTER_1_WINS, ROSTER_2_WINS], ("2026-w10-moneyline-1v2",)),
         ([ROSTER_1_OVER, ROSTER_1_UNDER], ("2026-w10-team_total-1",)),
         ([ROSTER_1_HIGHEST, ROSTER_2_HIGHEST], ("2026-w10-highest_scorer",)),
+        ([ROSTER_1_MINUS_4, ROSTER_2_PLUS_4], ("2026-w10-spread-1v2",)),
+        ([ROSTER_1_MINUS_4, {**ROSTER_1_MINUS_4, "line": -9.5}], ("2026-w10-spread-1v2",)),
         (
             [ROSTER_1_WINS, ROSTER_1_OVER, ROSTER_2_WINS, ROSTER_1_UNDER],
             ("2026-w10-moneyline-1v2", "2026-w10-team_total-1"),

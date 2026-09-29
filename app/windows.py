@@ -41,10 +41,9 @@ def betting_window(week, now=None):
     if lock_time is not None:
         return Window(week, "closed", lock_time=lock_time)
 
-    runs = query_analytics(LATEST_RUN_SQL, {"week": week})
-    if not runs:
+    run = _latest_run(week)
+    if run is None:
         return Window(week, "closed")
-    run = runs[0]
     created_at = _as_utc(run["created_at"])
     if run["window_closes_at"] is None:
         return Window(week, "closed", run_id=run["run_id"], run_created_at=created_at)
@@ -52,6 +51,17 @@ def betting_window(week, now=None):
     closes_at = _as_utc(run["window_closes_at"])
     state = "open" if (now or utc_now()) < closes_at else "paused"
     return Window(week, state, closes_at, run["run_id"], created_at)
+
+
+def latest_run_id(week):
+    """The week's latest published run, read without the lock, or None before the first."""
+    run = _latest_run(week)
+    return run["run_id"] if run else None
+
+
+def _latest_run(week):
+    runs = query_analytics(LATEST_RUN_SQL, {"week": week})
+    return runs[0] if runs else None
 
 
 def _as_utc(timestamp):

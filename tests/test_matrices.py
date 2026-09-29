@@ -61,6 +61,19 @@ def test_each_market_wins_the_sims_its_rule_says(seeded_analytics, market, selec
     assert int(outcome.won.sum()) == wins
 
 
+# Roster 1's margins over roster 2 run -29 to 30 with a median of 4; two sims land on 4 and one on 9.5.
+@pytest.mark.parametrize(
+    ("selection", "line", "wins", "pushes"),
+    [("1", -4.0, 9, 2), ("2", 4.0, 9, 2), ("1", -9.5, 5, 1), ("2", 9.5, 14, 1), ("1", 0.5, 12, 0), ("2", -0.5, 8, 0)],
+)
+def test_a_spread_covers_when_the_picked_score_plus_its_line_beats_the_other(
+    seeded_analytics, selection, line, wins, pushes
+):
+    outcome = leg_outcome(parse_key("2026-w10-spread-1v2"), selection, line, score_matrix(RUN_ID))
+
+    assert (int(outcome.won.sum()), int(outcome.pushed.sum())) == (wins, pushes)
+
+
 def test_a_roster_the_run_did_not_simulate_is_a_key_error(seeded_analytics):
     with pytest.raises(KeyError):
         leg_outcome(parse_key("2026-w10-highest_scorer"), "7", None, score_matrix(RUN_ID))
@@ -82,3 +95,8 @@ def test_the_joint_chance_counts_the_sims_every_leg_wins(seeded_analytics):
 )
 def test_fair_odds_round_as_the_pipeline_rounds(probability, odds):
     assert odds_from_probability(probability) == odds
+
+
+@pytest.mark.parametrize("probability", [0.0, 1.0])
+def test_a_chance_of_zero_or_one_has_no_fair_odds(probability):
+    assert odds_from_probability(probability) is None

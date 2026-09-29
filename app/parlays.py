@@ -80,7 +80,7 @@ def _legs(requests, week):
         entry = request if isinstance(request, dict) else {}
         key = entry.get("market")
         try:
-            legs.append(_leg(key, str(entry.get("selection")), week))
+            legs.append(_leg(key, str(entry.get("selection")), entry.get("line"), week))
         except MarketError as error:
             faulty_keys.append(key)
             messages.append(str(error))
@@ -89,13 +89,13 @@ def _legs(requests, week):
     return tuple(legs)
 
 
-def _leg(key, selection, week):
+def _leg(key, selection, line, week):
     market = parse_key(key)
     if market.week is None:
         raise MarketError("Futures cannot be parlayed")
     if market.week != week:
         raise MarketError("Not this week's market")
-    single = find_quote(market, selection)
+    single = find_quote(market, selection, line)
     return Leg(market, selection, single.line, single)
 
 

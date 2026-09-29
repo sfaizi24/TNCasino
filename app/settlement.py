@@ -93,6 +93,8 @@ def _judge_leg(leg, scores):
 
     if market.name == "moneyline":
         return _moneyline(market, leg, scores)
+    if market.name == "spread":
+        return _spread(market, leg, scores)
     if market.name == "team_total":
         return _team_total(market, leg, scores)
     if market.name in ("highest_scorer", "lowest_scorer"):
@@ -144,19 +146,25 @@ def _win_on(bet, legs):
 
 
 def _moneyline(market, leg, scores):
-    first, second = market.teams
-    picked_id = int(leg.selection)
-    other_id = second if picked_id == first else first
-    picked = _team(scores, picked_id)
-    other = _team(scores, other_id)
-
+    picked, other = _matchup_sides(market, leg, scores)
     unscored = [team for team in (picked, other) if team.points is None]
     if unscored:
         return UNDECIDED, _no_score(unscored)
 
     reason = f"{picked.team} {picked.points:.2f} vs {other.team} {other.points:.2f}"
     matrix, columns = _score_matrix(scores)
-    return _judge(win_rules.moneyline(matrix, columns[picked_id], columns[other_id])), reason
+    return _judge(win_rules.moneyline(matrix, columns[picked.roster_id], columns[other.roster_id])), reason
+
+
+def _spread(market, leg, scores):
+    picked, other = _matchup_sides(market, leg, scores)
+    unscored = [team for team in (picked, other) if team.points is None]
+    if unscored:
+        return UNDECIDED, _no_score(unscored)
+
+    reason = f"{picked.team} {picked.points:.2f} {leg.line:+.1f} vs {other.team} {other.points:.2f}"
+    matrix, columns = _score_matrix(scores)
+    return _judge(win_rules.spread(matrix, columns[picked.roster_id], columns[other.roster_id], leg.line)), reason
 
 
 def _team_total(market, leg, scores):
@@ -205,6 +213,14 @@ def _judge(outcome):
     if outcome.won[0]:
         return WON
     return LOST
+
+
+def _matchup_sides(market, leg, scores):
+    """The picked roster and the other roster of a matchup's key, each with its score."""
+    first, second = market.teams
+    picked_id = int(leg.selection)
+    other_id = second if picked_id == first else first
+    return _team(scores, picked_id), _team(scores, other_id)
 
 
 def _team(scores, roster_id):

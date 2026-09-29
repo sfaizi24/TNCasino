@@ -41,10 +41,11 @@ def leg_outcome(market, selection, line, matrix):
     """Per sim, whether the pick wins and whether it pushes. A roster the run did not simulate raises KeyError."""
     scores, columns = matrix.scores, matrix.columns
     if market.name == "moneyline":
-        first, second = market.teams
-        picked = int(selection)
-        other = second if picked == first else first
+        picked, other = _matchup_sides(market, selection)
         return win_rules.moneyline(scores, columns[picked], columns[other])
+    if market.name == "spread":
+        picked, other = _matchup_sides(market, selection)
+        return win_rules.spread(scores, columns[picked], columns[other], line)
     if market.name == "team_total":
         [roster_id] = market.teams
         return win_rules.team_total(scores, columns[roster_id], line, selection)
@@ -57,3 +58,10 @@ def joint_probability(outcomes):
     """The share of sims in which every pick wins."""
     won = np.logical_and.reduce([outcome.won for outcome in outcomes])
     return float(won.mean())
+
+
+def _matchup_sides(market, selection):
+    """The picked roster and the other roster of a matchup's key."""
+    first, second = market.teams
+    picked = int(selection)
+    return picked, second if picked == first else first
