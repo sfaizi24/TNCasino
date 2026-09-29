@@ -347,7 +347,8 @@ the same ledger path as a single. `app/matrices.py` decodes a run's matrix once 
 (`lru_cache(maxsize=4)`) for parlays, cash-out and settlement. Settlement judges a parlay leg by
 leg, undecided until every leg is; pushed legs drop out and the rest re-price on the placement
 run's matrix, a lone leg at its own price, none left is a push, and a missing matrix is undecided
-for the admin to settle by hand. Cash-out still refuses multi-leg bets. Built by a Claude Code
+for the admin to settle by hand. Cash-out prices a parlay at the joint chance of its legs
+(PR 10, merge 022e9af). Built by a Claude Code
 cloud session from `docs/briefs/b8-parlays.md`; merged 2026-09-29 (9e43632), 980 tests.
 
 ---
@@ -474,7 +475,7 @@ a window is open, with the bet storing its run, price, chance and legs.
 **Runner-up.** Futures-only cash-out first, at the same 95%: weekly Wednesday runs already move
 futures, so it needs no rerun. What would change my mind: the Thursday rerun slipping past week 6.
 
-**Implementation notes (B9, 2026-09-29).** `app/cashout.py` prices a pending single at the bet's
+**Implementation notes (B9, 2026-09-29).** `app/cashout.py` prices a pending bet, single or parlay, at the bet's
 own line: a weekly bet from the week's latest run's score matrix in `simulation_totals` through
 the win rule in `pipeline/markets.py`, a futures bet from the latest futures quote once the week's
 simulation run has standings through at least the previous week. There is no offer while the
@@ -1107,7 +1108,8 @@ first, because every later package stores or reads it.
   outcome pays wrong money; stat corrections. Shipped 2026-09-28 (merge 68da2e4).
 - **B8.** The parlay slip, the refusal rules with a refusal log, the per-worker matrix cache,
   parlay settlement. Driving risk: the page and the cache. Shipped 2026-09-29 (merge 9e43632);
-  parlay cash-out and the by-hand admin buttons on parlays are open (doc 08).
+  parlay cash-out followed 2026-09-29 (merge 022e9af); the by-hand admin buttons on parlays are
+  open (doc 08).
 - **B9.** Offers from the latest run for futures and weekly bets, and the week the profit posts to.
   Driving risk: futures and weekly bets reach their chances by different paths. Shipped
   2026-09-29 (merge 52aebf2); a playoffs-only rerun ends removal on that week's futures bets
