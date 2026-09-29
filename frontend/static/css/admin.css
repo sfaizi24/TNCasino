@@ -125,6 +125,15 @@
         margin-bottom: 30px;
     }
 
+    /* A grid item is as wide as its content by default, so a wide table would stretch its column. */
+    .admin-grid > * {
+        min-width: 0;
+    }
+
+    #periodsTable {
+        overflow-x: auto;
+    }
+
     .admin-card {
         background: var(--tnc-surface);
         border-radius: 12px;
