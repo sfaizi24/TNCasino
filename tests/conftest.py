@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 
-from app import create_app
+from app import create_app, windows
 from app.database import db as _db
 from app.models import BettingPeriod, User
 
@@ -155,10 +155,21 @@ ANALYTICS_TABLES = [
     "sleeper_users",
     "sleeper_matchups",
     "projections_rosters",
+    "simulation_runs",
 ]
 
-# The pipeline run that published every seeded odds row.
+# The pipeline run that published every seeded odds row, and the window it opened.
 RUN_ID = "2026w10-20261110T140000"
+RUN_CREATED_AT = "2026-11-10T14:00:00+00:00"
+WINDOW_CLOSES_AT = "2026-11-13T00:15:00+00:00"
+
+# What the app takes as now when it asks whether the seeded run's window is open: an hour after the run.
+WINDOW_NOW = datetime(2026, 11, 10, 15, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def window_clock(monkeypatch):
+    monkeypatch.setattr(windows, "utc_now", lambda: WINDOW_NOW)
 
 
 def create_analytics_tables(session):
@@ -293,6 +304,15 @@ def create_analytics_tables(session):
         )
     """)
     )
+    session.execute(
+        text("""
+        CREATE TABLE simulation_runs (
+            run_id TEXT PRIMARY KEY, season INTEGER, week INTEGER, seed INTEGER, n_sims INTEGER,
+            model_version TEXT, n_teams INTEGER, draws_path TEXT, created_at TEXT,
+            n_locked INTEGER, window_closes_at TEXT, standings_through_week INTEGER
+        )
+    """)
+    )
     session.commit()
 
 
@@ -320,6 +340,15 @@ def seed_analytics(session):
         INSERT INTO sleeper_matchups (league_id, week, roster_id, matchup_id_number)
         VALUES ('league1', 10, 1, 1), ('league1', 10, 2, 1)
     """)
+    )
+    session.execute(
+        text("""
+        INSERT INTO simulation_runs
+            (run_id, season, week, seed, n_sims, model_version, n_teams, draws_path, created_at,
+             n_locked, window_closes_at, standings_through_week)
+        VALUES (:run_id, 2026, 10, 1738, 50000, 'v2', 12, 'draws/2026w10.npy', :created_at, 0, :closes_at, 9)
+    """),
+        {"run_id": RUN_ID, "created_at": RUN_CREATED_AT, "closes_at": WINDOW_CLOSES_AT},
     )
     session.execute(
         text("""

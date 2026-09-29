@@ -6,8 +6,9 @@ from sqlalchemy import Integer, case, cast, desc, distinct, func
 
 from .. import ledger, markets
 from ..database import db
-from ..models import Bet, BetLeg, BettingPeriod, User, WeeklyStats
-from .helpers import check_betting_period_lock, friendly_description, get_current_week, get_team_mapping
+from ..models import Bet, BetLeg, User, WeeklyStats
+from ..windows import betting_window
+from .helpers import friendly_description, get_current_week, get_team_mapping
 
 betting_bp = Blueprint("betting", __name__)
 
@@ -20,31 +21,32 @@ MARKET_LABELS = {
 }
 
 
-def _format_lock_time(lock_time):
-    if not lock_time:
-        return "Thursday Night Kickoff"
-
-    from zoneinfo import ZoneInfo
-
-    eastern = lock_time.astimezone(ZoneInfo("America/New_York"))
-    day = eastern.strftime("%b ") + str(eastern.day)
-    hour = eastern.hour % 12 or 12
-    suffix = "AM" if eastern.hour < 12 else "PM"
-    minute_part = f":{eastern.minute:02d}" if eastern.minute else ""
-    return f"{day}, {hour}{minute_part}{suffix} ET"
-
-
 @betting_bp.route("/betting")
 def betting():
-    week = get_current_week()
-    period = db.session.query(BettingPeriod).filter_by(week=week).first()
-
     return render_template(
         "betting.html",
         user=current_user if current_user.is_authenticated else None,
-        current_week=week,
-        bets_open_until=_format_lock_time(period.lock_time if period else None),
+        current_week=get_current_week(),
     )
+
+
+@betting_bp.route("/api/betting_window")
+def get_betting_window():
+    week = request.args.get("week", get_current_week(), type=int)
+    window = betting_window(week)
+    return jsonify(
+        {
+            "success": True,
+            "week": window.week,
+            "state": window.state,
+            "closes_at": _iso(window.closes_at),
+            "run_created_at": _iso(window.run_created_at),
+        }
+    )
+
+
+def _iso(timestamp):
+    return timestamp.isoformat() if timestamp else None
 
 
 @betting_bp.route("/leaderboard")
@@ -211,9 +213,9 @@ def place_bet():
     amount = float(data.get("amount", 0))
     week = get_current_week()
 
-    lock_time = check_betting_period_lock(week)
-    if lock_time:
-        return _refuse_locked(lock_time)
+    window = betting_window(week)
+    if window.state != "open":
+        return _refuse_window(window)
     if amount <= 0:
         return _refuse("Invalid bet amount")
     if current_user.account_balance < amount:
@@ -329,13 +331,15 @@ def get_my_bets():
             .order_by(Bet.created_at.desc())
             .all()
         )
-        return jsonify([_bet_summary(bet) for bet in bets])
+        weeks = {bet.week for bet in bets}
+        open_weeks = {week for week in weeks if betting_window(week).state == "open"}
+        return jsonify([_bet_summary(bet, bet.week in open_weeks) for bet in bets])
     except Exception:
         logging.exception(f"Could not list the bets of user {current_user.id}")
         return jsonify([])
 
 
-def _bet_summary(bet):
+def _bet_summary(bet, week_is_open):
     summary = {
         "id": bet.id,
         "description": friendly_description(bet.description),
@@ -351,7 +355,7 @@ def _bet_summary(bet):
         "price": bet.price,
         "probability": bet.probability,
         "run_id": bet.run_id,
-        "removable": check_betting_period_lock(bet.week) is None and _run_is_latest(bet),
+        "removable": week_is_open and _run_is_latest(bet),
     }
     if bet.legs:
         leg = bet.legs[0]
@@ -379,9 +383,9 @@ def remove_bet(bet_id):
         if not bet:
             return _refuse("Bet not found")
 
-        lock_time = check_betting_period_lock(bet.week)
-        if lock_time:
-            return _refuse_locked(lock_time)
+        window = betting_window(bet.week)
+        if window.state != "open":
+            return _refuse_window(window)
         if not _run_is_latest(bet):
             return _refuse("Odds have changed since this bet was placed")
 
@@ -403,8 +407,12 @@ def _refuse(error, **details):
     return jsonify({"success": False, "error": error, **details})
 
 
-def _refuse_locked(lock_time):
-    return _refuse(f"Bets are locked as of {lock_time.strftime('%Y-%m-%d %I:%M %p UTC')}")
+def _refuse_window(window):
+    if window.lock_time:
+        return _refuse(f"Bets are locked as of {window.lock_time.strftime('%Y-%m-%d %I:%M %p UTC')}")
+    if window.state == "paused":
+        return _refuse("Betting is paused until the odds update")
+    return _refuse(f"Betting is closed for week {window.week}")
 
 
 @betting_bp.route("/api/session-check")

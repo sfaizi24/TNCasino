@@ -5,8 +5,8 @@ from sqlalchemy import text
 
 from app import ledger
 from app.database import db
-from app.models import Bet, BettingPeriod, WeeklyStats
-from tests.conftest import RUN_ID
+from app.models import Bet, WeeklyStats
+from tests.conftest import RUN_ID, WINDOW_NOW
 
 HIGHEST_SCORER_BET = {"market": "2026-w10-highest_scorer", "selection": "1", "run_id": RUN_ID, "amount": 100}
 TEAM_TOTAL_BET = {
@@ -176,21 +176,81 @@ def test_place_bet_updates_existing_weekly_stats(logged_in_client, user, betting
     assert stat.active_bets_amount == 150.0
 
 
-def test_place_bet_locked_period(logged_in_client, user, db_session, seeded_analytics):
-    period = BettingPeriod(
-        week=10,
-        lock_time=datetime.now(UTC) - timedelta(hours=1),
-        is_locked=True,
-        is_settled=False,
+def close_the_window_at(closes_at):
+    db.session.execute(text("UPDATE simulation_runs SET window_closes_at = :closes"), {"closes": closes_at.isoformat()})
+    db.session.commit()
+
+
+def pause_the_window():
+    """The seeded run's kickoff has passed and no rerun has published."""
+    close_the_window_at(WINDOW_NOW - timedelta(hours=1))
+
+
+def publish_a_rerun(run_id):
+    """A rerun published before the clock, with an open window, that repriced every market."""
+    db.session.execute(
+        text("""
+        INSERT INTO simulation_runs (run_id, season, week, seed, n_sims, model_version, n_teams, draws_path,
+                                     created_at, n_locked, window_closes_at, standings_through_week)
+        VALUES (:run_id, 2026, 10, 2, 50000, 'v2', 12, 'draws.npy', :created_at, 3, :closes_at, 9)
+    """),
+        {
+            "run_id": run_id,
+            "created_at": (WINDOW_NOW - timedelta(minutes=30)).isoformat(),
+            "closes_at": (WINDOW_NOW + timedelta(days=2)).isoformat(),
+        },
     )
-    db_session.session.add(period)
-    db_session.session.commit()
+    for table in ("matchup_ml", "team_ou", "highest_scorer", "lowest_scorer", "first_place", "make_playoffs"):
+        db.session.execute(text(f"UPDATE betting_odds_{table} SET run_id = :run_id"), {"run_id": run_id})
+    db.session.commit()
+
+
+def test_the_admin_lock_is_the_kill_switch(logged_in_client, user, betting_period, seeded_analytics):
+    betting_period.lock_time = datetime(2026, 11, 15, 18, 0, tzinfo=UTC)
+    betting_period.is_locked = True
+    db.session.commit()
 
     reply = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()
 
-    assert reply["success"] is False
-    assert "locked" in reply["error"].lower()
+    assert reply == {"success": False, "error": "Bets are locked as of 2026-11-15 06:00 PM UTC"}
     assert db.session.query(Bet).count() == 0
+
+
+def test_a_passed_lock_time_refuses_a_bet_and_locks_the_week(logged_in_client, user, betting_period, seeded_analytics):
+    betting_period.lock_time = datetime.now(UTC) - timedelta(hours=1)
+    db.session.commit()
+
+    reply = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()
+
+    assert reply["error"].startswith("Bets are locked as of ")
+    assert betting_period.is_locked is True
+    assert db.session.query(Bet).count() == 0
+
+
+def test_a_bet_is_refused_while_the_window_is_paused(logged_in_client, user, betting_period, seeded_analytics):
+    pause_the_window()
+
+    reply = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()
+
+    assert reply == {"success": False, "error": "Betting is paused until the odds update"}
+    assert betting_period.is_locked is False
+    assert db.session.query(Bet).count() == 0
+
+
+def test_a_bet_is_refused_when_the_week_is_closed(logged_in_client, user, seeded_analytics):
+    reply = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()
+
+    assert reply == {"success": False, "error": "Betting is closed for week 10"}
+    assert db.session.query(Bet).count() == 0
+
+
+def test_a_bet_is_refused_when_the_run_has_no_window(logged_in_client, user, betting_period, seeded_analytics):
+    db.session.execute(text("UPDATE simulation_runs SET window_closes_at = NULL"))
+    db.session.commit()
+
+    reply = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()
+
+    assert reply == {"success": False, "error": "Betting is closed for week 10"}
 
 
 def test_my_bets_lists_the_pick_and_whether_it_can_be_removed(logged_in_client, user, betting_period, seeded_analytics):
@@ -203,6 +263,21 @@ def test_my_bets_lists_the_pick_and_whether_it_can_be_removed(logged_in_client, 
     assert (listed["market"], listed["selection"], listed["line"]) == ("2026-w10-team_total-1", "over", 110.5)
     assert (listed["price"], listed["probability"], listed["run_id"]) == (-120, 0.55, RUN_ID)
     assert listed["removable"] is True
+
+
+def test_a_bet_is_removable_only_while_its_week_is_open(logged_in_client, user, betting_period, seeded_analytics):
+    logged_in_client.post("/api/place_bet", json=TEAM_TOTAL_BET)
+
+    pause_the_window()
+    [paused] = logged_in_client.get("/api/my_bets").get_json()
+    close_the_window_at(WINDOW_NOW + timedelta(days=2))
+    [reopened] = logged_in_client.get("/api/my_bets").get_json()
+    publish_a_rerun("2026w10-20261110T143000")
+    [repriced] = logged_in_client.get("/api/my_bets").get_json()
+
+    assert paused["removable"] is False
+    assert reopened["removable"] is True
+    assert repriced["removable"] is False
 
 
 def test_removing_a_bet_keeps_it_as_removed_and_refunds_once(logged_in_client, user, betting_period, seeded_analytics):
@@ -260,24 +335,38 @@ def test_a_legacy_bet_without_legs_is_still_removable(logged_in_client, user, be
     assert db.session.get(Bet, legacy.id).status == "removed"
 
 
-def test_remove_bet_locked_period(logged_in_client, user, db_session, seeded_analytics):
-    period = BettingPeriod(
-        week=10,
-        lock_time=datetime.now(UTC) + timedelta(days=7),
-        is_locked=False,
-        is_settled=False,
-    )
-    db_session.session.add(period)
-    db_session.session.commit()
+def test_the_admin_lock_keeps_a_bet_in_place(logged_in_client, user, betting_period, seeded_analytics):
     bet_id = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()["bet_id"]
-
-    period.is_locked = True
-    period.lock_time = datetime.now(UTC) - timedelta(hours=1)
-    db_session.session.commit()
+    betting_period.lock_time = datetime(2026, 11, 15, 18, 0, tzinfo=UTC)
+    betting_period.is_locked = True
+    db.session.commit()
 
     reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
 
-    assert reply["success"] is False
+    assert reply == {"success": False, "error": "Bets are locked as of 2026-11-15 06:00 PM UTC"}
+    assert db.session.get(Bet, bet_id).status == "pending"
+
+
+def test_a_paused_window_keeps_a_bet_in_place(logged_in_client, user, betting_period, seeded_analytics):
+    bet_id = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()["bet_id"]
+    pause_the_window()
+
+    reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
+
+    assert reply == {"success": False, "error": "Betting is paused until the odds update"}
+    assert db.session.get(Bet, bet_id).status == "pending"
+    db.session.refresh(user)
+    assert user.account_balance == 900.0
+
+
+def test_a_settled_week_keeps_a_bet_in_place(logged_in_client, user, betting_period, seeded_analytics):
+    bet_id = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()["bet_id"]
+    betting_period.is_settled = True
+    db.session.commit()
+
+    reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
+
+    assert reply == {"success": False, "error": "Betting is closed for week 10"}
     assert db.session.get(Bet, bet_id).status == "pending"
 
 
