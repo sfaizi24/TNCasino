@@ -82,6 +82,19 @@ def test_firstdown_rejects_a_page_without_a_snapshot():
         firstdown.parse("<html><body><table></table></body></html>", SEASON, WEEK)
 
 
+def test_firstdown_says_when_the_week_is_not_posted_yet():
+    data = {
+        "snapshot": None,
+        "state": "unavailable",
+        "target": {"season": SEASON, "week": 4, "nextBoundary": "2026-10-05T20:30:00-07:00"},
+    }
+    chunk = json.dumps([1, '12:[["$","$L1c","4",{"data":' + json.dumps(data) + "}]]"])
+    html = f"<script>self.__next_f.push({chunk})</script>"
+
+    with pytest.raises(ValueError, match="has not posted week 4: rankings unavailable, next update 2026-10-05"):
+        firstdown.parse(html, SEASON, 4)
+
+
 def test_firstdown_skips_players_projected_for_nothing(firstdown_html):
     html = firstdown_html.replace("24.56727045366198", "0")  # Jahmyr Gibbs's PPR points in the snapshot
     rows = firstdown.parse(html, SEASON, WEEK)

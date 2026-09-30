@@ -62,11 +62,16 @@ def rankings_snapshot(html: str) -> dict:
             pieces.append(message[1])
     text = "".join(pieces)
 
-    start = text.find('{"snapshot_id"')
+    start = text.find('{"snapshot":')
     if start == -1:
         raise ValueError("the FirstDown page has no rankings snapshot")
-    snapshot, _ = json.JSONDecoder().raw_decode(text, start)
-    return snapshot
+    data, _ = json.JSONDecoder().raw_decode(text, start)
+    if data["snapshot"] is None:  # before FirstDown posts the week, the state is "unavailable"
+        target = data["target"]
+        raise ValueError(
+            f"FirstDown has not posted week {target['week']}: rankings {data['state']}, next update {target['nextBoundary']}"
+        )
+    return data["snapshot"]
 
 
 SOURCE = FirstDownSource()
