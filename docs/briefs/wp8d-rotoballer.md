@@ -114,7 +114,7 @@ The table's header row on the Wednesday article is
     Ru. TDs, Rec, Rec. Yards, Rec. TDs
 
 and the Sunday update has the same columns without `Comp`, so columns are read by header name.
-Each player cell is `<a class="rbPlayer nfl" data-id="19801" href="/nfl/player/19801/Josh+Allen">`,
+Each player cell is `<a class="rbPlayer nfl" data-id="{id}" href="/nfl/player/{id}/Josh+Allen">`,
 which gives an `external_id`. Teams are already Sleeper codes (JAX, LAR, LV, WAS). Empty cells
 mean zero. There are no injury tags. `Fan Points` is half PPR (the page's `<h1>` says so:
 "Week 3 Fantasy Football Projections (Half PPR): RB, WR, TE, QB"), so points are rescored from
@@ -205,13 +205,12 @@ Nothing else: not `stats.py` or the model parameters, not the scrape or playoffs
 3. **Tests, fixtures only.** Position counts on both fixtures (Wednesday QB 32, RB 76, WR 123,
    TE 69; Sunday QB 32, RB 89, WR 139, TE 76 and no K or DEF rows); on every row of both
    fixtures the rescore less half a point per reception is within 0.6 of `Fan Points`; Josh
-   Allen's Wednesday row rescores to 23.66 from 253.0 passing yards, 1.8 touchdowns, 0.8
-   interceptions, 37.4 rushing yards and 0.7 rushing touchdowns; the Sunday layout without
+   Allen's Wednesday row rescores from his passing and rushing line; the Sunday layout without
    `Comp` parses the same as the Wednesday one; the week comes from the page, not the argument;
    a page without a table raises; a header missing `Rec. TDs` raises; `article_url` picks the
    Sunday update from the sitemap fixture for week 3 and raises for week 4; the suffix, apostrophe,
    hyphen and "J. Michael Sturdivant" cases above come through as expected; `external_id` is
-   `19801` for Josh Allen; a fetch test with `serve` and `clock` shows two requests in order,
+   Josh Allen's `data-id`; a fetch test with `serve` and `clock` shows two requests in order,
    sitemap then article, with the pipeline's User-Agent; the shared `test_parse_is_pure` and
    `test_rows_are_canonical` cover rotoballer.
 4. **Registry, docs and the about page** as listed under Ownership.
