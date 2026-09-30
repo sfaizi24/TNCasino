@@ -1,33 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:news="http://www.google.com/schemas/sitemap-news/0.9"><url>
-                    <loc>https://www.rotoballer.com/player-news/jamarr-chase-has-another-big-game-in-divisional-loss/1952508</loc>
+                    <loc>https://www.rotoballer.com/player-news/sample-injury-update/9000003</loc>
                     <news:news>
                         <news:publication>
                             <news:name>RotoBaller</news:name>
                             <news:language>en</news:language>
                         </news:publication>
-                        <news:publication_date>2026-09-27T20:08:09-04:00</news:publication_date>
-                        <news:title>Ja&#039;Marr Chase has Another Big Game in Divisional Loss</news:title>
+                        <news:publication_date>2026-09-27T20:00:00-04:00</news:publication_date>
+                        <news:title>Sample Injury Update</news:title>
                     </news:news>
                 </url><url>
-                    <loc>https://www.rotoballer.com/player-news/zach-ertz-expected-to-be-active-for-eagles-on-monday/1952498</loc>
+                    <loc>https://www.rotoballer.com/player-news/sample-depth-chart-note/9000002</loc>
                     <news:news>
                         <news:publication>
                             <news:name>RotoBaller</news:name>
                             <news:language>en</news:language>
                         </news:publication>
-                        <news:publication_date>2026-09-27T19:14:08-04:00</news:publication_date>
-                        <news:title>Zach Ertz Expected to Be Active for Eagles on Monday</news:title>
+                        <news:publication_date>2026-09-27T19:00:00-04:00</news:publication_date>
+                        <news:title>Sample Depth Chart Note</news:title>
                     </news:news>
                 </url><url>
-                    <loc>https://www.rotoballer.com/player-news/rj-harvey-is-cleared-to-return-on-sunday/1952486</loc>
+                    <loc>https://www.rotoballer.com/player-news/sample-practice-report/9000001</loc>
                     <news:news>
                         <news:publication>
                             <news:name>RotoBaller</news:name>
                             <news:language>en</news:language>
                         </news:publication>
-                        <news:publication_date>2026-09-27T19:00:09-04:00</news:publication_date>
-                        <news:title>RJ Harvey Cleared to Return on Sunday</news:title>
+                        <news:publication_date>2026-09-27T18:00:00-04:00</news:publication_date>
+                        <news:title>Sample Practice Report</news:title>
                     </news:news>
                 </url><url>
                     <loc>https://www.rotoballer.com/updated-fantasy-football-projections-for-week-3-rb-wr-te-qb-d-st-k-2026/1952030</loc>
@@ -37,6 +37,6 @@
                             <news:language>en</news:language>
                         </news:publication>
                         <news:publication_date>2026-09-27T06:41:02-04:00</news:publication_date>
-                        <news:title>Updated Week 3 Fantasy Football Projections (Half PPR): RB, WR, TE, QB, D/ST, K</news:title>
+                        <news:title>Updated Week 3 Projections</news:title>
                     </news:news>
                 </url></urlset>
