@@ -92,4 +92,4 @@ Timing notes:
 | Sources | requests, BeautifulSoup + lxml, Playwright (Chromium, FanDuel only) |
 | Storage | SQLite + Parquet (pipeline), PostgreSQL (production) |
 | Serving | gunicorn behind nginx, Cloudflare DNS/SSL, DigitalOcean droplet |
-| Quality | ruff (lint + format), pytest (1241 tests), GitHub Actions |
+| Quality | ruff (lint + format), pytest (1259 tests), GitHub Actions |
