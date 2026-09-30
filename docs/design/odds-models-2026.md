@@ -691,6 +691,29 @@ computing kickoffs. The locked players with their final points (§3.7) wait for 
 and the lineup endpoint. Built by a Claude Code cloud session from
 `docs/briefs/b6-betting-windows.md`; merged 2026-09-28 (31db13e), 825 tests.
 
+**Implementation notes (B5, 2026-09-30).** A player is locked when `nfl_schedules.status` is
+`STATUS_FINAL` for his team in the week, as §3.1 says. For a final game the lineups step pins the
+owner's actual starters from `matchups.starters`, in slot order, at their league points
+(`matchups.players_points`, 0 when missing), even when no source projects them any more, which
+answers §3.8; his other rostered players from that game cannot enter the lineup and are labelled
+`played` in `projections_rosters.roster_status`, and the model fills every other slot as before.
+`team_lineups` gains `is_locked` and `locked_points` (NULL unless locked); a locked row has μ at
+its points and σ and variance 0, and the step's summary counts `n_locked`. The simulate step reads
+the locked rows and fixes those starters at their points in every simulation, recording the count
+in `simulation_runs.n_locked`; it still draws the normals for every column and overwrites only the
+locked ones, so every other starter's draws are bit-identical to an unlocked run. The owner
+changed two things. A game in progress at run time does not stop the run, as §3.1 had it: its
+players are simulated as unplayed and the step warns, naming the game. And the accuracy step,
+which grades the week's latest run with `n_locked = 0` (Wednesday's) and reads that run's curves
+and moneylines, takes each team's projected total from that run's `team_distribution_curves.mean`,
+because a rerun that pins real points overwrites `team_projections_summary`; a week with only
+locked runs has its players graded and its teams not, with a warning. Calibrate follows. The
+lineup APIs (`/api/lineup/<owner>`, `/api/team_players`) return `is_locked` and `locked_points`
+per starter, and the lineup columns on the betting and analytics pages mark a locked player with
+his final points (§3.7). The runbook corrections of §3.2 were made in WP9: Friday runs
+`--steps league,lineups,simulate,odds,playoffs,validate` and Saturday the full default run; B5
+removes the runbook's caveat that played games are not pinned.
+
 ---
 
 ## 4. Other bet types
@@ -1099,7 +1122,7 @@ first, because every later package stores or reads it.
 - **B5.** Locks from final games at league points, owners' kicked-off starters pinned, refusal
   while a game is in progress, accuracy and calibrate on `n_locked = 0`, and the runbook
   corrections of §3.2. Driving risk: pinning edge cases (a pinned starter no source projects, an
-  empty slot) and sources dropping players who have played.
+  empty slot) and sources dropping players who have played. Shipped 2026-09-30 (merge pending).
 - **B6.** Acceptance by window, the paused banner, `lock_time` as a kill switch, `remove_bet`
   limited to the latest run. Driving risk: time zones, the lazy lock, and behaviour when the laptop
   is off. Shipped 2026-09-28 (merge 31db13e), ahead of B5: until the Friday rerun exists, the

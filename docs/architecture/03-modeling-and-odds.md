@@ -68,6 +68,8 @@ The `lineups` step (`pipeline/steps/lineups.py`, waiver fill in `pipeline/waiver
 
 Waiver pickups model the owner who fills an empty slot from waivers before kickoff. A healthy starter is never replaced, however low his projection.
 
+**Locked starters.** On a rerun after some of the week's games, a player is locked when his NFL game is final (`nfl_schedules.status = 'STATUS_FINAL'` for his team), decided by status and never by points. For a final game the owner's actual Sleeper starters (`matchups.starters`, in slot order) are pinned in their slots before the greedy fill, at their real league points (`matchups.players_points`, 0 when missing), even when no source projects them any more: `is_locked` 1, `locked_points` and μ at those points, σ 0. The owner's other rostered players from that game can no longer enter the lineup and are labelled `played` in `projections_rosters`; the model fills every other slot as above. Sleeper locks a slot at its player's kickoff, so pinning reads a fact rather than guessing the owner. The step's summary counts the pinned starters (`n_locked`).
+
 ## 3. Simulation
 
 The `simulate` step (`pipeline/steps/simulate.py`, sampler in `pipeline/model/sampling.py`) draws the week's totals: seed `1738`, 50,000 simulations, each starter's μ and σ from `team_lineups`, and the dud, floor and correlation blocks of the run's model version ([§1](#1-player-distributions)).
@@ -88,6 +90,8 @@ This keeps the simulated mean and standard deviation equal to m and σ while giv
 A team's score for simulation *i* is the sum of its starters' *i*-th points. The totals go to `sims/<season>/wkNN/<run_id>.parquet` for the odds step.
 
 **Teammate correlation.** When the version has a `correlation` block (v2 and v2.1), the z's of starters who play for the same NFL team, on any fantasy roster, are correlated before they become points: each group's normals are multiplied by the Cholesky factor of the matrix of pair correlations (in v2.1 QB–WR 0.22, QB–TE 0.22, QB–RB 0.07, RB–WR −0.05; any other pair 0). This Gaussian copula keeps every player's own distribution while making a QB's big game raise his receivers' odds of one. Players on different NFL teams stay independent, opponents in the same game included; v1 draws every starter independently.
+
+**Locked starters.** A starter the lineups step pinned ([§2](#2-lineups-and-replacement-players)) scores his `locked_points` in every simulation, and the run records how many there are in `simulation_runs.n_locked`. The normals are still drawn for every column and only the locked columns are overwritten, so every other starter's draws are bit-identical to an unlocked run: the model links only players of the same NFL team, and a final game fixes all of its players at once. A game still in progress does not stop the run; its players are simulated as unplayed and the step warns, naming the game.
 
 **Matchups.** The week's pairs from `league.db.matchups`. From `playoff_week_start` on, only the rosters Sleeper gives a matchup that week, the teams still playing, are simulated.
 
@@ -233,7 +237,7 @@ The `accuracy` step (`pipeline/steps/accuracy.py`) grades the week before the ru
 | `bias` | Mean (projected − actual); positive means the source projected too high |
 | `corr` | Pearson's r; empty under 3 players or when either side is constant |
 
-**Teams.** Each roster's projected total (`team_projections_summary.total_mu`, or the sum of `team_lineups.mu`) is compared with its matchup points, with whether the score fell inside the simulated 10th–90th percentile range (`team_distribution_curves`) and the moneyline win probability (`betting_odds_matchup_ml`), both from the latest odds run for the week. A tie or a week without an opponent has no result.
+**Teams.** Each roster's projected total is compared with its matchup points, with whether the score fell inside the simulated 10th–90th percentile range (`team_distribution_curves`) and the moneyline win probability (`betting_odds_matchup_ml`), both from the week's latest run with `n_locked = 0`, Wednesday's, so a rerun's real Thursday points never flatter the model. The projected total graded is that run's `team_distribution_curves.mean`, because a rerun that pins real points overwrites `team_projections_summary` and `team_lineups`. A week with only locked runs has its players graded and its teams not, with a warning. The calibrate step reads what this step graded, so it follows the same run. A tie or a week without an opponent has no result.
 
 **Summary.** Consensus MAE, bias and correlation over all positions; the most accurate source at each position among those with at least 20 players scored; team MAE; the share of teams inside their 80% range (`coverage_80`); and the moneyline Brier score, the mean of (win probability − won)².
 

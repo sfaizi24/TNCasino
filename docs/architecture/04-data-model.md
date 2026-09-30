@@ -39,7 +39,7 @@ Written by the `league` step, which mirrors Sleeper and the ESPN schedule, and b
 | `nfl_schedules` | (season*, week*, team*) | 576 | Per team per week: `opponent`, `is_home`, `is_bye`, `game_date`. The 2025 rows were written by the retired notebooks from hardcoded bye weeks and converted by `migrate-legacy`; they carry only `is_bye` (`is_home` is 0, the rest NULL). |
 | `player_stats` | stat_id* | 36,052 | Actual weekly stats; `pts_ppr` is used for accuracy analysis |
 | `transactions` | transaction_id* | 347 | Adds/drops/trades. Stored but not used. |
-| `projections_rosters` | (season*, week*, sleeper_player_id*) | 172 | Each rostered player's μ/var for the week (0 when unprojected), `starting_status` (1 in the optimal lineup) and `roster_status` (`starter`, `bench`, `out`, `bye` or `unprojected`). The migrated 2025 rows are `starter`, `bench` or `unprojected`. |
+| `projections_rosters` | (season*, week*, sleeper_player_id*) | 172 | Each rostered player's μ/var for the week (0 when unprojected), `starting_status` (1 in the optimal lineup) and `roster_status` (`starter`, `bench`, `out`, `bye`, `unprojected`, or `played` for a bench player whose NFL game is final and who can no longer enter the lineup). The migrated 2025 rows are `starter`, `bench` or `unprojected`. |
 
 ## projections.db — projections and lineups
 
@@ -50,7 +50,7 @@ Written by the `scrape`, `clean`, `match`, `stats` and `lineups` steps, each rep
 | `projections` | id*, unique on (source, season, week, first, last, position) | Scraped projections, cleaned in place by `clean`: `team`, `projected_points`, `external_id` |
 | `projections_with_sleeper` | id*, unique like `projections` | `projections` + `sleeper_player_id` and `match_method` (`external_id`, `def_team`, `hardcoded`, `exact_team`, `exact`, `last_initial`, or NULL; the 2025 rows keep the older `dst_team_match`, `hardcoded` and `automatic`) |
 | `player_week_stats` | (season*, week*, sleeper_player_id*) | `mu`, `sigma`, `var`, `n_sources`, the sources' `spread`, `model_version`, and the player's NFL `team`. For 2025 the migration recovered `spread` from the stored sigma and back-filled `team` from `nfl_players`. |
-| `team_lineups` | (season*, week*, roster_id*, slot*) | Chosen starters: `owner`, `slot` (`QB`, `RB1`, `RB2`, `WR1`, `WR2`, `TE`, `FLEX`, `K`, `DEF`), `sleeper_player_id`, `player_name`, `nfl_team`, `mu`, `sigma`, `is_replacement`. For 2025 the migration back-filled `sleeper_player_id` from the week's one `player_week_stats` row with the same name and position, and `nfl_team` from `nfl_players`; the 56 `Waiver Pickup` rows have no player and stay NULL. |
+| `team_lineups` | (season*, week*, roster_id*, slot*) | Chosen starters: `owner`, `slot` (`QB`, `RB1`, `RB2`, `WR1`, `WR2`, `TE`, `FLEX`, `K`, `DEF`), `sleeper_player_id`, `player_name`, `nfl_team`, `mu`, `sigma`, `is_replacement`, `is_locked` (1 for an owner's actual starter pinned because his NFL game is final) and `locked_points` (his real league points, NULL unless locked; a locked row has `mu` at those points and `sigma` 0). For 2025 the migration back-filled `sleeper_player_id` from the week's one `player_week_stats` row with the same name and position, and `nfl_team` from `nfl_players`; the 56 `Waiver Pickup` rows have no player and stay NULL. |
 | `team_projections_summary` | (season*, week*, roster_id*) | `total_mu`, `combined_sigma`, `total_var`, `waiver_pickups` |
 
 ## odds.db — prices and curves
@@ -59,7 +59,7 @@ Written by the `simulate`, `odds` and `playoffs` steps; the 2025 rows were writt
 
 | Table | Key | Written by | Contents |
 |---|---|---|---|
-| `simulation_runs` | run_id* | simulate | `season`, `week`, `seed`, `n_sims`, `model_version`, `n_teams`, `created_at`; `draws_path`, the run's draws as Parquet under the data directory (`sims/{season}/wk{week}/{run_id}.parquet`, one row per simulation per team); `n_locked`, the players fixed at their real points (0 until a rerun locks the games already played); `window_closes_at`, the week's first kickoff after `created_at`, when betting on the run closes, NULL when no game is left; and `standings_through_week`, the fewest games any roster has played, so the week the standings are complete through |
+| `simulation_runs` | run_id* | simulate | `season`, `week`, `seed`, `n_sims`, `model_version`, `n_teams`, `created_at`; `draws_path`, the run's draws as Parquet under the data directory (`sims/{season}/wk{week}/{run_id}.parquet`, one row per simulation per team); `n_locked`, the starters fixed at their real points in every simulation because their game is final (0 on Wednesday's run; the accuracy step grades the week's latest run with 0); `window_closes_at`, the week's first kickoff after `created_at`, when betting on the run closes, NULL when no game is left; and `standings_through_week`, the fewest games any roster has played, so the week the standings are complete through |
 | `betting_odds_matchup_ml` | (run_id*, week*, team1_id*, team2_id*) | odds | `team{1,2}_win_prob`, `team{1,2}_ml`, `ties` |
 | `betting_odds_matchup_ou` | (run_id*, week*, team1_id*, team2_id*) | odds | `line` on the combined score, `over_prob`/`over_odds`, `under_prob`/`under_odds` |
 | `betting_odds_team_ou` | (run_id*, week*, team_id*) | odds | `line`, `over_prob`/`over_odds`, `under_prob`/`under_odds`, `push_count` |
