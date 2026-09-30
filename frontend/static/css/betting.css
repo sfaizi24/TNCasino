@@ -1058,23 +1058,6 @@
     cursor: not-allowed;
 }
 
-.tnc-sp-pick {
-    flex-direction: column;
-    gap: 2px;
-}
-
-.tnc-sp-side-line {
-    font-size: var(--tnc-fs-16);
-    font-weight: var(--tnc-fw-bold);
-    line-height: 1.1;
-}
-
-.tnc-sp-price {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
 .tnc-scorer-pick {
     display: flex;
     align-items: baseline;

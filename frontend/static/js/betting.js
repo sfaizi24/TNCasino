@@ -376,12 +376,9 @@ function renderLinePicker(card) {
 function renderSpreadPicks(card) {
     const [team1, team2] = card.sides;
     const buttons = card.sides.map(side => renderPickButton(card, side, `
-        <span class="tnc-sp-side-line tnc-tab-num">${fmtLine(side.line)}</span>
-        <span class="tnc-sp-price">
-            <span class="tnc-mc-odd-num tnc-tab-num">${fmtOdds(side.odds)}</span>
-            <span class="tnc-mc-odd-prob tnc-tab-num">${fmtPct(side.chance)}</span>
-        </span>
-    `, 'tnc-sp-pick'));
+        <span class="tnc-mc-odd-num tnc-tab-num">${fmtOdds(side.odds)}</span>
+        <span class="tnc-mc-odd-prob tnc-tab-num">${fmtPct(side.chance)}</span>
+    `));
     return `
         <div class="tnc-mc-teams">
             <div class="tnc-mc-name">${team1.label}</div>
