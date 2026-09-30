@@ -765,6 +765,37 @@
     gap: 8px;
 }
 
+.tnc-slip-toggle {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 32px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.tnc-slip-toggle svg {
+    color: var(--tnc-fg-muted);
+    transition: transform var(--tnc-dur-fast) var(--tnc-ease);
+}
+
+.tnc-slip.is-collapsed .tnc-slip-toggle svg {
+    transform: rotate(180deg);
+}
+
+.tnc-slip-odds {
+    color: var(--tnc-blue);
+    font-size: var(--tnc-fs-14);
+    font-weight: var(--tnc-fw-bold);
+}
+
 .tnc-slip-title {
     font-size: var(--tnc-fs-14);
     font-weight: var(--tnc-fw-bold);
@@ -777,7 +808,6 @@
 }
 
 .tnc-slip-clear {
-    margin-left: auto;
     height: 26px;
     padding: 0 12px;
     background: transparent;
@@ -879,7 +909,8 @@
     gap: 5px;
 }
 
-/* On a phone the slip is a sheet across the bottom; it scrolls inside itself rather than cover the whole page. */
+/* On a phone the slip is a sheet across the bottom; it scrolls inside itself rather than cover the whole page,
+   and collapses to its head to hand the screen back. */
 @media (max-width: 719px) {
     .tnc-slip {
         left: 0;

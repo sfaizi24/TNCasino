@@ -43,7 +43,7 @@ const state = {
 let quoteTimer = null;
 
 function emptySlip() {
-    return { legs: [], quote: null, refusal: null, stake: '' };
+    return { legs: [], quote: null, refusal: null, stake: '', collapsed: false };
 }
 
 function americanToDecimal(odds) {
@@ -572,25 +572,52 @@ function renderSlipStake() {
     `;
 }
 
-function renderSlip() {
-    const container = document.getElementById('slip');
-    const legs = state.slip.legs;
-    if (!isAuth || !legs.length) {
-        container.innerHTML = '';
-        return;
-    }
-    container.innerHTML = `
-        <div class="tnc-slip">
-            <div class="tnc-slip-head">
+// The head toggles the slip between the whole slip and a single line; collapsed, the price moves up into it.
+function renderSlipHead() {
+    const { legs, quote, collapsed } = state.slip;
+    const odds = quote && collapsed ? `<span class="tnc-slip-odds tnc-tab-num">${fmtOdds(quote.odds)}</span>` : '';
+    return `
+        <div class="tnc-slip-head">
+            <button class="tnc-slip-toggle" data-action="slip-toggle" aria-expanded="${!collapsed}">
                 <span class="tnc-slip-title">Parlay</span>
                 <span class="tnc-slip-count">${legs.length} ${legs.length === 1 ? 'leg' : 'legs'}</span>
-                <button class="tnc-slip-clear" data-action="slip-clear">Clear</button>
-            </div>
-            <div class="tnc-slip-legs">${legs.map(renderSlipLeg).join('')}</div>
-            ${renderSlipStatus()}
-            ${legs.length > 1 ? renderSlipStake() : ''}
+                ${odds}
+                ${chevronSvg()}
+            </button>
+            <button class="tnc-slip-clear" data-action="slip-clear">Clear</button>
         </div>
     `;
+}
+
+function renderSlipBody() {
+    const legs = state.slip.legs;
+    return `
+        <div class="tnc-slip-legs">${legs.map(renderSlipLeg).join('')}</div>
+        ${renderSlipStatus()}
+        ${legs.length > 1 ? renderSlipStake() : ''}
+    `;
+}
+
+// The slip floats over the page, so the page grows by its height to let the last cards scroll clear of it.
+function reserveSlipSpace() {
+    const slip = document.querySelector('.tnc-slip');
+    document.body.style.paddingBottom = slip ? `${slip.offsetHeight + 16}px` : '';
+}
+
+function renderSlip() {
+    const container = document.getElementById('slip');
+    const { legs, collapsed } = state.slip;
+    if (!isAuth || !legs.length) {
+        container.innerHTML = '';
+    } else {
+        container.innerHTML = `
+            <div class="tnc-slip${collapsed ? ' is-collapsed' : ''}">
+                ${renderSlipHead()}
+                ${collapsed ? '' : renderSlipBody()}
+            </div>
+        `;
+    }
+    reserveSlipSpace();
 }
 
 function renderGrid() {
@@ -941,8 +968,14 @@ async function handleSlipPlace() {
     }
 }
 
+function handleSlipToggle() {
+    state.slip.collapsed = !state.slip.collapsed;
+    renderSlip();
+}
+
 function handleSlipClick(action, target) {
-    if (action === 'slip-remove') handleSlipRemove(parseInt(target.dataset.index, 10));
+    if (action === 'slip-toggle') handleSlipToggle();
+    else if (action === 'slip-remove') handleSlipRemove(parseInt(target.dataset.index, 10));
     else if (action === 'slip-clear') handleSlipClear();
     else if (action === 'slip-quick') handleSlipQuick(parseInt(target.dataset.amount, 10));
     else if (action === 'slip-place') handleSlipPlace();
