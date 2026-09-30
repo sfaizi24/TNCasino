@@ -360,12 +360,14 @@ function renderLinePicker(card) {
     const highest = frozen || index === row.lines.length - 1 ? ' disabled' : '';
     const main = index === mainLineIndex(row)
         ? ''
-        : `<button class="tnc-sp-main" data-action="spread-main"${frozen ? ' disabled' : ''}>Main</button>`;
+        : `<button class="tnc-sp-main" data-action="spread-main"${frozen ? ' disabled' : ''}>Main line</button>`;
     return `
         <div class="tnc-sp-picker">
-            <button class="tnc-sp-step" data-action="spread-line" data-delta="-0.5" aria-label="Line down half a point"${lowest}>&minus;&frac12;</button>
-            <span class="tnc-sp-line tnc-tab-num">${fmtLine(row.lines[index].line)}</span>
-            <button class="tnc-sp-step" data-action="spread-line" data-delta="0.5" aria-label="Line up half a point"${highest}>+&frac12;</button>
+            <div class="tnc-sp-stepper">
+                <button class="tnc-sp-step" data-action="spread-line" data-delta="-0.5" aria-label="Line down half a point"${lowest}>&minus;&frac12;</button>
+                <span class="tnc-sp-line tnc-tab-num">${fmtLine(row.lines[index].line)}</span>
+                <button class="tnc-sp-step" data-action="spread-line" data-delta="0.5" aria-label="Line up half a point"${highest}>+&frac12;</button>
+            </div>
             ${main}
         </div>
     `;

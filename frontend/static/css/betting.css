@@ -970,27 +970,33 @@
     gap: 6px;
 }
 
-/* The steps stay centred under VS; Main takes the free space to their right when it shows. */
+/* The stepper stays centred under VS; Main line takes the free space to its right when it shows. */
 .tnc-sp-picker {
     display: grid;
-    grid-template-columns: 1fr auto auto auto 1fr;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    gap: 4px;
-    margin: 5px 0 6px;
+    gap: 8px;
+    margin: 6px 0 8px;
 }
 
-.tnc-sp-picker > :first-child {
+.tnc-sp-stepper {
     grid-column: 2;
-}
-
-.tnc-sp-step,
-.tnc-sp-main {
-    height: 24px;
+    display: inline-flex;
+    align-items: stretch;
+    height: 32px;
     background: var(--tnc-bg);
     border: 1px solid var(--tnc-border);
-    border-radius: 4px;
-    color: var(--tnc-fg);
-    font-size: var(--tnc-fs-12);
+    border-radius: var(--tnc-r-sm);
+    overflow: hidden;
+}
+
+.tnc-sp-step {
+    width: 40px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-13);
     font-weight: var(--tnc-fw-semi);
     font-family: inherit;
     line-height: 1;
@@ -998,40 +1004,58 @@
     transition: all var(--tnc-dur-base) var(--tnc-ease);
 }
 
-.tnc-sp-step {
-    width: 32px;
+.tnc-sp-step:first-child {
+    border-right: 1px solid var(--tnc-border);
 }
 
-.tnc-sp-main {
-    justify-self: start;
-    padding: 0 8px;
-    color: var(--tnc-blue);
-    border-color: var(--tnc-blue);
-    font-size: var(--tnc-fs-11);
+.tnc-sp-step:last-child {
+    border-left: 1px solid var(--tnc-border);
 }
 
 .tnc-sp-step:hover:not(:disabled) {
-    border-color: var(--tnc-blue);
     color: var(--tnc-blue);
-}
-
-.tnc-sp-main:hover:not(:disabled) {
     background: var(--tnc-blue-tint);
 }
 
-.tnc-sp-step:disabled,
-.tnc-sp-main:disabled {
-    opacity: 0.4;
+.tnc-sp-step:disabled {
+    opacity: 0.35;
     cursor: not-allowed;
 }
 
 /* Wide enough for -10.5, so the steps do not move as the line changes. */
 .tnc-sp-line {
-    min-width: 44px;
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 56px;
     color: var(--tnc-fg);
     font-size: var(--tnc-fs-14);
     font-weight: var(--tnc-fw-bold);
+}
+
+/* Styled as the card's other quiet control, Show lineups. */
+.tnc-sp-main {
+    justify-self: start;
+    padding: 6px 0;
+    background: transparent;
+    border: none;
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-10);
+    font-weight: var(--tnc-fw-semi);
+    font-family: inherit;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: color var(--tnc-dur-base) var(--tnc-ease);
+}
+
+.tnc-sp-main:hover:not(:disabled) {
+    color: var(--tnc-blue);
+}
+
+.tnc-sp-main:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
 }
 
 .tnc-sp-pick {
