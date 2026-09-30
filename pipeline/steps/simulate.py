@@ -39,6 +39,13 @@ ADDED_COLUMNS = {
     "window_closes_at": "TEXT",
     "standings_through_week": "INTEGER NOT NULL DEFAULT 0",
 }
+# Each game once, from its home side. A game under way is not refused: the lineups step locks only final games,
+# so its players are simulated as unplayed. Schedules migrated from 2025 carry no status.
+GAMES_IN_PROGRESS = """
+SELECT team AS home, opponent AS away, status FROM nfl_schedules
+WHERE season = ? AND week = ? AND is_bye = 0 AND is_home = 1
+  AND status IS NOT NULL AND status NOT IN ('STATUS_FINAL', 'STATUS_SCHEDULED')
+"""
 
 
 def run(ctx: StepContext) -> StepResult:
@@ -47,12 +54,15 @@ def run(ctx: StepContext) -> StepResult:
 
     starters = load_starters(ctx)
     params = load_params(settings.model_version)
-    # Nothing is locked yet; a rerun after the week's first games will fix their players at their real points.
-    locked_points: dict[str, float] = {}
+    locked = starters[starters["is_locked"] == 1]
+    locked_points = dict(zip(locked["sleeper_player_id"], locked["locked_points"], strict=True))
+    n_locked = len(locked_points)
     ctx.log(
         f"{starters['roster_id'].nunique()} teams, {len(starters)} starters, {settings.n_sims} sims, "
         f"seed {settings.seed}, params {settings.model_version}"
     )
+    if n_locked:
+        ctx.log(f"{n_locked} starters locked at their real points")
     draws, roster_ids = simulate_teams(starters, params, settings.n_sims, settings.seed, locked_points)
     draws_path = save_draws(settings, ctx.run_id, draws, roster_ids)
     created_at = utc_now()
@@ -63,7 +73,7 @@ def run(ctx: StepContext) -> StepResult:
         len(roster_ids),
         draws_path,
         created_at=created_at,
-        n_locked=len(locked_points),
+        n_locked=n_locked,
         window_closes_at=window_closes_at,
         standings_through_week=standings_through_week,
     )
@@ -71,7 +81,7 @@ def run(ctx: StepContext) -> StepResult:
     elapsed = time.perf_counter() - started
     ctx.log(f"draws saved to {draws_path} in {elapsed:.1f}s")
     ctx.log(f"betting window closes at {window_closes_at}; standings through week {standings_through_week}")
-    warnings = []
+    warnings = games_in_progress(ctx)
     if window_closes_at is None:
         warnings.append(f"no week {settings.week} kickoff after this run in nfl_schedules; it has no betting window")
 
@@ -81,7 +91,7 @@ def run(ctx: StepContext) -> StepResult:
         "n_sims": settings.n_sims,
         "seed": settings.seed,
         "model_version": settings.model_version,
-        "n_locked": len(locked_points),
+        "n_locked": n_locked,
         "window_closes_at": window_closes_at,
         "standings_through_week": standings_through_week,
         "teams": team_summaries(draws, [owners[roster_id] for roster_id in roster_ids]),
@@ -94,8 +104,8 @@ def load_starters(ctx: StepContext) -> pd.DataFrame:
     """The week's starters ordered by roster then slot, which fixes each player's column in the random draws."""
     settings = ctx.settings
     starters = pd.read_sql_query(
-        "SELECT roster_id, owner, slot, sleeper_player_id, position, nfl_team, mu, sigma FROM team_lineups "
-        "WHERE season = ? AND week = ? AND sleeper_player_id IS NOT NULL",
+        "SELECT roster_id, owner, slot, sleeper_player_id, position, nfl_team, mu, sigma, is_locked, locked_points "
+        "FROM team_lineups WHERE season = ? AND week = ? AND sleeper_player_id IS NOT NULL",
         ctx.db("projections"),
         params=(settings.season, settings.week),
     )
@@ -146,6 +156,14 @@ def next_kickoff(ctx: StepContext, after: datetime) -> str | None:
     kickoffs = [datetime.fromisoformat(row["game_date"]) for row in rows]
     upcoming = [kickoff for kickoff in kickoffs if kickoff > after]
     return timestamp(min(upcoming)) if upcoming else None
+
+
+def games_in_progress(ctx: StepContext) -> list[str]:
+    rows = ctx.db("league").execute(GAMES_IN_PROGRESS, (ctx.settings.season, ctx.settings.week))
+    return [
+        f"{row['away']} at {row['home']} is in progress ({row['status']}); its players are simulated as unplayed"
+        for row in rows
+    ]
 
 
 def fewest_games_played(ctx: StepContext) -> int:

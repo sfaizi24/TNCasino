@@ -161,6 +161,40 @@ def test_a_locked_player_scores_the_same_points_in_every_sim():
     np.testing.assert_array_equal(locked[:, 1], free[:, 1])
 
 
+def test_locking_a_starter_leaves_every_other_team_bit_identical():
+    # p0 plays for roster 1 and shares his NFL team with a starter of rosters 4, 8 and 11.
+    params = {**V1_PARAMS, "dud": dud_table(0.1), "correlation": CORRELATION}
+    league = full_league()
+
+    free, _ = simulate_teams(league, params, n_sims=2000, seed=1738)
+    locked, _ = simulate_teams(league, params, n_sims=2000, seed=1738, locked_points={"p0": 3.5})
+
+    assert not np.array_equal(locked[:, 0], free[:, 0])
+    assert np.array_equal(locked[:, 1:], free[:, 1:])
+
+
+def test_a_locked_starter_without_mu_or_sigma_scores_his_points():
+    team = starters(
+        (1, "wr", "WR", "KC", 0.0, 0.0),
+        (1, "def", "DEF", "KC", 0.0, 0.0),
+        (2, "qb", "QB", "BUF", 20.0, 7.0),
+    )
+    params = {"dud": dud_table(0.2), "floor": {"by_position": {"DEF": -5.0}}, "correlation": CORRELATION}
+
+    draws, _ = simulate_teams(team, params, n_sims=1000, seed=3, locked_points={"wr": 0.0, "def": -2.0})
+
+    assert np.all(np.isfinite(draws))
+    assert np.all(draws[:, 0] == np.float32(-2.0))
+
+
+def test_a_week_with_every_starter_locked_is_its_real_totals():
+    team = starters((1, "qb", "QB", "KC", 18.5, 0.0), (1, "k", "K", "KC", 9.0, 0.0), (2, "wr", "WR", "BUF", 4.0, 0.0))
+
+    draws, _ = simulate_teams(team, V1_PARAMS, n_sims=100, seed=3, locked_points={"qb": 18.5, "k": 9.0, "wr": 4.0})
+
+    assert np.all(draws == np.array([27.5, 4.0], dtype=np.float32))
+
+
 def test_totals_are_float32_with_columns_in_ascending_roster_order():
     team = starters(
         (7, "qb", "QB", "KC", 20.0, 7.0),

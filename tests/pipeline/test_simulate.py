@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -149,6 +150,16 @@ def recorded_runs(settings: Settings) -> list[dict]:
     runs = [dict(row) for row in conn.execute("SELECT * FROM simulation_runs ORDER BY created_at")]
     conn.close()
     return runs
+
+
+def set_game_status(settings: Settings, teams: list[str], status: str) -> None:
+    conn = connect(settings, "league")
+    conn.executemany(
+        "UPDATE nfl_schedules SET status = ? WHERE season = ? AND week = ? AND team = ?",
+        [(status, settings.season, settings.week, team) for team in teams],
+    )
+    conn.commit()
+    conn.close()
 
 
 def test_simulate_writes_long_parquet_draws_and_records_the_run(settings):
@@ -318,3 +329,50 @@ def test_an_odds_db_from_before_the_run_columns_gains_them_with_their_defaults(s
         (0, None, 0),
         (0, "2026-10-02T00:15:00+00:00", 3),
     ]
+
+
+def test_a_locked_starter_scores_his_real_points_in_every_sim(settings):
+    write_league(settings)
+    write_lineups(settings, [1, 2])
+    # Roster 1 starts only its QB, whose game is final: the lineups step fixes him at his real points.
+    conn = connect(settings, "projections")
+    conn.execute("DELETE FROM team_lineups WHERE roster_id = 1 AND slot != 'QB'")
+    conn.execute(
+        "UPDATE team_lineups SET is_locked = 1, locked_points = 12.3, mu = 12.3, sigma = 0, var = 0 "
+        "WHERE sleeper_player_id = '1-QB'"
+    )
+    conn.commit()
+    conn.close()
+
+    result = run_simulate(settings)
+
+    draws = pd.read_parquet(settings.data_dir / f"sims/2026/wk04/{RUN_ID}.parquet")
+    locked_totals = draws.loc[draws["roster_id"] == 1, "total_points"]
+    assert (locked_totals == np.float32(12.3)).all()
+    assert draws.loc[draws["roster_id"] == 2, "total_points"].nunique() > 1
+    assert recorded_runs(settings)[0]["n_locked"] == 1
+    assert result.summary["n_locked"] == 1
+
+
+def test_a_game_in_progress_is_simulated_as_unplayed_with_a_warning(settings, monkeypatch):
+    write_league(settings)
+    write_lineups(settings, [1, 2])
+    set_game_status(settings, ["CLE", "PIT"], "STATUS_IN_PROGRESS")
+    monkeypatch.setattr(simulate, "utc_now", lambda: datetime(2026, 10, 2, 1, 0, tzinfo=UTC))
+
+    result = run_simulate(settings)
+
+    assert result.warnings == ["PIT at CLE is in progress (STATUS_IN_PROGRESS); its players are simulated as unplayed"]
+    assert recorded_runs(settings)[0]["window_closes_at"] == "2026-10-04T13:30:00+00:00"
+
+
+def test_final_and_scheduled_games_raise_no_warning(settings, monkeypatch):
+    write_league(settings)
+    write_lineups(settings, [1, 2])
+    set_game_status(settings, ["CLE", "PIT"], "STATUS_FINAL")
+    set_game_status(settings, ["WAS", "IND", "KC", "BUF"], "STATUS_SCHEDULED")
+    monkeypatch.setattr(simulate, "utc_now", lambda: datetime(2026, 10, 2, 5, 0, tzinfo=UTC))
+
+    result = run_simulate(settings)
+
+    assert result.warnings == []

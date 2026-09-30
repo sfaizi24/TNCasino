@@ -32,17 +32,20 @@ def simulate_teams(
     """Simulated team totals, float32 of shape (n_sims, n_teams), with columns in ascending roster_id order.
 
     One standard normal per starter and sim is drawn in the starters' row order, so the same rows and
-    seed always reproduce the same totals. A starter in `locked_points` scores that value in every sim.
+    seed always reproduce the same totals. A starter in `locked_points` scores that value in every sim; his
+    normals are still drawn and correlated, so every other starter's draws match a run without locks.
     """
     normals = np.random.default_rng(seed).standard_normal((n_sims, len(starters)))
     if params["correlation"] is not None:
         correlate_teammates(normals, starters, params["correlation"]["same_nfl_team"])
-    points = player_points(normals, starters, params)
 
     locked_points = locked_points or {}
-    for column, player_id in enumerate(starters["sleeper_player_id"]):
-        if player_id in locked_points:
-            points[:, column] = locked_points[player_id]
+    player_ids = starters["sleeper_player_id"]
+    locked = player_ids.isin(list(locked_points)).to_numpy()
+    points = np.empty(normals.shape)
+    points[:, locked] = player_ids[locked].map(locked_points).to_numpy(dtype=float)
+    if not locked.all():
+        points[:, ~locked] = player_points(normals[:, ~locked], starters[~locked], params)
 
     column_rosters = starters["roster_id"].to_numpy()
     roster_ids = sorted(starters["roster_id"].unique().tolist())

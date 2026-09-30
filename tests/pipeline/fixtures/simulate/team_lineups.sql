@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS team_lineups (
   var REAL NOT NULL,
   n_sources INTEGER NOT NULL,
   is_replacement INTEGER NOT NULL DEFAULT 0,
+  is_locked INTEGER NOT NULL DEFAULT 0,
+  locked_points REAL,
   timestamp TEXT NOT NULL,
   PRIMARY KEY (season, week, roster_id, slot)
 );
