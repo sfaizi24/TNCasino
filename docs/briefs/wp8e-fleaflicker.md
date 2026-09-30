@@ -4,10 +4,11 @@ Written 2026-09-29 by the orchestrator session, after WP8d (PR 17, merge 90a8711
 session, which writes its own engineer briefs from this one, runs its engineers, pushes the branch
 `wp8e-fleaflicker` cut from `main` and opens the pull request. The orchestrator merges.
 
-**Gate.** This package starts only when section 4's "The owner's league" carries a league id and
-section 10 carries that league's scoring rules. Both come from a Fleaflicker league the owner
-creates by hand; until they are filled in there is nothing to build against, because Fleaflicker
-serves projections only inside a league and only in that league's scoring (section 4).
+**Gate.** This package starts only when section 4's "The owner's league" says the league exists
+and section 10 carries that league's scoring rules. Both were filled in on 2026-09-29, so the gate
+is open. The league id itself stays out of the repository: the owner gives it to the cloud session
+in its prompt, and a session without it builds from fixtures and leaves the live run to the
+orchestrator (task 5).
 
 ## 1. Where you are
 
@@ -257,9 +258,9 @@ listing page that its rows carry `pointsProjected`, and fills in:
 
 | | |
 |---|---|
-| League id | pending |
-| D/ST filter label | pending (`D/ST` expected) |
-| Rules | section 10, pending |
+| League | created by the owner on 2026-09-29; the id is in the owner's `.env`, not here |
+| D/ST filter label | `D/ST` (confirmed on 2026-09-29: 32 defenses, every row projected) |
+| Rules | section 10 |
 
 ## 5. Ownership
 
@@ -403,6 +404,65 @@ decide.
 
 ## 10. The owner's league's rules
 
-Pending. Filled in by the orchestrator from `FetchLeagueRules` on the owner's league, as the
-reduced tuples the module pins: category id, points, for-every, bounds, bonus flag and the
-positions each applies to. Until this section is filled in, the gate at the top holds.
+Fetched by the orchestrator on 2026-09-29 from `FetchLeagueRules` on the owner's league, after the
+owner set its scoring to section 4's table. This is the set the module pins: 42 rules, each
+reduced to category id, points, for-every or bounds, the bonus flag and the positions it applies
+to. A rule is a bonus when `isBonus` is set; its bounds are `boundLower` and `boundUpper`, both
+inclusive, and a missing bound is open. A rule without `applyToAll` lists its positions in
+`applyTo`.
+
+| Group | Category | Id | Points | Rule | Applies to |
+|---|---|---|---|---|---|
+| Passing | Passing Yard | 3 | 1 | every 25 | QB, RB, WR, TE, K |
+| Passing | Passing TD | 5 | 4 | each | QB, RB, WR, TE, K |
+| Passing | 2 Pt Conversion Passing | 4 | 2 | each | QB, RB, WR, TE, K |
+| Passing | Interception | 7 | -2 | each | QB, RB, WR, TE, K |
+| Rushing | Rushing Yard | 22 | 1 | every 10 | QB, RB, WR, TE, K |
+| Rushing | 2 Pt Conversion Rushing | 23 | 2 | each | QB, RB, WR, TE, K |
+| Rushing | Rushing TD | 24 | 6 | each | QB, RB, WR, TE, K |
+| Receiving | Catch | 41 | 1 | each | QB, RB, WR, TE, K |
+| Receiving | Receiving Yard | 42 | 1 | every 10 | QB, RB, WR, TE, K |
+| Receiving | 2 Pt Conversion Receiving | 43 | 2 | each | QB, RB, WR, TE, K |
+| Receiving | Receiving TD | 44 | 6 | each | QB, RB, WR, TE, K |
+| Misc | Fumble Lost | 27 | -2 | each | QB, RB, WR, TE, K |
+| Misc | Offensive Fumble Recovery TD | 118 | 6 | each | QB, RB, WR, TE, K |
+| Kicking | Field Goal Made | 101 | 3 | each | QB, RB, WR, TE, K |
+| Kicking | Field Goal Made | 102 | 1 | 40 to 49, bonus | QB, RB, WR, TE, K |
+| Kicking | Field Goal Made | 102 | 2 | 50 and more, bonus | QB, RB, WR, TE, K |
+| Kicking | Field Goal Missed | 103 | -1 | each | QB, RB, WR, TE, K |
+| Kicking | XP | 104 | 1 | each | QB, RB, WR, TE, K |
+| Kicking | XP Missed | 105 | -1 | each | QB, RB, WR, TE, K |
+| Returning | Kick Return TD | 63 | 6 | each | all |
+| Returning | Punt Return TD | 67 | 6 | each | all |
+| Defense | Interception | 84 | 2 | each | D/ST |
+| Defense | Sack | 85 | 1 | each | D/ST |
+| Defense | Fumble Forced | 86 | 1 | each | D/ST |
+| Defense | Fumble Recovered | 87 | 2 | each | D/ST |
+| Defense | Safety | 88 | 2 | each | all |
+| Defense | Defensive TD | 89 | 6 | each | all |
+| Defense | Blocked Kick | 117 | 2 | each | D/ST |
+| Defense | Point Allowed | 94 | 5 | exactly 0, bonus | D/ST |
+| Defense | Point Allowed | 94 | 4 | 1 to 6, bonus | D/ST |
+| Defense | Point Allowed | 94 | 3 | 7 to 13, bonus | D/ST |
+| Defense | Point Allowed | 94 | 1 | 14 to 20, bonus | D/ST |
+| Defense | Point Allowed | 94 | -1 | 28 to 34, bonus | D/ST |
+| Defense | Point Allowed | 94 | -4 | 35 and more, bonus | D/ST |
+| Defense | Net Yard Allowed | 95 | 5 | up to 100, bonus | D/ST |
+| Defense | Net Yard Allowed | 95 | 3 | 100 to 199, bonus | D/ST |
+| Defense | Net Yard Allowed | 95 | 2 | 200 to 299, bonus | D/ST |
+| Defense | Net Yard Allowed | 95 | -1 | 350 to 399, bonus | D/ST |
+| Defense | Net Yard Allowed | 95 | -3 | 400 to 449, bonus | D/ST |
+| Defense | Net Yard Allowed | 95 | -5 | 450 to 499, bonus | D/ST |
+| Defense | Net Yard Allowed | 95 | -6 | 500 to 549, bonus | D/ST |
+| Defense | Net Yard Allowed | 95 | -7 | 550 and more, bonus | D/ST |
+
+Three lines differ from Sleeper's, accepted by the owner on 2026-09-29 because they move a
+projection by well under a point: D/ST fumble recovered scores 2 rather than 1; there is no
+own-fumble-recovery line for offensive players; and the "yards allowed under 100" bonus is bounded
+at 100 rather than 99, so exactly 100 also takes the 100-to-199 bonus. Pin the league as it is,
+not the Sleeper table.
+
+The league's roster starts QB, RB, WR, WR, TE, RB/WR/TE, K and D/ST and offers the filter labels
+`ALL`, `QB`, `RB`, `WR`, `TE`, `RB/WR/TE`, `K` and `D/ST`. On 2026-09-29 the `D/ST` filter returned
+32 defenses, all with `pointsProjected` for week 4 (`ordinal` 4, `isNow` true), so the module's
+positions are QB, RB, WR, TE, K and DEF.
