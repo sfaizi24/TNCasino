@@ -710,7 +710,9 @@ because a rerun that pins real points overwrites `team_projections_summary`; a w
 locked runs has its players graded and its teams not, with a warning. Calibrate follows. The
 lineup APIs (`/api/lineup/<owner>`, `/api/team_players`) return `is_locked` and `locked_points`
 per starter, and the lineup columns on the betting and analytics pages mark a locked player with
-his final points (§3.7). The runbook corrections of §3.2 were made in WP9: Friday runs
+his final points (§3.7). Those endpoints select the two new columns, so the lineups step runs and
+publishes from this code before the app restarts; until then they return empty lists, as the
+`sleeper_leagues` note in CLAUDE.md already requires of a publish. The runbook corrections of §3.2 were made in WP9: Friday runs
 `--steps league,lineups,simulate,odds,playoffs,validate` and Saturday the full default run; B5
 removes the runbook's caveat that played games are not pinned.
 
