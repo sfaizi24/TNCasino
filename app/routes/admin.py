@@ -11,6 +11,7 @@ from .. import ledger, settlement
 from ..database import db
 from ..models import Bet, BetLeg
 from .helpers import admin_required, friendly_description, get_current_week, query_analytics
+from .pipeline_summary import summary_sections
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -394,6 +395,7 @@ def admin_pipeline():
         weeks=weeks,
         week=week,
         steps=[(name, latest_steps.get(name)) for name in PIPELINE_STEP_ORDER],
+        sections={name: summary_sections(step["summary"]) for name, step in latest_steps.items()},
         sources=_source_reports(week, latest_steps.get("scrape")),
         runs=_week_runs(week),
     )
