@@ -316,6 +316,7 @@ SUNDAY_ARTICLE_URL = (
 )
 
 
+# Synthetic pages in RotoBaller's markup: names, teams and positions as published, ids and numbers made up.
 def rotoballer_file(file_name: str) -> str:
     return (FIXTURES / "rotoballer" / file_name).read_text(encoding="utf-8")
 
@@ -370,7 +371,7 @@ def test_rotoballer_rescore_is_the_half_ppr_page_plus_half_a_point_a_catch(page_
 
 
 def test_rotoballer_player_row(rotoballer_html):
-    # 0.04 * 253.0 passing yards + 4 * 1.8 TD - 2 * 0.8 INT + 0.1 * 37.4 rushing yards + 6 * 0.7 rushing TD; the page shows 23.6
+    # 0.04 * 256.0 passing yards + 4 * 1.4 TD - 2 * 1.2 INT + 0.1 * 15.0 rushing yards + 6 * 0.6 rushing TD; the page shows 18.5
     assert find(rotoballer.parse(rotoballer_html, SEASON, WEEK), "Josh", "Allen") == Projection(
         source="rotoballer.com",
         season=2026,
@@ -379,8 +380,8 @@ def test_rotoballer_player_row(rotoballer_html):
         last_name="Allen",
         position="QB",
         team="BUF",
-        points=23.66,
-        external_id="19801",
+        points=18.54,
+        external_id="90209",
     )
 
 
@@ -388,7 +389,7 @@ def test_rotoballer_reads_the_update_without_its_comp_column(rotoballer_html, ro
     wednesday = find(rotoballer.parse(rotoballer_html, SEASON, WEEK), "Lamar", "Jackson")
     sunday = find(rotoballer.parse(rotoballer_updated_html, SEASON, WEEK), "Lamar", "Jackson")
     assert sunday == wednesday
-    assert sunday.points == round(0.04 * 258.5 + 4 * 1.7 - 2 * 0.6 + 0.1 * 36.0 + 6 * 0.3, 2)
+    assert sunday.points == round(0.04 * 239.1 + 4 * 2.5 - 2 * 0.9 + 0.1 * 20.5 + 6 * 0.0, 2)
 
 
 def test_rotoballer_stamps_the_page_week(rotoballer_html):
@@ -467,7 +468,7 @@ def test_rotoballer_keeps_players_without_a_link_and_without_an_id(rotoballer_ht
 
 
 def test_rotoballer_skips_players_projected_for_nothing(rotoballer_html):
-    gibbs_stats = "<td>18.9</td>\n<td>91.4</td>\n<td>0.8</td>\n<td>4.3</td>\n<td>35.1</td>\n<td>0.3</td>"
+    gibbs_stats = "<td>11.8</td>\n<td>36.4</td>\n<td>0.4</td>\n<td>5.5</td>\n<td>38.3</td>\n<td>0.4</td>"
     assert rotoballer_html.count(gibbs_stats) == 1
     html = rotoballer_html.replace(gibbs_stats, "\n".join(["<td></td>"] * 6))
     rows = rotoballer.parse(html, SEASON, WEEK)
