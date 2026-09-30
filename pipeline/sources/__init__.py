@@ -4,7 +4,7 @@ import importlib
 
 from pipeline.sources.base import ProjectionSource
 
-SOURCE_NAMES = ["sleeper", "espn", "fantasysharks", "firstdown", "fanduel", "fftoday", "rotoballer"]
+SOURCE_NAMES = ["sleeper", "espn", "fantasysharks", "firstdown", "fanduel", "fftoday", "rotoballer", "fleaflicker"]
 
 
 def load_source(name: str) -> ProjectionSource:
