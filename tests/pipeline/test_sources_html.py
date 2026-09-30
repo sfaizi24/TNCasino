@@ -498,7 +498,7 @@ def test_rotoballer_fetch_stops_at_the_sitemap_when_the_week_is_not_posted(serve
 
 # Every source
 
-# Each source module with the name of the fixture holding its captured payload.
+# Each source module with the name of the fixture holding its page or payload.
 SOURCES = [
     (firstdown, "firstdown_html"),
     (fanduel, "fanduel_items"),

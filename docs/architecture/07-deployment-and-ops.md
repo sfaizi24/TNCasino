@@ -89,7 +89,7 @@ Runs Flask on `0.0.0.0:5000` against whatever `DATABASE_URL` is set. The local `
 
 ## Tests
 
-1227 tests in `tests/` (one skipped), running in about 50 seconds. The app tests use in-memory SQLite (`StaticPool`); `test_balance_race.py` builds a file-backed SQLite app (`file_backed_app` in `conftest.py`) so twenty threads really race. The pipeline tests under `tests/pipeline/` run on scratch SQLite files and recorded fixtures, never the network or the real databases.
+1227 tests in `tests/` (one skipped), running in about 50 seconds. The app tests use in-memory SQLite (`StaticPool`); `test_balance_race.py` builds a file-backed SQLite app (`file_backed_app` in `conftest.py`) so twenty threads really race. The pipeline tests under `tests/pipeline/` run on scratch SQLite files and recorded fixtures, never the network or the real databases. The RotoBaller fixtures are the exception to "recorded": they carry the site's markup with made-up numbers, because the repository is public and RotoBaller's letter forbids publishing its data.
 
 | Area | Files | Covers |
 |---|---|---|

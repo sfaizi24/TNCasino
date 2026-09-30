@@ -83,9 +83,9 @@ What that means here: the pipeline stores RotoBaller rows in `projections` next 
 sources and blends them into each player's mean and variance, which is internal use; the site
 shows blended numbers, odds and aggregated charts, none of which lets a reader recover a RotoBaller
 row. No test fixture, log line, chart or page may present RotoBaller's rows as such. The
-committed fixtures are the week-3 articles trimmed to their table, which the tests need to prove
-the parser; they are not redistributed anywhere and the repository is the owner's private
-portfolio, which the orchestrator has judged within "internal testing". Do not add further
+repository is public, so a committed page is publication: the fixtures carry RotoBaller's markup
+with made-up numbers (the note under the fixture table says how that came about), and a pull
+request, commit message or doc carries aggregates only, never a player's row. Do not add further
 fixtures beyond what section 5 lists.
 
 ### What RotoBaller publishes
@@ -114,7 +114,7 @@ The table's header row on the Wednesday article is
     Ru. TDs, Rec, Rec. Yards, Rec. TDs
 
 and the Sunday update has the same columns without `Comp`, so columns are read by header name.
-Each player cell is `<a class="rbPlayer nfl" data-id="{id}" href="/nfl/player/{id}/Josh+Allen">`,
+Each player cell is `<a class="rbPlayer nfl" data-id="{id}" href="/nfl/player/{id}/{First}+{Last}">`,
 which gives an `external_id`. Teams are already Sleeper codes (JAX, LAR, LV, WAS). Empty cells
 mean zero. There are no injury tags. `Fan Points` is half PPR (the page's `<h1>` says so:
 "Week 3 Fantasy Football Projections (Half PPR): RB, WR, TE, QB"), so points are rescored from
@@ -148,6 +148,10 @@ Three fixtures are committed with this brief under `tests/pipeline/fixtures/roto
 | `google_news_sitemap_2026-09-27.xml` | the news sitemap cut to its first three entries plus the one projections article it listed (the Sunday update) |
 
 Everything else on the pages (scripts, styles, navigation, comments, adverts) was stripped.
+
+On 2026-09-29, after PR 17 merged, these real captures were replaced by synthetic fixtures. The repository is
+public and the letter forbids publishing RotoBaller's raw data, so the committed pages keep the markup, names,
+teams and positions and carry made-up stat lines, ids and row order.
 
 ## 5. Ownership
 
@@ -205,7 +209,7 @@ Nothing else: not `stats.py` or the model parameters, not the scrape or playoffs
 3. **Tests, fixtures only.** Position counts on both fixtures (Wednesday QB 32, RB 76, WR 123,
    TE 69; Sunday QB 32, RB 89, WR 139, TE 76 and no K or DEF rows); on every row of both
    fixtures the rescore less half a point per reception is within 0.6 of `Fan Points`; Josh
-   Allen's Wednesday row rescores from his passing and rushing line; the Sunday layout without
+   Allen's Wednesday row rescores to the total worked out by hand from his stat line; the Sunday layout without
    `Comp` parses the same as the Wednesday one; the week comes from the page, not the argument;
    a page without a table raises; a header missing `Rec. TDs` raises; `article_url` picks the
    Sunday update from the sitemap fixture for week 3 and raises for week 4; the suffix, apostrophe,
