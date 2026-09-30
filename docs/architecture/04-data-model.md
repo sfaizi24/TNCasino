@@ -1,31 +1,33 @@
 # 04 – Data Model
 
-Four SQLite files on the operator's machine and one PostgreSQL database in production. `*` marks primary-key columns. Row counts are from the end of the 2025 season and are only there for scale.
+Four SQLite files and a folder of Parquet draws on the operator's machine, and one PostgreSQL database in production. `*` marks primary-key columns. Row counts are from the end of the 2025 season and are only there for scale.
 
 ## Where data lives
 
 ```mermaid
 flowchart LR
-    subgraph SQLite["Local SQLite (gitignored, backend/data/databases/)"]
+    subgraph Local["Operator machine (gitignored, backend/data/)"]
         L[(league.db · 8 MB)]
         P[(projections.db · 5 MB)]
         O[(odds.db · 3 MB)]
-        M[(montecarlo.db · 411 MB)]
+        R[(pipeline.db)]
+        D["sims/ · Parquet draws<br/>one file per run"]
     end
     subgraph PG["Production PostgreSQL"]
         APPT[App tables<br/>users, bets, bet_legs,<br/>weekly_stats, betting_periods,<br/>parlay_refusals]
-        ANT[Analytics tables<br/>16 published tables]
+        ANT[Analytics tables<br/>25 published tables]
+        TOT[simulation_totals<br/>append-only]
     end
     L -- "5 tables (4 renamed)" --> ANT
-    P -- team_lineups --> ANT
-    O -- 10 tables --> ANT
-    M -. never published .-> X[ ]
-    style X fill:none,stroke:none
+    P -- "3 tables" --> ANT
+    O -- "14 tables" --> ANT
+    R -- "3 run-record tables" --> ANT
+    D -- "each new run's score matrix" --> TOT
 ```
 
 ## league.db — Sleeper league data
 
-Written by the `league` step, which mirrors Sleeper and the ESPN schedule, and by the `lineups` step (`projections_rosters`). The 2025 file came from notebooks 01 and 06; `python -m pipeline migrate-legacy` brought it into this shape.
+Written by the `league` step, which mirrors Sleeper and the ESPN schedule, and by the `lineups` step (`projections_rosters`). The 2025 rows were written by the retired notebooks and converted by `python -m pipeline migrate-legacy`.
 
 | Table | Key | Rows | Contents |
 |---|---|---|---|
@@ -34,26 +36,26 @@ Written by the `league` step, which mirrors Sleeper and the ESPN schedule, and b
 | `rosters` | (roster_id*, league_id*) | 22 | Team per league: `owner_id` → users, `team_name`, record, points, JSON player lists. Holds rows from more than one league ID. |
 | `matchups` | matchup_id* (`{league}_{week}_{roster}`) | 192 | One row per team per week: `week`, `roster_id`, `matchup_id_number` (the two teams sharing it play each other), `points` |
 | `nfl_players` | player_id* | 3,968 | Sleeper player master: name, position, team, `injury_status`, etc. Replaced on every `league` run. The 2025 copy is an end-of-season snapshot (last refreshed 2025-12-17, for week 16), so its `team` is each player's end-of-season team. |
-| `nfl_schedules` | (season*, week*, team*) | 576 | Per team per week: `opponent`, `is_home`, `is_bye`, `game_date`. The 2025 rows came from the notebooks' hardcoded bye weeks and carry only `is_bye` (`is_home` is 0, the rest NULL). |
+| `nfl_schedules` | (season*, week*, team*) | 576 | Per team per week: `opponent`, `is_home`, `is_bye`, `game_date`. The 2025 rows were written by the retired notebooks from hardcoded bye weeks and converted by `migrate-legacy`; they carry only `is_bye` (`is_home` is 0, the rest NULL). |
 | `player_stats` | stat_id* | 36,052 | Actual weekly stats; `pts_ppr` is used for accuracy analysis |
 | `transactions` | transaction_id* | 347 | Adds/drops/trades. Stored but not used. |
 | `projections_rosters` | (season*, week*, sleeper_player_id*) | 172 | Each rostered player's μ/var for the week (0 when unprojected), `starting_status` (1 in the optimal lineup) and `roster_status` (`starter`, `bench`, `out`, `bye` or `unprojected`). The migrated 2025 rows are `starter`, `bench` or `unprojected`. |
 
 ## projections.db — projections and lineups
 
-Written by the `scrape`, `clean`, `match`, `stats` and `lineups` steps, each replacing its rows for the week. `season` and `week` are integers throughout. The 2025 file came from notebooks 02–06; `migrate-legacy` converted its `"Week N"` text weeks and `DST` positions (now `DEF`), and dropped an empty `player_stats` table and five stale `betting_odds_*` copies that nothing read.
+Written by the `scrape`, `clean`, `match`, `stats` and `lineups` steps, each replacing its rows for the week. `season` and `week` are integers throughout. The 2025 rows were written by the retired notebooks and converted by `migrate-legacy`, which turned their `"Week N"` text weeks into integers and `DST` positions into `DEF`, and dropped an empty `player_stats` table and five stale `betting_odds_*` copies that nothing read.
 
 | Table | Key | Contents |
 |---|---|---|
 | `projections` | id*, unique on (source, season, week, first, last, position) | Scraped projections, cleaned in place by `clean`: `team`, `projected_points`, `external_id` |
-| `projections_with_sleeper` | id*, unique like `projections` | `projections` + `sleeper_player_id` and `match_method` (`external_id`, `def_team`, `hardcoded`, `exact_team`, `exact`, `last_initial`, or NULL; the 2025 rows keep notebook 04's `dst_team_match`, `hardcoded` and `automatic`) |
-| `player_week_stats` | (season*, week*, sleeper_player_id*) | `mu`, `sigma`, `var`, `n_sources`, the sources' `spread`, `model_version`, and the player's NFL `team`. For 2025 the migration recovered `spread` from the notebook's sigma and back-filled `team` from `nfl_players`. |
+| `projections_with_sleeper` | id*, unique like `projections` | `projections` + `sleeper_player_id` and `match_method` (`external_id`, `def_team`, `hardcoded`, `exact_team`, `exact`, `last_initial`, or NULL; the 2025 rows keep the older `dst_team_match`, `hardcoded` and `automatic`) |
+| `player_week_stats` | (season*, week*, sleeper_player_id*) | `mu`, `sigma`, `var`, `n_sources`, the sources' `spread`, `model_version`, and the player's NFL `team`. For 2025 the migration recovered `spread` from the stored sigma and back-filled `team` from `nfl_players`. |
 | `team_lineups` | (season*, week*, roster_id*, slot*) | Chosen starters: `owner`, `slot` (`QB`, `RB1`, `RB2`, `WR1`, `WR2`, `TE`, `FLEX`, `K`, `DEF`), `sleeper_player_id`, `player_name`, `nfl_team`, `mu`, `sigma`, `is_replacement`. For 2025 the migration back-filled `sleeper_player_id` from the week's one `player_week_stats` row with the same name and position, and `nfl_team` from `nfl_players`; the 56 `Waiver Pickup` rows have no player and stay NULL. |
 | `team_projections_summary` | (season*, week*, roster_id*) | `total_mu`, `combined_sigma`, `total_var`, `waiver_pickups` |
 
 ## odds.db — prices and curves
 
-Written by the `simulate`, `odds` and `playoffs` steps (notebooks 07 and 09 in 2025). The `odds` tables start with `run_id`, `week` and `season`; the `playoffs` tables keep notebook 09's shape with `season` added last.
+Written by the `simulate`, `odds` and `playoffs` steps; the 2025 rows were written by the retired notebooks and converted by `migrate-legacy`. The `odds` tables start with `run_id`, `week` and `season`; the `playoffs` tables keep their 2025 columns with `season` added last.
 
 | Table | Key | Written by | Contents |
 |---|---|---|---|
@@ -69,14 +71,9 @@ Written by the `simulate`, `odds` and `playoffs` steps (notebooks 07 and 09 in 2
 
 The `odds` and `playoffs` steps' tables carry the `run_id` of the simulation they were priced from. The `playoffs` tables carried the pipeline run's id until B10b; since then a rerun of the `playoffs` step alone replaces the week's rows under the same simulation run id, so the week's futures keep a run that `simulation_runs` knows. Rerunning `odds` replaces that run's rows, and each new `simulate` run adds a set beside the old ones; `publish` uploads only each week's latest run (newest `created_at`, then highest `run_id`). The 2025 curves had no run id, so the migration gave them their week's odds run. An `odds.db` whose `simulation_runs` predates `n_locked`, `window_closes_at` and `standings_through_week` gains them, at their defaults for the runs already recorded, the next time `simulate` records a run.
 
-## montecarlo.db — raw simulations (2025 only)
+## sims/ — simulation draws
 
-| Table | Key | Contents |
-|---|---|---|
-| `monte_carlo_simulations` | (run_id*, week*, sim_id*, team_id*) | One row per team per simulation (`total_points`). 50,000 × 12 = 600k rows per run; 3M total. |
-| `simulation_runs` | run_id* | Notebook 07's run metadata: seed, N, distribution, team count, `n_matchups` (recorded as 0 on a fresh run — bug). |
-
-Only notebook 09 read it back (latest run for the week). It is never published, and the pipeline neither reads nor migrates it: the `simulate` step writes its draws to Parquet and records the run in odds.db's `simulation_runs`.
+The `simulate` step writes each run's draws to `sims/{season}/wk{week}/{run_id}.parquet` under the data directory: one row per simulation per team (`sim_id`, `roster_id`, `total_points`), 50,000 × 12 = 600k rows a run. Its `simulation_runs` row in odds.db points at the file (`draws_path`). The `odds` and `playoffs` steps read the week's latest run, and `publish` encodes each new run's draws into `simulation_totals`; the files themselves are never published. The 2025 season's draws sit in the retired notebooks' `montecarlo.db`, which nothing reads.
 
 ## Validation before publish
 
@@ -195,47 +192,44 @@ The analytics tables have **no foreign keys to the app tables or each other**. T
 
 ## Publishing map
 
-`scripts/publish.py` copies **whole tables (all weeks)**, not just the current week.
+The `publish` step (`pipeline/steps/publish.py`, run as `python -m pipeline run --week N --steps publish`) replaces 25 tables, the `TABLES` list, with the current season's rows and, of each table with a `run_id`, each week's latest run (newest `created_at`, then highest `run_id`). Sleeper's `leagues`, `rosters`, `users` and `matchups` take a `sleeper_` prefix, because `users` is the app's account table.
 
 | SQLite source | Postgres table |
 |---|---|
-| `odds.db` `betting_odds_matchup_ml`, `_team_ou`, `_highest_scorer`, `_lowest_scorer`, `_first_place`, `_make_playoffs`, `_last_place`, `_champion` | same names |
-| `odds.db` `team_distribution_curves`, `team_matchup_margin_curves` | same names |
-| `projections.db` `team_lineups` | `team_lineups` |
+| `odds.db` `betting_odds_matchup_ml`, `_team_ou`, `_matchup_ou`, `_highest_scorer`, `_lowest_scorer`, `_first_place`, `_make_playoffs`, `_last_place`, `_champion` | same names |
+| `odds.db` `standings_probability_matrix`, `team_distribution_curves`, `team_matchup_margin_curves` | same names |
+| `odds.db` `simulation_runs`, `calibration_metrics` | same names |
+| `projections.db` `team_lineups`, `prediction_accuracy`, `team_accuracy` | same names |
 | `league.db` `leagues` | `sleeper_leagues` |
 | `league.db` `rosters` | `sleeper_rosters` |
 | `league.db` `users` | `sleeper_users` |
 | `league.db` `matchups` | `sleeper_matchups` |
 | `league.db` `projections_rosters` | `projections_rosters` |
+| `pipeline.db` `pipeline_runs`, `pipeline_steps`, `source_reviews` | same names |
 
 ```mermaid
 sequenceDiagram
     participant S as SQLite
-    participant P as publish.py
+    participant P as publish step
+    participant A as Droplet charts dir
     participant PG as Postgres
-    loop each table in TABLE_MAP
-        P->>S: read table (pandas)
+    P->>S: read the season's rows of every table in TABLES (pandas)
+    P->>A: scp backend/data/images/*.png (unless --no-charts)
+    Note over P,A: a failed upload stops the step before any table is written
+    P->>PG: INSERT each new run into simulation_totals
+    loop each table in TABLES
         P->>PG: to_sql(<name>_staging, if_exists=replace)
         P->>PG: count rows = source rows?
     end
-    Note over P,PG: any error → drop staged tables, exit 1, live tables untouched
+    Note over P,PG: any error → drop staged tables, step fails, live tables untouched
     P->>PG: BEGIN
     P->>PG: DROP <name>; RENAME <name>_staging → <name> (all tables)
     P->>PG: COMMIT
 ```
 
-Safety rails: refuses to target `users`, `bets`, `bet_legs`, `weekly_stats`, `betting_periods` or `parlay_refusals`. `--dry-run` still writes the staging tables to production to validate them, then drops them instead of swapping. Postgres column types come from pandas inference, so the analytics schema in prod is whatever `to_sql` produces (no primary keys or indexes).
+Safety rails: the step refuses to replace the app's tables, `users`, `bets`, `bet_legs`, `weekly_stats`, `betting_periods` and `parlay_refusals` (`PROTECTED_TABLES`), so `parlay_refusals` is never published over, and refuses `simulation_totals` (`APPEND_ONLY_TABLES`). `--dry-run` reads and counts the rows and writes nothing, neither charts nor tables. Postgres column types come from pandas inference, so the analytics schema in prod is whatever `to_sql` produces (no primary keys or indexes); `simulation_totals` is the one table with a declared schema.
 
-**The pipeline's `publish` step** (`pipeline/steps/publish.py`) stages, counts and swaps the same way, with the same refusals, but uploads the current season only and, of each table with a `run_id`, each week's latest run. Its `--dry-run` writes nothing. It replaces the 16 tables above and nine more:
-
-| SQLite source | Postgres table |
-|---|---|
-| `odds.db` `betting_odds_matchup_ou`, `standings_probability_matrix` | same names |
-| `odds.db` `simulation_runs`, `calibration_metrics` | same names |
-| `projections.db` `prediction_accuracy`, `team_accuracy` | same names |
-| `pipeline.db` `pipeline_runs`, `pipeline_steps`, `source_reviews` | same names |
-
-The matchup totals and the standings matrix are published for markets the app does not offer yet, and it reads neither. `sleeper_leagues` is the season's row of `leagues` with its columns as they are; the app reads `playoff_week_start`, `playoff_teams` and `num_teams` from its `settings` JSON. `pipeline_runs` and `pipeline_steps` keep every run of the season, because the dashboard lists them all.
+The matchup totals and the standings matrix are published for markets the app does not offer yet, and it reads neither. `sleeper_leagues` is the season's row of `leagues` with its columns as they are; the app reads `playoff_week_start`, `playoff_teams` and `num_teams` from its `settings` JSON. `pipeline_runs`, `pipeline_steps` and `source_reviews` are the published run records; `pipeline_runs` and `pipeline_steps` keep every run of the season, because the dashboard lists them all.
 
 **`simulation_totals`** is the one table the step appends to instead of replacing. It holds the full score matrix of every run the step has published this season, so a bet can always be re-priced at the run it was placed at:
 
@@ -250,4 +244,4 @@ The matchup totals and the standings matrix are published for markets the app do
 
 The app reads it through `app/matrices.py`, one decoded matrix per run cached in each worker: cash-out prices a bet on the latest run's matrix, a parlay is quoted and placed on the window's run's, and settlement re-prices a parlay with a pushed leg on the matrix of the run it was placed at.
 
-Before it stages anything, the step creates the table if it is missing, reads which of the season's runs it already holds, and inserts the matrix of every other run among the `simulation_runs` rows it is about to upload, built from that run's Parquet draws, with `INSERT ... ON CONFLICT (run_id) DO NOTHING`. A stored row is never rewritten, and a run the site shows always has its matrix, even when the swap that follows fails. A run whose draws file is missing is skipped with a warning naming it. The table is never staged or swapped, because a swap would keep only the runs of this publish, each week's latest, and drop the matrices of the earlier runs that bets were placed at; `write_tables` refuses it by name (`APPEND_ONLY_TABLES`), as it refuses the app's tables. `scripts/publish.py` neither writes nor drops it.
+Before it stages anything, the step creates the table if it is missing, reads which of the season's runs it already holds, and inserts the matrix of every other run among the `simulation_runs` rows it is about to upload, built from that run's Parquet draws, with `INSERT ... ON CONFLICT (run_id) DO NOTHING`. A stored row is never rewritten, and a run the site shows always has its matrix, even when the swap that follows fails. A run whose draws file is missing is skipped with a warning naming it. The table is never staged or swapped, because a swap would keep only the runs of this publish, each week's latest, and drop the matrices of the earlier runs that bets were placed at; `write_tables` refuses it by name (`APPEND_ONLY_TABLES`), as it refuses the app's tables.

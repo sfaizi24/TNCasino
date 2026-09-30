@@ -13,8 +13,7 @@ Run `python -m py_compile <file>` on each of these files:
 - `app/database.py`
 - `app/auth.py`
 - All `.py` files in `app/routes/`
-- All `.py` files in `scripts/`
-- All `.py` files in `backend/scrapers/`
+- All `.py` files in `pipeline/`
 
 Report any files that fail to compile.
 

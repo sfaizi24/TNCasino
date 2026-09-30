@@ -1,109 +1,182 @@
 # 02 – Data Pipeline
 
-Everything here runs on the operator's machine. Paths are relative to `backend/data/` unless noted. Databases live in `databases/`, CSVs in `csv/`, PNGs in `images/`.
+Everything here runs on the operator's machine, as the `pipeline` package (`python -m pipeline`). Paths are relative to `backend/data/` unless noted: SQLite databases in `databases/`, simulation draws in `sims/`, chart PNGs in `images/`. All of it is gitignored.
 
 ## Flow
 
 ```mermaid
 flowchart TD
-    SAPI[Sleeper API] --> N01
-    SRC[5 projection sources] --> SCR
+    SAPI[Sleeper API] --> LEAGUE
+    ESPNS[ESPN scoreboard] --> LEAGUE
+    SRC[8 projection sources] --> SCRAPE
 
     subgraph Ingest
-        N01["01 league_control"]
-        SCR["scripts/scrape.py<br/>or 02 projections_control"]
+        LEAGUE["league"]
+        SCRAPE["scrape<br/>(verify each source)"]
     end
 
-    N01 --> LDB[(league.db<br/>rosters, users, matchups,<br/>nfl_players, player_stats,<br/>nfl_schedules)]
-    SCR --> PRJ[(projections.db<br/>projections)]
+    LEAGUE --> LDB[(league.db<br/>leagues, users, rosters, matchups,<br/>transactions, nfl_players,<br/>player_stats, nfl_schedules)]
+    SCRAPE --> PRJ[(projections.db<br/>projections)]
+    LDB --> SCRAPE
 
-    LDB --> N03
-    PRJ --> N03["03 post_scraping_processing<br/>(mutates both DBs in place)"]
-    N03 --> N04["04 match_projections_to_sleeper"]
-    N04 --> PWS[(projections_with_sleeper)]
-    PWS --> N05["05 compute_player_week_stats"]
-    N05 --> PWST[(player_week_stats)]
-    PWST --> N06["06 team_lineup_optimizer"]
-    LDB --> N06
-    N06 --> TL[(team_lineups<br/>team_projections_summary)]
-    N06 --> PR[(league.db:<br/>projections_rosters)]
-    N06 --> CSV[/csv: team_lineups_week_N.csv/]
+    PRJ --> CLEAN["clean<br/>(in place)"] --> MATCH["match"]
+    LDB --> MATCH
+    MATCH --> PWS[(projections_with_sleeper)]
+    PWS --> STATS["stats"]
+    PARAMS["model parameters<br/>pipeline/model/params/"] --> STATS
+    STATS --> PWST[(player_week_stats)]
 
-    CSV --> N07["07 monte_carlo_simulations"]
-    SAPI -. playoff bracket .-> N07
-    LDB --> N07
-    N07 --> MC[(montecarlo.db<br/>monte_carlo_simulations,<br/>simulation_runs)]
-    N07 --> ODDS[(odds.db<br/>betting_odds_*, curves)]
-    N07 --> IMG[/images: *.png/]
+    PWST & LDB & ODDS --> ACC["accuracy<br/>(last week)"] --> ACCT[(prediction_accuracy,<br/>team_accuracy)]
+    ACCT --> CAL["calibrate"] --> CALT[(odds.db:<br/>calibration_metrics)]
 
-    MC --> N09["09 playoff_odds"]
-    LDB --> N09
-    N09 --> ODDS
-    N09 --> IMG
+    PWST & LDB --> LINE["lineups"]
+    LINE --> TL[(team_lineups,<br/>team_projections_summary)]
+    LINE --> PR[(league.db:<br/>projections_rosters)]
 
-    N08["08 database_validation<br/>(read-only)"] -.-> LDB & PRJ & MC & ODDS
-    N10["10 prediction_accuracy<br/>(read-only, ad hoc)"] -.-> PRJ & LDB & ODDS
+    TL --> SIM["simulate"]
+    PARAMS --> SIM
+    SIM --> SIMS[/sims: Parquet draws/]
+    SIM --> RUNS[(odds.db:<br/>simulation_runs)]
 
-    ODDS & TL & PR & LDB --> PUB[scripts/publish.py]
+    SIMS & RUNS --> ODDSSTEP["odds"] --> ODDS[(odds.db<br/>betting_odds_*, curves)]
+    SIMS & LDB & SRC --> PLAY["playoffs"] --> ODDS
+
+    VAL["validate<br/>(read-only)"] -.-> LDB & PRJ & ODDS & SIMS
+
+    ACC & CAL & ODDSSTEP & PLAY --> IMG[/images: *.png/]
+
+    LDB & PRJ & ODDS & IMG & SIMS --> PUB["publish<br/>(only when named)"]
+    PUB --> PG[(production PostgreSQL)]
+    PUB --> DROP["droplet:<br/>/var/lib/tncasino/analytics/"]
+
+    RUN[(pipeline.db<br/>pipeline_runs, pipeline_steps,<br/>source_reviews)] --> PUB
 ```
 
-Notebooks 06→07 hand off through a **CSV file**, not the database. Every notebook has its own hardcoded config block (see [Configuration](#configuration)).
+`python -m pipeline run --week N` runs the first twelve steps in this order (`STEP_ORDER` in `pipeline/steps/__init__.py`); publish runs only when named in `--steps`. The runner (`pipeline/runner.py`) records the run and each step, with its status (`ok`, `warn`, `failed`), duration, warnings, error and summary, in `pipeline.db`, and stops at the first failed step. Every row a step writes carries an integer `season` and `week`.
 
 ## Projection sources
 
-All scrapers live in `backend/scrapers/`, have no shared base class, and follow the same duck-typed shape: context manager, `scrape_week_projections(...)` returning a list of dicts, and `scrape_and_save(...)` which upserts via `ProjectionsDB.insert_projections_batch`. None require authentication.
+Each source in `pipeline/sources/` is a `ProjectionSource` with a `fetch(season, week)` that returns `Projection` rows (name, position, team, PPR points, the source's own id where it has one) and a pure `parse` that the tests run on saved fixtures under `tests/pipeline/fixtures/`. Every HTTP request goes through `base.get`, which sends `USER_AGENT` (`TNCasino-pipeline/2026 (+https://tncasino.win)`) and spaces requests to one host by at least two seconds, longer where a site's `robots.txt` asks.
 
-| `source_website` | Class | How | Notes / fragility |
+| `source_website` | Transport | Future weeks | Notes |
 |---|---|---|---|
-| `sleeper.com` | `SleeperScraper` | `requests` against the undocumented `api.sleeper.app/v1/projections/nfl/regular/{season}/{week}` | Most stable. Uses `pts_ppr` or computes PPR itself. Drops IDP and <0.1 pt players. |
-| `espn.com` | `ESPNScraper` | Selenium: clicks through PPR / This Week / position tabs | Most fragile. Many `time.sleep`s, retries, reads three table fragments and pairs them by row index. First page only (~50/position). |
-| `fantasypros.com` | `FantasyProsScraper` | Selenium on per-position rankings pages | URL has no week, so it gets whatever week the site currently shows. Assumes the last column is projected points. |
-| `firstdown.studio` | `FirstDownStudioScraper` | Selenium on `/rankings/{pos}` | No DST. `scoring` argument is ignored. No week in the URL. |
-| `fanduel.com` | `FanDuelScraper` | Playwright: loads the research page and intercepts the GraphQL `getProjections` response | Must run in a **subprocess** (Playwright's sync API conflicts with Jupyter). |
+| `sleeper.com` | Sleeper's public projections JSON | yes | The reference: every other source is checked against it, and it supplies the Sleeper ids. A full run fails without it. |
+| `espn.com` | ESPN's fantasy API | yes | Position and team from ESPN's numeric ids. |
+| `fantasysharks.com` | Server-rendered table, one page per position | yes | QB is not read: its quarterback numbers disagree with every other source. |
+| `firstdown.studio` | The rankings snapshot behind each rankings page | no | PPR read from the snapshot (the table shows half PPR). No DEF. |
+| `fanduel.com` | Headless Chromium through Playwright, capturing the research pages' GraphQL responses | no | The only source that does not go through `base.get`. Needs `playwright install chromium`. |
+| `fftoday.com` | Server-rendered table, one or two pages per position | no | QB, RB, WR, TE. Points rescored from the stat line with league scoring. Posts on Wednesday. |
+| `rotoballer.com` | The news sitemap, then the week's projections article | no | Read under RotoBaller's permission letter (non-commercial, attribution on the about page). QB, RB, WR, TE, rescored from the stat line. Only aggregates are shown. |
+| `fleaflicker.com` | Fleaflicker's documented API on the owner's own league (`FLEAFLICKER_LEAGUE_ID`) | no | Read under Fleaflicker's permission letter. Points are in the league's own scoring, so the league's rules are compared with a pinned copy every run and a difference drops the source. Unset league id: the fetch fails and the run goes on. Only aggregates are shown. |
 
-Every row stores: source, week (`"Week N"`), first name, last name (split on first space), position, team, projected points. `ProjectionsDB` standardizes positions (`D/ST`/`DEF`→`DST`, `FB`→`RB`) and team codes (`WSH`→`WAS`, `JAC`→`JAX`, `LA`→`LAR`) on insert.
+"Future weeks" marks the sources the playoffs step scrapes for the weeks after the current one.
 
-### `scripts/scrape.py`
+### Verification
 
-The preferred entry point for scraping (notebook 02 does the same work without the safety checks).
+`pipeline/sources/verify.py` checks a source's week before its rows are stored, against Sleeper's player database, Sleeper's projections for the week, and the source's own previous week. A source's status is its worst check.
 
-1. For each requested source: delete that source's rows for the week, run the scraper (FanDuel via `python -m backend.scrapers.scraper_fanduel` subprocess, 300 s timeout), count the rows, and record `OK` / `EMPTY` / `FAILED`. One failing source does not stop the others.
-2. Print a summary table. Optionally run `validate_scraping`.
-3. Exit code: a full run passes with ≥3 successful sources and ≥150 projections; a `--sources` subset passes only if every requested source succeeded.
+| Check | Fails when |
+|---|---|
+| `position_agreement` | more than 2% of the rows matched to a Sleeper player carry another position (warns above 0.5%) |
+| `duplicate_positions` | more than 2 players appear under two positions (warns above 0) |
+| `position_counts` | a position's row count is outside its range (QB 20–80, RB 40–150, WR 50–200, TE 20–130, K 15–40, DEF 20–36) |
+| `value_agreement` | at QB, RB, WR or TE, the correlation with Sleeper is below 0.85 or the median gap above 4 points (K and DEF only warn; for a future week a low QB correlation only warns) |
+| `team_codes` | more than 5% of rows have a team code that normalisation does not recognise (warns above 0) |
+| `week_stamp` | the payload names another week than the one requested (`n/a` for sources that name none) |
+| `freshness` | more than 90% of the players have the same points as the source's previous week |
+| `top_players` | one of the top three at a position is not in Sleeper's player database at that position |
 
-### `scripts/validate_scraping.py`
+A failing source has its rows for the week deleted and is listed in the scrape step's summary, and the step warns. The step fails when fewer than three sources are usable or Sleeper is not among them (unless `--sources` narrowed the run).
 
-Checks one week: rows per expected source, coverage of `QB/RB/WR/TE/K/DST`, and duplicate (source, name, position) groups. **PASS** = ≥3 sources, ≥150 rows, no missing positions; **WARN** = missing positions only; otherwise **FAIL**. Duplicates are reported but don't change status. `--json` for machine output.
+The checks catch shifted positions, stale copies and truncated lists; they cannot tell whether the numbers are sensible. The scrape step prints each source's top 15 per position, and the operator records a verdict:
 
-## Notebook reference
+```bash
+python -m pipeline review --week N --source espn.com --verdict ok --note "top players look right"
+python -m pipeline review --week N --source espn.com --verdict reject --note "last week's numbers"
+```
 
-| # | Reads | Does | Writes |
+A `reject` deletes that source's rows for the week; the operator then reruns with `--from clean`. Verdicts go to `pipeline.db.source_reviews` and show on the admin dashboard beside the checks.
+
+## Steps
+
+One or two lines each; the module docstrings in `pipeline/steps/` have the detail.
+
+### Ingest
+
+| Step | Reads | Does | Writes |
 |---|---|---|---|
-| **01** league_control | Sleeper API; `.env` `SLEEPER_USERNAME`, `LEAGUE_ID` | Upserts rosters and matchups for `CURRENT_WEEK`, plus that week's player stats. Prints standings. The one-time `initial_data_load()` (league, all players, schedule) is commented out. | `league.db` |
-| **02** projections_control | Source sites | Same scraper calls as `scrape.py`, one cell per source; FanDuel via a generated temp script. No stale-row deletion or thresholds. | `projections.db.projections` |
-| **03** post_scraping_processing | Both DBs | Raw SQL `UPDATE`/`DELETE` across **all weeks**: team code fixes, `D/ST`/`DEF`→`DST`, `FB`→`RB`, delete IDP rows, Travis Hunter→WR, blank FirstDown positions→QB. Mostly overlaps insert-time standardization. | Mutates `projections`, `nfl_players`; `csv/cleaned_*.csv` |
-| **04** match_projections_to_sleeper | `projections`, `nfl_players` | Matches every projection to a Sleeper ID. Order: DST by team → hardcoded map (one entry) → index on `(team, position, first-word-of-last-name, first initial)`. Unmatched rows kept with NULL ID. Table rebuilt every run. | `projections_with_sleeper`; `csv/unmatched_projections.csv` |
-| **05** compute_player_week_stats | `projections_with_sleeper`, `nfl_players` | Per player-week: μ = mean across sources, σ = blend of source disagreement and position baseline ([03](03-modeling-and-odds.md#1-player-distributions)). | `projections.db.player_week_stats` |
-| **06** team_lineup_optimizer | `rosters`, `users`, `nfl_players`, `nfl_schedules`, `player_week_stats` | Greedy best lineup per team, excluding injured/bye players and substituting replacement players ([03](03-modeling-and-odds.md#2-lineups-and-replacement-players)). | `team_lineups`, `team_projections_summary` (projections.db); `projections_rosters` (league.db); `csv/team_lineups_week_N.csv` |
-| **07** monte_carlo_simulations | `csv/team_lineups_week_N.csv`; `league.db.matchups` or live Sleeper bracket (playoffs) | 50,000 lognormal simulations per team; derives all weekly markets and chart curves ([03](03-modeling-and-odds.md#3-simulation)). | `montecarlo.db`; `odds.db` betting and curve tables; CSVs; ~7 PNG types |
-| **08** database_validation | All four DBs | Row counts, coverage, null/negative checks, probability sums, betting-page consistency. Assumes 12 teams/6 matchups, so it fails by design in playoff weeks. | Nothing |
-| **09** playoff_odds | `rosters`, `users`, `matchups`; latest run in `montecarlo.db` | Adds each simulation's current-week result to current standings and ranks teams. Only the current week is simulated, not the rest of the schedule. | `odds.db`: `betting_odds_first_place`, `betting_odds_make_playoffs`, `standings_probability_matrix`; 5 PNGs |
-| **10** prediction_accuracy | `projections_with_sleeper`, `player_week_stats`, `team_projections_summary`, `league.db.player_stats`, `matchups`, `betting_odds_team_ou` | MAE/RMSE/bias per source, position, and tier vs. actual points; O/U and pick accuracy. | Nothing (inline plots only) |
+| `league` | Sleeper API, ESPN scoreboard | Mirrors the league, users, rosters, matchups (weeks 1 to N), transactions, all NFL players and last weeks' actual points; builds the season's schedule, byes included. | `league.db` |
+| `scrape` | The sources, `nfl_players`, Sleeper's rows | Fetches each source, verifies it, stores the rows that pass; a failed source's rows for the week are deleted, so a stale copy never outlives a bad fetch. | `projections` |
 
-The pipeline's `playoffs` and `accuracy` steps replace notebooks 09 and 10: `playoffs` simulates every regular-season week left rather than the current week alone, and the playoff weeks after it, and writes `betting_odds_last_place` and `betting_odds_champion` beside notebook 09's three tables ([03 §6](03-modeling-and-odds.md#6-playoff-odds)), and `accuracy` grades the previous week and stores the results in `prediction_accuracy` and `team_accuracy` ([03 §7](03-modeling-and-odds.md#7-prediction-accuracy)).
+### Projections to players
+
+| Step | Reads | Does | Writes |
+|---|---|---|---|
+| `clean` | `projections` | Strips injury tags and suffixes from names (keeping case and punctuation for display), makes positions and team codes canonical, gives every defense Sleeper's (city, nickname) form, and drops duplicates it creates. | `projections`, in place |
+| `match` | `projections`, `nfl_players` | Links each row to a Sleeper player id, first rule wins: Sleeper's own ids, defenses by team, a few hand-checked names, then name rules that loosen one step at a time and link only when one player fits. Records the rule used. Unmatched rows stay with a NULL id. | `projections_with_sleeper` |
+| `stats` | `projections_with_sleeper`, `nfl_players`, model parameters | Per player: μ = weighted mean of the sources' bias-corrected points; σ from the parameters' sigma formula ([03](03-modeling-and-odds.md)). | `player_week_stats` |
+
+### Grading
+
+| Step | Reads | Does | Writes |
+|---|---|---|---|
+| `accuracy` | Last week's projections, player stats, lineups, curves and moneylines; `player_stats`, `matchups` | Scores every source and the consensus by position, and each team's projected total, [p10, p90] range and moneyline, against what happened. Skips with a warning until last week's games are final. | `prediction_accuracy`, `team_accuracy`; two bar charts |
+| `calibrate` | `player_week_stats`, `team_lineups`, `team_accuracy`, actual points | Season-to-date calibration of the model as it ran: interval coverage for players and starters, team coverage, moneyline Brier. Nothing is refitted. | `odds.db.calibration_metrics`; one chart |
+
+### Lineups, simulation and odds
+
+| Step | Reads | Does | Writes |
+|---|---|---|---|
+| `lineups` | `rosters`, `nfl_players`, `nfl_schedules`, `player_week_stats` | Starts each roster's best available players by μ; slots left empty by injuries and byes are filled from the waiver wire in FAAB order, each pickup capped at the league's median starter at that position. | `team_lineups`, `team_projections_summary`; `league.db.projections_rosters` |
+| `simulate` | `team_lineups` starters, model parameters | 50,000 draws of every starter (lognormal above a floor, a dud chance, same-team correlation), seed 1738. `window_closes_at` is the week's next kickoff after the run. Nothing is locked yet (`n_locked` is 0). | `sims/{season}/wkNN/{run_id}.parquet`; `simulation_runs` |
+| `odds` | The latest run's draws, `team_lineups`, `matchups` | Prices team and matchup over/unders, moneylines, highest and lowest scorer through `pipeline/markets.py`, and the distribution and margin curves; a chance of exactly 0 or 1 gets no price. | `betting_odds_team_ou`, `_matchup_ou`, `_matchup_ml`, `_highest_scorer`, `_lowest_scorer`, `team_distribution_curves`, `team_matchup_margin_curves`; two charts |
+| `playoffs` | The latest run's draws (first 20,000), future-week projections, `rosters`, `matchups` | Scrapes, matches and simulates each later week from the rosters as they stand, ranks every simulated season on top of the record to date, and plays the bracket on the playoff weeks' scores. The slow step: it re-projects about ten weeks over the network. | `betting_odds_first_place`, `_make_playoffs`, `_last_place`, `_champion`, `standings_probability_matrix`; two charts |
+| `validate` | The week's lineups, draws and odds | Cross-table checks (slots filled, no missing μ, probabilities and moneyline sums, curves, one odds run, owners, tables the app reads have rows). Any failure stops the run before publish. | Nothing |
+
+### Publish
+
+`python -m pipeline run --week N --steps publish` (see [04](04-data-model.md) and [07](07-deployment-and-ops.md)):
+
+1. Uploads `images/*.png` by `scp` to `PUBLISH_CHARTS_TARGET` (default the droplet's `/var/lib/tncasino/analytics/`); a failed upload stops the step before any table. `--no-charts` skips it.
+2. Appends the score matrix of each run production does not hold yet to `simulation_totals` (append-only: bets are re-priced and settled at the run they were placed on).
+3. Reads this season's rows (this league's, for a table without a season) of the 25 tables in `TABLES`, keeping each week's latest run in every table that carries a `run_id` except the run records, stages each in PostgreSQL at `DATABASE_URL`, row-counts it, and swaps them all in together. Sleeper's `leagues`, `users`, `rosters` and `matchups` publish as `sleeper_*`. The app's own tables are never touched.
+
+`--dry-run` prints the row counts and writes nothing, charts included.
+
+## CLI
+
+| Command | What it does |
+|---|---|
+| `python -m pipeline run --week N` | Every step but publish, in order |
+| `... --steps league,lineups,simulate,odds,playoffs,validate` | Only the named steps, in canonical order (the Friday rerun) |
+| `... --from clean` | That step and every default step after it |
+| `... --sources sleeper,espn` | Narrows the scrape and playoffs steps (the playoffs step always scrapes Sleeper) |
+| `... --no-charts` | Skips rendering charts, and uploading them in publish |
+| `... --steps publish [--dry-run]` | Publish, or report what would be published |
+| `python -m pipeline status --week N` | Each step's latest status, duration, finish time, run and notes |
+| `python -m pipeline review --week N --source <website> --verdict ok\|reject --note "..."` | Records a verdict on a source; `reject` deletes its rows for the week |
+| `python -m pipeline backfill --season 2025 --weeks 10-16 --source fftoday` | Stores one source's projections for weeks already played, cleaned and matched, for the model fit. A week without actual scores is refused; `value_agreement` is advisory, every other check still refuses. |
+| `python -m pipeline fit-model --season 2025 --weeks 10-16 --out v2.3 --exclude-sources fantasypros.com` | Fits a parameter version from the local databases, scores it with each week held out beside v1, and writes `pipeline/model/params/{out}.json` |
+| `python -m pipeline migrate-legacy` | One-off, already run: converted the 2025 databases to integer seasons and weeks, keeping a copy in `backup-2025/` |
+
+`run`, `status` and `review` take `--season` to override the season. `run` exits with 1 when a step failed.
+
+The admin dashboard at `/admin/pipeline?week=N` shows the published run records: each step's latest status, duration, warnings, errors and summary, the sources' checks and verdicts, and the week's runs. `/api/admin/pipeline?week=N` returns the same as JSON.
 
 ## Configuration
 
-There is no central config. Each notebook defines its own block at the top, and they must be edited by hand every week.
+All settings come from `pipeline/settings.py`, which reads `.env` at the project root. Nothing is edited in code from week to week.
 
-| Setting | Where | Current value |
+| Setting | From | Default |
 |---|---|---|
-| `CURRENT_WEEK` / `WEEK` | 01, 05, 06, 07 = `16`; 08, 09 = `14`; 02 = `"Week 16"` | Must be edited each week, independently |
-| `SEASON` | 01, 02, 06, `scrape.py` | `"2025"` (some scraper method defaults still say `"2024"`) |
-| `LEAGUE_ID` | 06, 07, 09 (01 reads `.env`) | `1226433368405585920` default |
-| `PLAYOFFS`, `PLAYOFF_START_WEEK` | 01, 07 | `True`, `15` |
-| Project paths | 01–09 | Absolute `C:\Users\Samer Faizi\...` path |
-| Model parameters | 05 (`ALPHA`, `BETA`, `POS_SIGMA`), 06 (`BENCHMARKS`, `ROSTER_SLOTS`), 07 (`SEED`, `N_SIMULATIONS`) | See [03](03-modeling-and-odds.md) |
-| Scraper DB path | Every scraper/DB class | Relative `backend/data/databases/...`, so they depend on the working directory |
+| Season | `--season`, else `PIPELINE_SEASON`, else Sleeper's `/state/nfl` | — |
+| Week | `--week` (required for `run`), else Sleeper's `/state/nfl` | — |
+| League | `PIPELINE_LEAGUE_ID`, else discovery: the league of `SLEEPER_USERNAME` for the season whose `previous_league_id` chain leads back to `LEAGUE_ID` | — |
+| Model version | `PIPELINE_MODEL_VERSION` | `v2.3` |
+| Data directory | `PIPELINE_DATA_DIR` | `backend/data` |
+| Simulations, seed | `Settings` fields | 50,000, 1738 |
+| Fleaflicker league | `FLEAFLICKER_LEAGUE_ID`, read by that source at fetch time | unset: the source fails, the run goes on |
+| Production database | `DATABASE_URL` (publish only) | required to publish |
+| Chart target | `PUBLISH_CHARTS_TARGET` (publish only) | `root@143.198.183.213:/var/lib/tncasino/analytics/` |
 
-The only environment variables the pipeline reads are `SLEEPER_USERNAME` and `LEAGUE_ID` (notebook 01), and `DATABASE_URL` (`publish.py`).
+`fit-model` and `migrate-legacy` read only the local databases, so they ask Sleeper for nothing and need no season, week or league. Model parameters are versioned JSON in `pipeline/model/params/`: `v1` is the frozen baseline, `v2` to `v2.3` were fitted on 2025 weeks 10 to 16, and a fitted version is gated against v1 before it becomes the default.

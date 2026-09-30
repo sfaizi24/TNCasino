@@ -14,35 +14,68 @@
 {{ value[:19]|replace("T", " ") if value else "—" }}
 {%- endmacro %}
 
-{% macro render_value(value) -%}
-    {%- if value is mapping -%}
-        {{ render_table([value]) }}
-    {%- elif value is iterable and value is not string -%}
-        {%- if value and value[0] is mapping -%}
-            {{ render_table(value) }}
-        {%- else -%}
-            {{ value|join(", ") or "—" }}
-        {%- endif -%}
-    {%- elif value is float -%}
-        {{ value|round(3) }}
-    {%- elif value is none -%}
-        —
-    {%- else -%}
+{% macro cell(value) -%}
+    {%- if value is string -%}
         {{ value }}
+    {%- else -%}
+        <details class="pipeline-cell-lines">
+            <summary>{{ value|length }}</summary>
+            {% for line in value %}<div>{{ line }}</div>{% endfor %}
+        </details>
     {%- endif -%}
 {%- endmacro %}
 
-{% macro render_table(rows) -%}
-<table class="pipeline-mini">
-    <thead>
-        <tr>{% for key in rows[0] %}<th>{{ key }}</th>{% endfor %}</tr>
-    </thead>
-    <tbody>
-        {% for row in rows %}
-        <tr>{% for key in rows[0] %}<td>{{ render_value(row[key]) }}</td>{% endfor %}</tr>
-        {% endfor %}
-    </tbody>
-</table>
+{% macro mini_table(section) -%}
+<div class="pipeline-scroll">
+    <table class="pipeline-mini">
+        <thead>
+            <tr>{% for column in section.columns %}<th>{{ column }}</th>{% endfor %}</tr>
+        </thead>
+        <tbody>
+            {% for row in section.rows %}
+            <tr>{% for value in row %}<td>{{ cell(value) }}</td>{% endfor %}</tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{%- endmacro %}
+
+{% macro summary_section(section) -%}
+<div class="pipeline-section">
+    {% if section.kind == "scalars" %}
+    <dl class="pipeline-summary">
+        {% for key, value in section.fields.items() %}<dt>{{ key }}</dt><dd>{{ value }}</dd>{% endfor %}
+    </dl>
+    {% elif section.kind == "list" %}
+    <dl class="pipeline-summary">
+        <dt>{{ section.key }}</dt><dd>{{ section.text }}</dd>
+    </dl>
+    {% elif section.kind == "mapping" %}
+    <h5 class="pipeline-section-title">{{ section.key }}</h5>
+    {% if section.rows %}
+    <div class="pipeline-scroll">
+        <table class="pipeline-mini">
+            <tbody>
+                {% for name, value in section.rows %}<tr><th scope="row">{{ name }}</th><td>{{ value }}</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="pipeline-muted">none</p>
+    {% endif %}
+    {% elif section.collapsed %}
+    <details>
+        <summary class="pipeline-section-title">{{ section.key }} ({{ section.rows|length }} rows)</summary>
+        {{ mini_table(section) }}
+    </details>
+    {% elif section.kind in ("table", "nested_mapping") %}
+    <h5 class="pipeline-section-title">{{ section.key }}</h5>
+    {{ mini_table(section) }}
+    {% else %}
+    <h5 class="pipeline-section-title">{{ section.key }}</h5>
+    <pre class="pipeline-json">{{ section.text }}</pre>
+    {% endif %}
+</div>
 {%- endmacro %}
 
 {% block content %}
@@ -66,53 +99,46 @@
 <div class="pipeline-panels">
     <div class="admin-card">
         <h3>Steps - Week {{ week }}</h3>
-        <div class="pipeline-scroll">
-            <table class="pipeline-table">
-                <thead>
-                    <tr><th>Step</th><th>Status</th><th>Duration</th><th>Finished (UTC)</th><th>Details</th></tr>
-                </thead>
-                <tbody>
-                    {% for name, step in steps %}
-                    {% if step %}
-                    <tr>
-                        <td class="pipeline-name">{{ name }}</td>
-                        <td>{{ status_badge(step.status) }}</td>
-                        <td class="pipeline-time">{{ "%.1f s"|format(step.duration_s) if step.duration_s is not none else "—" }}</td>
-                        <td class="pipeline-time">{{ timestamp(step.finished_at) }}</td>
-                        <td>
-                            {% if step.error %}<pre class="pipeline-error">{{ step.error }}</pre>{% endif %}
-                            {% if step.warnings %}
-                            <ul class="pipeline-warnings">
-                                {% for warning in step.warnings %}<li>{{ warning }}</li>{% endfor %}
-                            </ul>
-                            {% endif %}
-                            {% if step.summary %}
-                            <dl class="pipeline-summary">
-                                {% for key, value in step.summary.items() if key != "charts" %}
-                                <dt>{{ key }}</dt>
-                                <dd>{{ render_value(value) }}</dd>
-                                {% endfor %}
-                            </dl>
-                            {% endif %}
-                            {# Chart names can arrive in the step's charts column, the summary's charts key, or both. #}
-                            {% for chart in (step.charts + step.summary.get("charts", []))|unique %}
-                            <a class="pipeline-chart" href="{{ url_for('pages.serve_analytics_image', filename=chart) }}">{{ chart }}</a>
-                            {% endfor %}
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr class="pipeline-not-run">
-                        <td class="pipeline-name">{{ name }}</td>
-                        <td>{{ status_badge("not run") }}</td>
-                        <td>—</td>
-                        <td>—</td>
-                        <td></td>
-                    </tr>
-                    {% endif %}
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+        <nav class="pipeline-step-index" aria-label="Steps">
+            {% for name, step in steps %}
+            <a href="#step-{{ name }}">{{ name }} {{ status_badge(step.status if step else "not run") }}</a>
+            {% endfor %}
+        </nav>
+        {% for name, step in steps %}
+        {% if step %}
+        <section class="pipeline-step" id="step-{{ name }}">
+            <header class="pipeline-step-head">
+                <h4 class="pipeline-name">{{ name }}</h4>
+                {{ status_badge(step.status) }}
+                <span class="pipeline-muted">
+                    {{ "%.1f s"|format(step.duration_s) if step.duration_s is not none else "—" }}
+                    · finished {{ timestamp(step.finished_at) }} UTC
+                </span>
+                <span class="pipeline-muted pipeline-mono">{{ step.run_id }}</span>
+            </header>
+            {% if step.error %}<pre class="pipeline-error">{{ step.error }}</pre>{% endif %}
+            {% if step.warnings %}
+            <ul class="pipeline-warnings">
+                {% for warning in step.warnings %}<li>{{ warning }}</li>{% endfor %}
+            </ul>
+            {% endif %}
+            <div class="pipeline-sections">
+                {% for section in sections[name] %}{{ summary_section(section) }}{% endfor %}
+            </div>
+            {# Chart names can arrive in the step's charts column, the summary's charts key, or both. #}
+            {% for chart in (step.charts + step.summary.get("charts", []))|unique %}
+            <a class="pipeline-chart" href="{{ url_for('pages.serve_analytics_image', filename=chart) }}">{{ chart }}</a>
+            {% endfor %}
+        </section>
+        {% else %}
+        <section class="pipeline-step pipeline-not-run" id="step-{{ name }}">
+            <header class="pipeline-step-head">
+                <h4 class="pipeline-name">{{ name }}</h4>
+                {{ status_badge("not run") }}
+            </header>
+        </section>
+        {% endif %}
+        {% endfor %}
     </div>
 
     <div class="admin-card" id="sources">
@@ -121,34 +147,38 @@
         <div class="pipeline-scroll">
             <table class="pipeline-table">
                 <thead>
-                    <tr><th>Source</th><th>Status</th><th>Rows</th><th>Checks</th><th>Verdict</th></tr>
+                    <tr><th>Source</th><th>Status</th><th>Rows</th><th>Verdict</th></tr>
                 </thead>
                 <tbody>
                     {% for source in sources %}
-                    <tr>
+                    <tr class="{{ 'pipeline-source-row' if source.checks or source.note }}">
                         <td class="pipeline-name">{{ source.source }}</td>
                         <td>{{ status_badge(source.status) }}</td>
                         <td>{{ source.n_rows }}</td>
                         <td>
-                            <table class="pipeline-mini">
-                                {% for check in source.checks %}
-                                <tr>
-                                    <td>{{ check.name }}</td>
-                                    <td>{{ status_badge(check.status) }}</td>
-                                    <td>{{ check.detail }}</td>
-                                </tr>
-                                {% endfor %}
-                            </table>
-                        </td>
-                        <td>
                             {% if source.verdict %}
                             {{ status_badge(source.verdict) }}
-                            {% if source.note %}<div class="pipeline-muted">{{ source.note }}</div>{% endif %}
                             {% else %}
                             <span class="pipeline-muted">not reviewed</span>
                             {% endif %}
                         </td>
                     </tr>
+                    {% if source.checks or source.note %}
+                    <tr>
+                        <td colspan="4">
+                            {% if source.note %}<p class="pipeline-muted">{{ source.note }}</p>{% endif %}
+                            <ul class="pipeline-checks">
+                                {% for check in source.checks %}
+                                <li>
+                                    <span class="pipeline-check-name">{{ check.name }}</span>
+                                    {{ status_badge(check.status) }}
+                                    <span class="pipeline-check-detail">{{ check.detail }}</span>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </td>
+                    </tr>
+                    {% endif %}
                     {% endfor %}
                 </tbody>
             </table>

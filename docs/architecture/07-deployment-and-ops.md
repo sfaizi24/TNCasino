@@ -20,12 +20,11 @@ flowchart LR
 
     subgraph Operator["Operator machine"]
         GIT[git push]
-        PUB[scripts/publish.py]
-        SCP[scp PNGs]
+        PUB[publish step<br/>python -m pipeline run --week N --steps publish]
     end
     GIT --> GH[GitHub] -. git pull over ssh .-> APP
     PUB -- DATABASE_URL --> PG
-    SCP --> IMG
+    PUB -- scp charts --> IMG
 ```
 
 | Piece | Detail |
@@ -38,33 +37,37 @@ flowchart LR
 | Code | Git checkout at `/opt/tncasino` |
 | Charts | `/var/lib/tncasino/analytics/`, outside the checkout so `git pull` doesn't touch it |
 
-`gunicorn` is not in `requirements.txt`; the server's venv (Python 3.12.3, checked 2026-09-29) holds it and 30 other hand-installed packages, and no `numpy`, which the app has needed since B7 ([08](08-constraints-and-debt.md#ops)). Every line of `requirements.txt` is pinned exactly to the version a fresh install resolved on 2026-09-29; the CI jobs, a fresh Linux venv and a fresh Windows venv all install the same set.
+`gunicorn` is not in `requirements.txt`; the server's venv (Python 3.12.3, checked 2026-09-29) holds it and 30 other hand-installed packages, and no `numpy`, which the app has needed since B7 ([08](08-constraints-and-debt.md#ops)). Every line of `requirements.txt` is pinned exactly to the version a fresh install resolved on 2026-09-29; the CI jobs, a fresh Linux venv and a fresh Windows venv all install the same set. It no longer carries `jupyter`, `selenium` or `webdriver-manager`.
 
-## Three independent release paths
+## Two independent release paths
 
-There is no single "release". Code, data, and images each ship separately, and nothing checks that they're compatible.
+There is no single "release". Code ships on its own and data ships with its charts, and nothing checks that the two are compatible.
 
 | What | Command | Effect |
 |---|---|---|
 | **Code** | `git push origin main && ssh root@143.198.183.213 "cd /opt/tncasino && git pull && sudo systemctl restart tncasino"` | New code; on restart `create_all()` + `run_schema_migrations()` update app tables |
-| **Data** | `python -m scripts.publish` (use `--dry-run` first) | Replaces all 13 analytics tables atomically (see [04](04-data-model.md#publishing-map)) |
-| **Charts** | `scp backend/data/images/*.png root@143.198.183.213:/var/lib/tncasino/analytics/` | Updates PNGs; `/analytics` uses them to pick the week to display |
+| **Data and charts** | `python -m pipeline run --week N --steps publish` (use `--dry-run` first) | Uploads `backend/data/images/*.png` to `/var/lib/tncasino/analytics/`, then replaces this season's rows of the 25 analytics tables and run records in `TABLES` (`pipeline/steps/publish.py`) atomically and appends each new run's score matrix to `simulation_totals` (see [04](04-data-model.md#publishing-map)). `/analytics` picks the week to display from the PNG names |
 
-Publishing needs the operator's local `DATABASE_URL` to point at production Postgres. The deploy has no CI gate: it pulls whatever is on `main`, even while CI is still running. There is no rollback script; rolling back code means `git checkout` on the server, and rolling back data means re-publishing older SQLite files.
+Publishing needs the operator's local `DATABASE_URL` to point at production Postgres and an ssh key the droplet accepts, because the chart upload runs `scp` in batch mode; a failed upload stops the step before any table is written. `--no-charts` publishes the tables alone. The deploy has no CI gate: it pulls whatever is on `main`, even while CI is still running. There is no rollback script; rolling back code means `git checkout` on the server, and rolling back data means re-publishing older SQLite files.
 
 ## Environment variables
 
 | Variable | Used by | Required | Notes |
 |---|---|---|---|
 | `SECRET_KEY` | app | yes (except tests) | Session signing |
-| `DATABASE_URL` | app, `publish.py` | yes | Postgres URL; publish points it at prod |
+| `DATABASE_URL` | app, the `publish` step | yes | Postgres URL; publish points it at prod |
 | `GOOGLE_OAUTH_CLIENT_ID` / `_SECRET` | app | yes | Google Cloud OAuth client |
 | `ADMIN_EMAILS` | app | for admin | Comma-separated; checked at each login |
 | `FLASK_ENV` | app | prod | `production` → secure cookies |
 | `ANALYTICS_IMAGES_DIR` | app | prod | Defaults to `backend/data/images` |
 | `FLASK_DEBUG` | `python -m app` | no | `true` enables debug locally |
 | `OAUTHLIB_INSECURE_TRANSPORT`, `OAUTHLIB_RELAX_TOKEN_SCOPE` | flask-dance | local only | Allow OAuth over http://localhost |
-| `SLEEPER_USERNAME`, `LEAGUE_ID` | notebook 01 | pipeline | |
+| `SLEEPER_USERNAME`, `LEAGUE_ID` | pipeline settings | pipeline, unless `PIPELINE_LEAGUE_ID` is set | The season's league is the one of the user's leagues that descends from `LEAGUE_ID` |
+| `PIPELINE_SEASON` | pipeline settings | no | Defaults to Sleeper's current NFL season |
+| `PIPELINE_LEAGUE_ID` | pipeline settings | no | Skips league discovery; set it when discovery finds more than one league |
+| `PIPELINE_MODEL_VERSION` | pipeline settings | no | Parameter file in `pipeline/model/params/`; defaults to `v2.3` |
+| `PIPELINE_DATA_DIR` | pipeline settings | no | Defaults to `backend/data` (databases, sims, images) |
+| `PUBLISH_CHARTS_TARGET` | the `publish` step | no | `scp` destination for the charts; defaults to `root@143.198.183.213:/var/lib/tncasino/analytics/` |
 | `FLEAFLICKER_LEAGUE_ID` | pipeline (Fleaflicker source) | for that source | The owner's own Fleaflicker league; unset, the source fails and a full run goes on with the others |
 
 Local and prod use separate `.env` files; the prod one is `/opt/tncasino/.env`. There is no `.env.example` in the repo.
@@ -86,21 +89,20 @@ Runs Flask on `0.0.0.0:5000` against whatever `DATABASE_URL` is set. The local `
 | `lint` | `ruff check .`, `ruff format --check .` |
 | `test` | `pip install -r requirements.txt`, `python -m pytest --tb=short` |
 
-`ruff.toml` excludes `backend/` entirely (line length 120), so scrapers and notebooks are never linted. The lint job installs the ruff version pinned in `requirements.txt`, because a newer ruff formats the code fences in Markdown and fails on the design docs; `requirements.txt` also keeps pandas below 3 and SQLAlchemy below 2.1, the versions the pipeline is tested on. Nothing deploys automatically.
+`ruff.toml` excludes nothing, so ruff covers the whole tree (line length 120). The lint job installs the ruff version pinned in `requirements.txt`, because a newer ruff formats the code fences in Markdown and fails on the design docs; `requirements.txt` also keeps pandas below 3 and SQLAlchemy below 2.1, the versions the pipeline is tested on. Nothing deploys automatically.
 
 ## Tests
 
-1227 tests in `tests/` (one skipped), running in about 50 seconds. The app tests use in-memory SQLite (`StaticPool`); `test_balance_race.py` builds a file-backed SQLite app (`file_backed_app` in `conftest.py`) so twenty threads really race. The pipeline tests under `tests/pipeline/` run on scratch SQLite files and recorded fixtures, never the network or the real databases. The RotoBaller fixtures are the exception to "recorded": they carry the site's markup with made-up numbers, because the repository is public and RotoBaller's letter forbids publishing its data.
+1259 tests in `tests/` (one skipped), running in about 50 seconds. The app tests use in-memory SQLite (`StaticPool`); `test_balance_race.py` builds a file-backed SQLite app (`file_backed_app` in `conftest.py`) so twenty threads really race. The pipeline tests under `tests/pipeline/` run on scratch SQLite files and recorded fixtures, never the network or the real databases. The RotoBaller fixtures are the exception to "recorded": they carry the site's markup with made-up numbers, because the repository is public and RotoBaller's letter forbids publishing its data.
 
 | Area | Files | Covers |
 |---|---|---|
 | Fixtures | `conftest.py` | App fixture, logged-in/admin clients (faked via `sess["_user_id"]`), `analytics_tables` (hand-written DDL for the analytics tables, with `season` and `run_id`), `seeded_analytics` (2026 week 10, with the run that published it, its window and a 20-sim score matrix in `simulation_totals`), `window_clock` (pins `windows.utc_now` an hour after that run so the window is open in every test), `fresh_matrix_cache` (clears the per-worker matrix cache between tests), `file_backed_app` |
 | Markets and money (531) | `test_markets.py`, `test_betting.py`, `test_windows.py`, `test_cashout.py`, `test_parlays.py`, `test_matrices.py`, `test_settlement.py`, `test_settlement_outcomes.py`, `test_ledger.py`, `test_balance_race.py` | Market keys and quotes, the betting window (open, paused, closed, the lock), placing, removing and settling by key, cash-out offers from the score matrix and the futures quotes with every refusal, parlay quotes and placement with every refusal rule and the refusal log, the cached matrix and the joint chance, parlays settled leg by leg with pushed legs re-priced, outcomes from the published scores, push and void, the admin preview, the refusals, accounting, lock enforcement, guarded balance changes, the twenty-thread race |
-| Odds and pages (96) | `test_odds.py`, `test_leaderboard.py`, `test_admin.py`, `test_admin_pipeline.py`, `test_helpers.py`, `test_models.py` | `query_analytics`, team mapping, odds and analytics endpoints against seeded tables, leaderboard rankings, admin access and periods, the pipeline dashboard, current week and lazy lock, ORM defaults and migrations |
-| Legacy scrapers (20) | `test_scrape.py`, `test_scrapers.py` | Week normalization, `validate_scraping` pass/fail rules, pure parsing helpers (no network) |
-| Pipeline (581) | `tests/pipeline/` (29 files) | One file per step or shared module: settings, runner, the CLI, sources, teams, names, scrape, verify, clean, match, stats, validate, league, lineups, waivers, params, sampling, simulate, the win rules, odds, playoffs, standings, accuracy, fit, evaluate, calibrate, publish, legacy migration |
+| Odds and pages (114) | `test_odds.py`, `test_leaderboard.py`, `test_admin.py`, `test_admin_pipeline.py`, `test_helpers.py`, `test_models.py` | `query_analytics`, team mapping, odds and analytics endpoints against seeded tables, leaderboard rankings, admin access and periods, the pipeline dashboard, current week and lazy lock, ORM defaults and migrations |
+| Pipeline (614) | `tests/pipeline/` (29 files) | One file per step or shared module: settings, runner, the CLI, sources, teams, names, scrape, verify, clean, match, stats, validate, league, lineups, waivers, params, sampling, simulate, the win rules, odds, playoffs, standings, accuracy, fit, evaluate, calibrate, publish, legacy migration |
 
-**Not covered:** the real OAuth round trip, `/account/update-profile` and CSRF, `pages.py` routes, the legacy `scripts/publish.py`, the legacy scrapers' network paths, notebooks, JavaScript, and anything Postgres-specific (the tests run on SQLite, prod runs on Postgres). The analytics DDL in `conftest.py` is maintained by hand and can drift from what the pipeline actually produces.
+**Not covered:** the real OAuth round trip, `/account/update-profile` and CSRF, `pages.py` routes, JavaScript, and anything Postgres-specific (the tests run on SQLite, prod runs on Postgres). The analytics DDL in `conftest.py` is maintained by hand and can drift from what the pipeline actually produces.
 
 ## Observability
 

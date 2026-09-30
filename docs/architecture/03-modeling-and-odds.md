@@ -4,18 +4,18 @@ How raw projections become prices. All scoring is PPR.
 
 ```mermaid
 flowchart LR
-    P["Projections<br/>(≤5 sources per player)"] --> S["Player μ, σ<br/>(notebook 05)"]
-    S --> L["Best lineup per team<br/>+ replacement players<br/>(06)"]
-    L --> LN["Per-player lognormal<br/>params (07)"]
-    LN --> SIM["50,000 draws per player,<br/>summed per team (07)"]
-    SIM --> MK["Weekly markets:<br/>ML, O/U, high/low (07)"]
-    SIM --> CV["Chart curves:<br/>density, CDF, margin (07)"]
+    P["Projections<br/>(≤5 sources per player)"] --> S["Player μ, σ<br/>(stats step)"]
+    S --> L["Best lineup per team<br/>+ waiver pickups<br/>(lineups step)"]
+    L --> LN["Per-player lognormal<br/>params (simulate step)"]
+    LN --> SIM["50,000 draws per player,<br/>summed per team (simulate step)"]
+    SIM --> MK["Weekly markets:<br/>ML, O/U, high/low (odds step)"]
+    SIM --> CV["Chart curves:<br/>density, CDF, margin (odds step)"]
     SIM --> ST["Season sims: first place, playoffs,<br/>last place, champion (playoffs step)"]
 ```
 
 ## 1. Player distributions
 
-The `stats` step (`pipeline/steps/stats.py`) replaces notebook 05. For each `(sleeper_player_id, week)` it combines every matched source projection under the parameters of the run's model version, a JSON file in `pipeline/model/params/` chosen by `PIPELINE_MODEL_VERSION` (default `v2.2`):
+The `stats` step (`pipeline/steps/stats.py`) turns the matched projections into each player's distribution. For each `(sleeper_player_id, week)` it combines every matched source projection under the parameters of the run's model version, a JSON file in `pipeline/model/params/` chosen by `PIPELINE_MODEL_VERSION` (default `v2.3`):
 
 - **μ** = mean of each source's projection minus that source's `bias` at the player's position, weighted by its `weight`. A source the file does not list counts at weight 1, bias 0, and a position missing from a source's `bias` at bias 0.
 - **s** = sample standard deviation of those bias-corrected projections (`ddof=1`); `0` with one source.
@@ -23,7 +23,7 @@ The `stats` step (`pipeline/steps/stats.py`) replaces notebook 05. For each `(sl
 
 Each `player_week_stats` row records the `model_version` that produced it.
 
-| | v1: notebook 05's formulas, frozen | v2.1: fitted on 2025 weeks 10–16 |
+| | v1: the 2025 pipeline's formulas, frozen | v2.1: fitted on 2025 weeks 10–16 |
 |---|---|---|
 | Sources (weight, bias) | 1, 0 for every source | Weight ESPN 0.99, FanDuel 1.08, FirstDown 0.82, Sleeper 1.11; bias per position, below |
 | σ | √((2s)² + σ_pos²); σ_pos QB 7, RB 9, WR 10, TE 8, K 4, DEF 7, default 8 | max(1, a + b·μ) per position; s is not used |
@@ -59,18 +59,18 @@ A QB projected for 10 is usually a backup who may not play, hence the high dud c
 
 ## 2. Lineups and replacement players
 
-Notebook 06, per team:
+The `lineups` step (`pipeline/steps/lineups.py`, waiver fill in `pipeline/waivers.py`), per team:
 
-1. **Eligibility.** Drop players with injury status `Out`, `IR`, `PUP`, `Suspended`, or `Doubtful`. Players on bye stay but get μ = 0.
-2. **Replacement benchmark.** For each position, the player at a fixed rank by μ across the whole player pool is the benchmark: QB 18, RB 40, WR 50, TE 22, K 18, DEF 18.
-3. **Greedy fill.** Sort by μ and fill slots QB 1, RB 2, WR 2, TE 1, FLEX 1 (RB/WR/TE), K 1, DEF 1 (9 starters). If a starter's μ is below the position benchmark, the benchmark player's μ/σ is used instead, flagged `is_replacement`.
-4. **Summary.** Team `total_mu = Σμ`, `combined_sigma = √Σσ²` (assumes independence).
+1. **Eligibility.** A rostered player can start unless he is on the roster's reserve (IR) or taxi list, his injury status is `Out`, `IR`, `PUP`, `Sus` (suspended) or `Doubtful`, his NFL team is on bye, or he has no `player_week_stats` row for the week.
+2. **Greedy fill.** The league's starting slots, today QB 1, RB 2, WR 2, TE 1, K 1, DEF 1 and FLEX 1 (RB/WR/TE), 9 starters: each fixed slot in turn takes the eligible player with the highest μ who may play there, then FLEX takes the best of those left. A player may play any position in his Sleeper `fantasy_positions`.
+3. **Waiver fill.** A slot still empty is a hole. The free-agent pool is every unrostered player who could start and has projections from at least 2 sources. Position by position, FLEX last, the teams with a hole claim in waiver order, most FAAB remaining first and then the lower `waiver_position`, and the i-th team takes the i-th best free agent left. A pickup keeps his own σ, but his μ is capped at the median μ of the league's starters at that position; he is flagged `is_replacement`. A hole the pool cannot fill scores 0.
+4. **Summary.** Team `total_mu = Σμ`, `combined_sigma = √Σσ²` (assumes independence), and the number of waiver pickups.
 
-Replacement players model the reality that an owner with a bad or empty slot will usually pick someone up from waivers before kickoff.
+Waiver pickups model the owner who fills an empty slot from waivers before kickoff. A healthy starter is never replaced, however low his projection.
 
 ## 3. Simulation
 
-The `simulate` step (`pipeline/steps/simulate.py`, sampler in `pipeline/model/sampling.py`) replaces notebook 07's draws: seed `1738`, 50,000 simulations, each starter's μ and σ from `team_lineups`, and the dud, floor and correlation blocks of the run's model version ([§1](#1-player-distributions)).
+The `simulate` step (`pipeline/steps/simulate.py`, sampler in `pipeline/model/sampling.py`) draws the week's totals: seed `1738`, 50,000 simulations, each starter's μ and σ from `team_lineups`, and the dud, floor and correlation blocks of the run's model version ([§1](#1-player-distributions)).
 
 **Lognormal parameterization** (per player, from a mean m and σ):
 
@@ -122,15 +122,15 @@ Scores are compared exactly, in float64. A selection's chance is its share of al
 | **Team over/under** | `betting_odds_team_ou` | Line = the team's simulated **median** rounded to cents, so over/under are ≈50/50 and paid at `EVEN` |
 | **Matchup over/under** | `betting_odds_matchup_ou` | Line = median of the combined score, rounded to cents. Published, not yet offered. |
 | **Highest / lowest scorer** | `betting_odds_highest_scorer`, `_lowest_scorer` | Share of simulations in which each team has the max/min score (ties credit every tied team) |
-| **First place** | `betting_odds_first_place` | Notebook 09: P(rank 1) after adding each simulated week to current standings |
-| **Make playoffs** | `betting_odds_make_playoffs` | Notebook 09: P(rank ≤ 8). Offered in the app as the `make_playoffs` market |
-| **Last place**, **Champion** | `betting_odds_last_place`, `betting_odds_champion` | The `playoffs` step only: P(last in the standings) and P(winning the bracket) ([§6](#6-playoff-odds)) |
+| **First place** | `betting_odds_first_place` | The `playoffs` step: P(finishing 1st in the simulated final standings) |
+| **Make playoffs** | `betting_odds_make_playoffs` | The `playoffs` step: P(finishing in the top `playoff_teams`). Offered in the app as the `make_playoffs` market |
+| **Last place**, **Champion** | `betting_odds_last_place`, `betting_odds_champion` | The `playoffs` step: P(last in the standings) and P(winning the bracket) |
 
-Notebook 09 ranking: +1 win for the higher simulated score (an exact tie counts as a loss for both), then sort by wins, then total points for. Only rows with 0.01 ≤ p ≤ 0.99 are stored.
+The futures come from simulated seasons: every remaining regular-season week added to the standings to date, ranked by wins, then ties, then points for, and the top teams played through the bracket ([§6](#6-playoff-odds)). Only rows with 0.01 ≤ p ≤ 0.99 are stored.
 
 ## Model fitting and calibration
 
-A model version is a JSON file in `pipeline/model/params/`. `v1` holds notebook 05's formulas, frozen as the baseline; later versions are fitted on a season's projections and actual points, and switching between them is a setting (`PIPELINE_MODEL_VERSION`), not a code change.
+A model version is a JSON file in `pipeline/model/params/`. `v1` holds the 2025 pipeline's formulas, frozen as the baseline; later versions are fitted on a season's projections and actual points, and switching between them is a setting (`PIPELINE_MODEL_VERSION`), not a code change.
 
 **Backfilling a source's past weeks** (`pipeline/backfill.py`). A source added mid-season has no past rows to fit on. `python -m pipeline backfill --season 2025 --weeks 10-16 --source fftoday` fetches, verifies and stores its projections for weeks already played, a week counting as played when `league.db.player_stats` holds its actual scores, and runs `clean` and `match` for each of them so `projections_with_sleeper` carries the rows the fit reads. Every check but `value_agreement` refuses a week as it does in the weekly scrape; `value_agreement` is advisory, its numbers printed and the rows stored regardless, because on a past season it measures Sleeper's level rather than the source's: Sleeper's 2025 QBs ran about 3 points above every other source, so FFToday's 2025 weeks 10–16 failed it at QB in six of seven weeks (r 0.72–0.88, median gaps 3.0–4.3 points) while every other check passed. A plain refit on 2025 puts Sleeper's QB bias back near 4.4, so the version `fit-model` writes is amended by hand to 1.45 with an `amended` block, as v2.2 was ([§1](#1-player-distributions)), until a 2026 fit replaces it.
 
@@ -171,7 +171,7 @@ The v2 row is v2.json's stored gate block, from when the fit had one bias per so
 
 v2.1 passes the gate, K and DEF included, and differs from v2 most at DEF. ESPN, the only source that projects defenses, projected them 1.45 points too low, but v2 fitted one bias per source, and ESPN's +0.61, learned mostly from its other positions, lowered its defense projections further: held out, v2's mean DEF μ was 4.54 against a mean actual of 6.60, and 26% of actuals fell above the 90th percentile. v2.1's DEF bias of −1.45 brings the mean μ to 6.61, yet on its own it moved coverage only from 0.617 to 0.622: the 11% of defenses that scored 0 or less still missed every band, and 21% of actuals now fell below the 10th percentile. The floor of −5, a point under 2025's lowest DEF score of −4, brings coverage to 0.751, with 13% of actuals below the 10th percentile and 12% above the 90th. The league's scoring lets a defense reach −11 (−4 for allowing 35 or more points, −7 for 550 or more yards), so a score under −5 is possible; the model gives it no chance, and the gate would count one as a miss.
 
-Over all eligible rows v2.1 covers 0.773, against v2's 0.754 and v1's 0.662, which misses the bounds at every position but RB. v1's shortfall is almost all its zeros, each a miss for a model without a dud: it covers 79% of the rows that scored above 0. Only 3% of starters scored 0 or less, against 16% of all rows, so on the starters the gap is smaller, 0.791 against v1's 0.765. The bias per position also takes out the QB lean: Sleeper projects QBs 4.4 points high, and held out, v2's mean QB μ ran 1.5 points above the mean actual and v1's 1.9, where v2.1's runs 0.15 above. v2.1 keeps v2's fix of v1's thin left tail: QB scores above 0 but below the 2.5th percentile are 1.8% of QB player-weeks under v2.1, 2.7% under v2 and 11.6% under v1. At the team level v2.1 covers 0.798 against v1's 0.833, both inside the bounds, with an MAE of 20.14 against 20.30. Its moneylines beat v1's on 27 of the 42 games and lost on 15, but the mean difference of −0.0013 is inside two standard errors (0.0056), so the gain is not significant. v2.1 was the default from 2026-09-27, and v2.2, the same fit with Sleeper's QB bias at +1.45 ([§1](#1-player-distributions)), has been since 2026-09-28; `PIPELINE_MODEL_VERSION=v1` restores the notebook formulas.
+Over all eligible rows v2.1 covers 0.773, against v2's 0.754 and v1's 0.662, which misses the bounds at every position but RB. v1's shortfall is almost all its zeros, each a miss for a model without a dud: it covers 79% of the rows that scored above 0. Only 3% of starters scored 0 or less, against 16% of all rows, so on the starters the gap is smaller, 0.791 against v1's 0.765. The bias per position also takes out the QB lean: Sleeper projects QBs 4.4 points high, and held out, v2's mean QB μ ran 1.5 points above the mean actual and v1's 1.9, where v2.1's runs 0.15 above. v2.1 keeps v2's fix of v1's thin left tail: QB scores above 0 but below the 2.5th percentile are 1.8% of QB player-weeks under v2.1, 2.7% under v2 and 11.6% under v1. At the team level v2.1 covers 0.798 against v1's 0.833, both inside the bounds, with an MAE of 20.14 against 20.30. Its moneylines beat v1's on 27 of the 42 games and lost on 15, but the mean difference of −0.0013 is inside two standard errors (0.0056), so the gain is not significant. v2.1 was the default from 2026-09-27, and v2.2, the same fit with Sleeper's QB bias at +1.45 ([§1](#1-player-distributions)), has been since 2026-09-28; `PIPELINE_MODEL_VERSION=v1` restores v1's formulas.
 
 **Calibration** (the `calibrate` step, `pipeline/steps/calibrate.py`) checks the model as it actually ran, season to date, without refitting. It runs right after the accuracy step ([§7](#7-prediction-accuracy)) and scores every earlier week of the season that step has graded, which it does only once every game of the week is final:
 
@@ -180,32 +180,32 @@ Over all eligible rows v2.1 covers 0.773, against v2's 0.754 and v1's 0.662, whi
 - *Teams:* the share of `team_accuracy` rows whose score fell inside the week's latest [p10, p90]. A team without a curve is left out, and a week whose teams all lack one is listed.
 - *Moneylines:* the Brier score of the win chances the accuracy step recorded in `team_accuracy` against the results. A tie has no result and is left out.
 
-The metrics go to `odds.db.calibration_metrics`, which is published: one row per metric and position, counts included, recorded at the run's week under the run's model version, and replaced when that week is recalibrated. The step also draws the 80% coverage by position, over every row and over the starters, as `calibration_week_N.png`. Until the accuracy step has graded a week it warns `no week graded by the accuracy step yet` and writes nothing. Run as week 17 of 2025 after the accuracy step graded weeks 10–16, it found the notebooks' distributions covered 65.5% of 2,335 player-weeks at 80% (QB 0.62, RB 0.72, WR 0.62, TE 0.65, K 0.66, DEF 0.69), 17% of which scored 0 or less, and 75.6% of the 701 starters among them (QB 0.78, RB 0.79, WR 0.77, TE 0.68, K 0.71, DEF 0.72), 3% of whom scored 0 or less. Teams landed inside their [p10, p90] in 85% of 60 team-weeks (week 13 has no curves), and the moneyline Brier score was 0.229 over 36 games.
+The metrics go to `odds.db.calibration_metrics`, which is published: one row per metric and position, counts included, recorded at the run's week under the run's model version, and replaced when that week is recalibrated. The step also draws the 80% coverage by position, over every row and over the starters, as `calibration_week_N.png`. Until the accuracy step has graded a week it warns `no week graded by the accuracy step yet` and writes nothing. Run as week 17 of 2025 after the accuracy step graded weeks 10–16, it found the 2025 pipeline's distributions covered 65.5% of 2,335 player-weeks at 80% (QB 0.62, RB 0.72, WR 0.62, TE 0.65, K 0.66, DEF 0.69), 17% of which scored 0 or less, and 75.6% of the 701 starters among them (QB 0.78, RB 0.79, WR 0.77, TE 0.68, K 0.71, DEF 0.72), 3% of whom scored 0 or less. Teams landed inside their [p10, p90] in 85% of 60 team-weeks (week 13 has no curves), and the moneyline Brier score was 0.229 over 36 games.
 
 ## 5. Analytics curves
 
-Precomputed in notebook 07 so the web app never touches raw simulations (the 400+ MB `montecarlo.db` is not published).
+The `odds` step precomputes these from the run's Parquet draws under `backend/data/sims/`, which are never published, so the analytics page never touches raw simulations.
 
 | Table | Content |
 |---|---|
-| `team_distribution_curves` | Per owner: a 160-point x-grid shared across all teams (spanning the pooled 0.5th–99.5th percentiles, padded 5%), `gaussian_kde` density, empirical CDF, plus mean, p10, p50, p90, n_sims |
+| `team_distribution_curves` | Per owner: a 300-point x-grid from 0 to 300 shared across all teams, `gaussian_kde` density, empirical CDF, plus mean, p10, p50, p90, n_sims |
 | `team_matchup_margin_curves` | For **every ordered pair** of owners (not just scheduled matchups): margin = team − opponent on a grid of −40…40 (161 points), left tail CDF and right tail survival, win/loss/tie probabilities |
 
-Arrays are stored as JSON text. The notebook fails if any owner has a different set of `sim_id`s, since margins pair draws by `sim_id`.
+Arrays are stored as JSON text. A margin pairs the two teams' scores from the same simulation.
 
 The pairwise margin table lets the analytics page compare any two teams, not just the scheduled pair. Moneylines are only shown for the scheduled pair.
 
 ## 6. Playoff odds
 
-The `playoffs` step (`pipeline/steps/playoffs.py`) replaces notebook 09. The notebook ranked teams after the current week only; the step simulates every week left in the regular season and the playoff weeks after it, 20,000 seasons per run, and prices four futures from them.
+The `playoffs` step (`pipeline/steps/playoffs.py`) simulates every week left in the regular season and the playoff weeks after it, 20,000 seasons per run, and prices four futures from them.
 
 1. **Current week.** The first 20,000 draws of the simulate step's latest run for the week, paired by `league.db.matchups`.
 2. **Each later week** (`week + 1` to `playoff_week_start − 1`, then one week per playoff round from `playoff_week_start`):
    - *Projections.* The sources that publish future weeks (Sleeper, ESPN, FantasySharks) are scraped, then cleaned, matched and turned into player μ/σ exactly as the weekly steps do. Sleeper is always scraped because the others are checked against it, and a failing Sleeper stops the step; any other source that fails its checks is dropped for that week, with its rows deleted and one warning naming the weeks. `--sources` narrows the others. These projections live only for the run: once the later weeks are simulated, or the step fails part-way, their rows in `projections`, `projections_with_sleeper` and `player_week_stats` are deleted, and the current week's are never touched. Because of that cleanup the step refuses a week the weekly steps have already moved past (a later week, playoff weeks included, has `team_lineups` rows): repricing week 4's futures after week 5's run would otherwise delete week 5's projections.
-   - *Lineups.* Each roster starts its best lineup from its own players, with the lineups step's eligibility and slot rules but **no replacement players**, since nobody can know who will be on waivers in six weeks. An empty slot scores 0.
+   - *Lineups.* Each roster starts its best lineup from its own players, with the lineups step's eligibility and slot rules but **no waiver pickups**, since nobody can know who will be on waivers in six weeks. An empty slot scores 0.
    - *Draws.* The same sampler as the simulate step, seeded with `seed + week`.
    - *Pairings.* Regular-season weeks only: Sleeper's `/league/{id}/matchups/{week}`, which lists the whole regular season in advance. The playoff weeks need none; the bracket pairs the teams.
-3. **Standings.** Start from each roster's record to date (`wins`, `ties` and points for = `fpts + fpts_decimal / 100`; notebook 09 added the hundredths unscaled) and add every simulated regular-season week: the higher score wins, an exact tie is a tie for both, and every score counts toward points for. Rank by wins, then ties, then points for, then lower `roster_id` (`pipeline/standings.py`). The standings end at `playoff_week_start − 1`.
+3. **Standings.** Start from each roster's record to date (`wins`, `ties` and points for = `fpts + fpts_decimal / 100`) and add every simulated regular-season week: the higher score wins, an exact tie is a tie for both, and every score counts toward points for. Rank by wins, then ties, then points for, then lower `roster_id` (`pipeline/standings.py`). The standings end at `playoff_week_start − 1`.
 4. **Bracket.** Each simulated season's top `playoff_teams` are seeded in finishing order and play Sleeper's fixed bracket on the playoff weeks' scores (`standings.play_bracket`): seed *i* opens against seed `playoff_teams + 1 − i`, and later rounds pair the winners in bracket order without reseeding, so with eight teams the winner of 1v8 meets the winner of 4v5, the winner of 2v7 meets the winner of 3v6, and those two meet in the final. There are no byes; each round is one week, so eight teams play weeks `playoff_week_start` to `playoff_week_start + 2`. The higher score advances, and **a tied playoff game advances the higher seed**.
 
 | Market | Table | Probability |
@@ -222,7 +222,7 @@ Limits: weeks are independent draws from today's rosters, so trades, waiver move
 
 ## 7. Prediction accuracy
 
-The `accuracy` step (`pipeline/steps/accuracy.py`) replaces the ad hoc notebook 10 and writes what it finds. It grades the week before the run's week once that week is over: every game final in `league.db.nfl_schedules` (ESPN's status, refreshed by the league step; the 2025 schedules migrated without one count as played) and the stat lines in `league.db.player_stats`. It runs before `lineups` in the weekly order.
+The `accuracy` step (`pipeline/steps/accuracy.py`) grades the week before the run's week once that week is over: every game final in `league.db.nfl_schedules` (ESPN's status, refreshed by the league step; the 2025 schedules migrated without one count as played) and the stat lines in `league.db.player_stats`. It runs before `lineups` in the weekly order and writes what it finds.
 
 **Players.** Every source, and the consensus μ the model used (`player_week_stats`), are scored on the players the consensus projected for at least 2 points; benchwarmers who score 0 would otherwise flatter every source. A source that lists a player twice under two spellings is scored on the mean of the two, positions come from Sleeper, and a player without a stat line scored 0. For each source at each position and over all positions (`ALL`):
 

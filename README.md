@@ -6,7 +6,7 @@
 
 TNCasino is FanDuel but with fake money, for betting on the outcomes of my fantasy league (named TNC).
 
-Data comes from 5 different fantasy football/betting projection sources. The data from those sources gets scraped, heavily cleaned, and used to create the distribution parameters for the simulations. Simulations get run and the results of those simulations are used to create betting odds.
+Data comes from 8 different fantasy football projection sources. The data from those sources gets scraped, checked against Sleeper, heavily cleaned, and used to create the distribution parameters for the simulations. Simulations get run and the results of those simulations are used to create betting odds.
 
 For how the whole system works under the hood, see the [architecture docs](docs/architecture/README.md).
 
@@ -43,6 +43,8 @@ $$\text{var} = \sigma^2$$
    +\frac{100(1-P_1)}{P_1} & \text{if } P_1 < 0.5
    \end{cases}$$
 
+
+That is the v1 baseline. The default parameters today, v2.3, were fitted on 2025 weeks 10 to 16: each source gets a weight and a per-position bias in μ, σ grows linearly with μ by position, a player can have a dud week, and teammates' scores are correlated. They live in `pipeline/model/params/`.
 
 So:
 - A QB that is projected for 13-15 points by every source will have a low mean but low variance
@@ -84,24 +86,30 @@ Full details live in [docs/architecture](docs/architecture/README.md). The short
 
 ### Data Pipeline
 
+`python -m pipeline run --week N` runs these steps in order; the publish step runs when named.
+
 ```
-1. League Data Collection → Sleeper API integration
-2. Projection Scraping → Multi-source web scrapers (requests/Selenium/Playwright)
-3. Data Standardization → Name matching, position normalization
-4. Statistical Analysis → Mean/variance calculations per player
-5. Lineup Optimization → Best lineup per team, with replacement players
-6. Monte Carlo Simulation → 50,000 iterations per week
-7. Odds Generation → Probability-to-odds conversion, playoff odds
-8. Publish → Push the tables the site needs to production PostgreSQL
-9. Web App → Flask backend with interactive frontend
+ 1. league      → Sleeper league, rosters, matchups, players; NFL schedule from ESPN
+ 2. scrape      → 8 projection sources, each verified against Sleeper
+ 3. clean       → Names, positions, team codes, defenses made canonical
+ 4. match       → Every projection linked to a Sleeper player ID
+ 5. stats       → One distribution (μ, σ) per player from the model parameters
+ 6. accuracy    → Last week's projections and odds graded against what happened
+ 7. calibrate   → Season-to-date calibration of the model
+ 8. lineups     → Best lineup per team, holes filled from the waiver wire
+ 9. simulate    → 50,000 correlated simulations of every starter
+10. odds        → Weekly markets and chart curves
+11. playoffs    → Rest of the season simulated: first place, playoffs, last place, champion
+12. validate    → Cross-table checks before anything is published
+13. publish     → Charts and tables to production PostgreSQL
 ```
 
 ### Technology Stack
 
 - **Backend**: Python, Flask, SQLAlchemy, Google OAuth
 - **Databases**: SQLite (local pipeline), PostgreSQL (production)
-- **Data Processing**: Pandas, NumPy, SciPy, Jupyter Notebooks
-- **Web Scraping**: Selenium, Playwright
+- **Data Processing**: Pandas, NumPy, SciPy, PyArrow (Parquet draws)
+- **Web Scraping**: requests, BeautifulSoup, Playwright
 - **Statistical Modeling**: Custom Monte Carlo implementation
 - **Frontend**: HTML/CSS/JavaScript, Chart.js, responsive design
 - **Visualization**: Matplotlib/Seaborn (static images), Chart.js (site)
@@ -109,13 +117,13 @@ Full details live in [docs/architecture](docs/architecture/README.md). The short
 
 ### Databases
 
-The pipeline writes to four local SQLite databases:
-- **league.db**: Teams, rosters, matchups, NFL players, player stats (from Sleeper)
-- **projections.db**: Multi-source player projections, per-player stats, and lineups
-- **odds.db**: Betting odds and precomputed chart curves
-- **montecarlo.db**: Raw simulation results (stays local, it's huge)
+The pipeline writes to four local SQLite databases in `backend/data/databases/`:
+- **league.db**: Teams, rosters, matchups, NFL players, player stats, NFL schedule (from Sleeper and ESPN)
+- **projections.db**: Multi-source player projections, per-player stats, lineups, and accuracy grades
+- **odds.db**: Betting odds, precomputed chart curves, simulation runs, and calibration
+- **pipeline.db**: A record of every run and step, and the verdicts on each source
 
-`scripts/publish.py` copies the tables the site needs into production PostgreSQL, which also holds users, bets, balances, and betting periods.
+The simulation draws are stored as Parquet files in `backend/data/sims/`. The publish step copies the tables the site needs into production PostgreSQL, which also holds users, bets, balances, and betting periods, and appends each run's score matrix there so bets can be priced and settled at the run they were placed on.
 
 ---
 
@@ -123,27 +131,17 @@ The pipeline writes to four local SQLite databases:
 
 ```
 ├── backend/
-│   ├── notebooks/              # Data processing pipeline
-│   │   ├── 01_league_control.ipynb          # League data collection
-│   │   ├── 02_projections_control.ipynb     # Multi-source scraping
-│   │   ├── 03_post_scraping_processing.ipynb # Data cleaning
-│   │   ├── 04_match_projections_to_sleeper.ipynb # Player matching
-│   │   ├── 05_compute_player_week_stats.ipynb    # Statistical analysis
-│   │   ├── 06_team_lineup_optimizer.ipynb       # Lineup optimization
-│   │   ├── 07_monte_carlo_simulations.ipynb     # 50K simulations + odds
-│   │   ├── 08_database_validation.ipynb         # Sanity checks
-│   │   ├── 09_playoff_odds.ipynb                # First place / playoff odds
-│   │   └── 10_prediction_accuracy.ipynb         # How good were the projections?
-│   ├── scrapers/               # Web scraper modules
-│   │   ├── scraper_fanduel.py
-│   │   ├── scraper_sleeper.py
-│   │   ├── scraper_fantasypros.py
-│   │   ├── scraper_espn.py
-│   │   └── scraper_firstdown.py
-│   └── data/
-│       ├── csv/                # Data exports
-│       ├── images/             # Generated visualizations
-│       └── databases/          # SQLite databases
+│   └── data/                   # Local pipeline output (gitignored)
+│       ├── databases/          # SQLite: league, projections, odds, pipeline
+│       ├── sims/               # Simulation draws (Parquet)
+│       └── images/             # Charts for the analytics page
+├── pipeline/                   # The weekly pipeline (python -m pipeline)
+│   ├── __main__.py             # CLI: run, status, review, backfill, fit-model
+│   ├── runner.py               # Runs steps in order, records each run
+│   ├── settings.py             # Season, week, league, paths
+│   ├── sources/                # The 8 projection sources and their checks
+│   ├── steps/                  # The 13 steps, league to publish
+│   └── model/                  # Sampling, fitting, versioned parameters
 ├── frontend/
 │   ├── templates/              # Flask HTML templates
 │   │   ├── betting.html        # Matchup betting interface
@@ -159,11 +157,7 @@ The pipeline writes to four local SQLite databases:
 │   ├── models.py               # Database models
 │   └── routes/                 # Blueprints (pages, betting, odds, admin, account)
 ├── docs/architecture/          # How the system works today
-├── tests/                      # Pytest suite (in-memory SQLite)
-├── scripts/                    # Standalone CLI tools
-│   ├── publish.py              # Push local SQLite to production PostgreSQL
-│   ├── scrape.py               # Orchestrate all scrapers
-│   └── validate_scraping.py    # Check projection data quality
+├── tests/                      # Pytest suite (app on in-memory SQLite, pipeline on scratch SQLite)
 └── requirements.txt            # Python dependencies
 ```
 
@@ -181,7 +175,7 @@ cd "Claude Model"
 # Install dependencies
 pip install -r requirements.txt
 
-# Install Playwright browser (for FanDuel scraper)
+# Install Playwright browser (for the FanDuel source)
 playwright install chromium
 ```
 
@@ -194,6 +188,8 @@ Create a `.env` file:
 SLEEPER_USERNAME=your_username
 LEAGUE_ID=your_league_id
 FLEAFLICKER_LEAGUE_ID=your_league_id
+# Optional: skips discovering the league from SLEEPER_USERNAME and LEAGUE_ID
+PIPELINE_LEAGUE_ID=your_sleeper_league_id
 
 # Web app
 SECRET_KEY=any_random_string
@@ -209,29 +205,26 @@ OAUTHLIB_RELAX_TOKEN_SCOPE=1
 
 ### Running the Pipeline
 
-Scrape projections with the CLI (it isolates each source and validates the result):
+Run the week:
 
 ```bash
-python -m scripts.scrape --week 17
+python -m pipeline run --week 5
 ```
 
-Then run the Jupyter notebooks in numbered sequence (set `CURRENT_WEEK` at the top of each):
+That fetches the league from Sleeper, scrapes the eight projection sources and checks each against Sleeper (a source that fails is dropped for the week), matches every projection to a Sleeper player, blends the sources into one distribution per player, builds each team's lineup, runs 50,000 simulations, prices the week's odds and the season's futures, and validates the result. Everything lands in local SQLite files under `backend/data/`.
 
-1. **League Control**: Fetch Sleeper league data
-2. **Projections Control**: Scrape projections (same as the CLI above, skip if you used it)
-3. **Post-Scraping Processing**: Clean and standardize data
-4. **Match to Sleeper**: Link projections to Sleeper player IDs
-5. **Player Stats**: Calculate mean/variance for each player
-6. **Lineup Optimizer**: Generate optimal lineups
-7. **Monte Carlo**: Run 50,000 simulations and generate odds
-8. **Database Validation**: Sanity-check everything
-9. **Playoff Odds**: First place and make-the-playoffs odds
-10. **Prediction Accuracy**: Optional, compares projections to what actually happened
-
-That creates the SQLite files. Publish what the site needs to PostgreSQL (the Monte Carlo db stays local because it's too big):
+Check how each step went, and record a verdict on any source that looks wrong:
 
 ```bash
-python -m scripts.publish
+python -m pipeline status --week 5
+python -m pipeline review --week 5 --source espn.com --verdict ok --note "top players look right"
+```
+
+Publish what the site needs to PostgreSQL. With `DATABASE_URL` pointed at production, see what would be uploaded first, then publish for real:
+
+```bash
+python -m pipeline run --week 5 --steps publish --dry-run
+python -m pipeline run --week 5 --steps publish
 ```
 
 Then run the site:

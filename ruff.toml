@@ -1,10 +1,5 @@
 target-version = "py313"
 line-length = 120
-exclude = [
-    "backend/",
-    "database_summary.py",
-    "migrate_simulations_to_montecarlo.py",
-]
 
 [lint]
 select = [
@@ -21,5 +16,3 @@ ignore = [
 
 [lint.per-file-ignores]
 "app/__init__.py" = ["E402"]  # imports after app creation are required for Flask init
-"backend/notebooks/*.py" = ["E", "F", "W"]  # notebooks are messy, skip
-"migrate_*.py" = ["F841"]  # unused variables OK in migrations

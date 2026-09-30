@@ -330,8 +330,115 @@
         white-space: nowrap;
     }
 
-    .pipeline-not-run td {
+    .pipeline-step-index {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 14px;
+        margin-bottom: 16px;
+        font-size: 13px;
+    }
+
+    .pipeline-step-index a {
+        color: var(--tnc-fg);
+        text-decoration: none;
+        white-space: nowrap;
+    }
+
+    .pipeline-step {
+        border: 1px solid var(--tnc-border);
+        border-radius: 8px;
+        padding: 14px 16px;
+        margin-top: 12px;
+        min-width: 0;
+    }
+
+    .pipeline-step-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 4px 12px;
+    }
+
+    .pipeline-step-head h4 {
+        font-size: 16px;
+        margin: 0;
+    }
+
+    .pipeline-not-run {
+        padding: 8px 16px;
+    }
+
+    .pipeline-not-run .pipeline-name {
         color: var(--tnc-fg-muted);
+    }
+
+    .pipeline-sections {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 12px 32px;
+    }
+
+    .pipeline-section {
+        min-width: 0;
+        max-width: 100%;
+        margin-top: 10px;
+    }
+
+    .pipeline-section-title {
+        color: var(--tnc-fg-muted);
+        font-size: 13px;
+        font-weight: 600;
+        margin: 0 0 4px;
+    }
+
+    details > .pipeline-section-title {
+        cursor: pointer;
+    }
+
+    .pipeline-cell-lines summary {
+        cursor: pointer;
+    }
+
+    .pipeline-cell-lines div {
+        white-space: nowrap;
+    }
+
+    .pipeline-json {
+        font-family: var(--tnc-font-mono);
+        font-size: 12px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+    }
+
+    .pipeline-checks {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        font-size: 12px;
+    }
+
+    .pipeline-checks li {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 2px 8px;
+        padding: 2px 0;
+    }
+
+    .pipeline-check-name {
+        min-width: 11rem;
+        font-family: var(--tnc-font-mono);
+    }
+
+    .pipeline-check-detail {
+        flex: 1 1 18rem;
+        color: var(--tnc-fg-muted);
+    }
+
+    .pipeline-source-row td {
+        border-bottom: none;
+        padding-bottom: 4px;
     }
 
     .pipeline-status {
@@ -364,9 +471,15 @@
 
     .pipeline-summary {
         display: grid;
-        grid-template-columns: max-content 1fr;
-        gap: 4px 16px;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 2px 16px;
+        margin: 0;
         font-size: 13px;
+    }
+
+    .pipeline-summary dd {
+        margin: 0;
+        overflow-wrap: anywhere;
     }
 
     .pipeline-summary dt {
@@ -383,6 +496,11 @@
         font-size: 12px;
         text-transform: none;
         vertical-align: top;
+        white-space: nowrap;
+    }
+
+    .pipeline-mini td:last-child {
+        white-space: normal;
     }
 
     .pipeline-warnings {
@@ -431,6 +549,11 @@
     }
 
     @media (max-width: 600px) {
+        .pipeline-table th,
+        .pipeline-table td {
+            padding: 8px 6px;
+            font-size: 13px;
+        }
         .active-week-banner {
             flex-direction: column;
             text-align: center;
