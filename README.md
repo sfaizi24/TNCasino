@@ -193,6 +193,7 @@ Create a `.env` file:
 # Pipeline
 SLEEPER_USERNAME=your_username
 LEAGUE_ID=your_league_id
+FLEAFLICKER_LEAGUE_ID=your_league_id
 
 # Web app
 SECRET_KEY=any_random_string
