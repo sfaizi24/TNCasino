@@ -11,7 +11,18 @@
 
 <div class="tnc-betting-head">
     <div>
-        <h1 class="tnc-betting-title">Week {{ current_week }} Matchups</h1>
+        <div class="tnc-view-picker">
+            <h1 class="tnc-betting-title">
+                <button class="tnc-view-toggle" id="viewToggle" aria-haspopup="menu" aria-expanded="false">
+                    <span id="viewTitle">Week {{ current_week }} Matchups</span>
+                    <svg class="tnc-view-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+            </h1>
+            <div class="tnc-view-menu" id="viewMenu" role="menu" hidden>
+                <button class="tnc-view-option is-on" role="menuitem" data-view="week">Week {{ current_week }} Matchups</button>
+                <button class="tnc-view-option" role="menuitem" data-view="futures">Futures</button>
+            </div>
+        </div>
         <div class="tnc-model-strip">
             <span class="tnc-live-dot" aria-hidden="true">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4"/></svg>
@@ -48,13 +59,19 @@
 
 <div id="slip"></div>
 
-<div class="tnc-tabs" id="tabs">
+<div class="tnc-tabs" data-view="week">
     <button class="tnc-tab is-on" data-tab="ml">Moneyline</button>
     <button class="tnc-tab" data-tab="sp">Spreads</button>
     <button class="tnc-tab" data-tab="ou">Over/Under</button>
     <button class="tnc-tab" data-tab="hi">Highest Scorer</button>
     <button class="tnc-tab" data-tab="lo">Lowest Scorer</button>
-    <button class="tnc-tab" data-tab="fu">Futures</button>
+</div>
+
+<div class="tnc-tabs" data-view="futures" hidden>
+    <button class="tnc-tab is-on" data-tab="fp">First Place</button>
+    <button class="tnc-tab" data-tab="mp">Make Playoffs</button>
+    <button class="tnc-tab" data-tab="lp">Last Place</button>
+    <button class="tnc-tab" data-tab="ch">Champion</button>
 </div>
 
 <div class="tnc-mc-grid" id="grid">

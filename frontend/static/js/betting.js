@@ -2,7 +2,7 @@ const isAuth = window.isAuthenticated;
 const QUICK_STAKES = [10, 25, 50, 100];
 const QUOTE_DELAY_MS = 250;
 
-// The endpoint listing each kind of card.
+// The endpoint listing each kind of card. Each tab lists one kind, and its data-tab names it.
 const SOURCES = {
     ml: '/api/matchups',
     sp: '/api/spreads',
@@ -13,21 +13,6 @@ const SOURCES = {
     mp: '/api/make_playoffs',
     lp: '/api/last_place',
     ch: '/api/champion',
-};
-
-// The kinds of card each tab lists. Futures lists four, each under its own heading.
-const TABS = {
-    ml: [{ kind: 'ml' }],
-    sp: [{ kind: 'sp' }],
-    ou: [{ kind: 'ou' }],
-    hi: [{ kind: 'hi' }],
-    lo: [{ kind: 'lo' }],
-    fu: [
-        { kind: 'fp', title: 'First place' },
-        { kind: 'mp', title: 'Make playoffs' },
-        { kind: 'lp', title: 'Last place' },
-        { kind: 'ch', title: 'Champion' },
-    ],
 };
 
 // Active bets are listed in one group per tab.
@@ -608,19 +593,14 @@ function renderSlip() {
     `;
 }
 
-function renderList({ kind, title }) {
-    const heading = title ? `<h2 class="tnc-fu-head">${title}</h2>` : '';
-    return heading + state.rows[kind].map((row, idx) => renderCard(kind, row, idx)).join('');
-}
-
 function renderGrid() {
     const grid = document.getElementById('grid');
-    const lists = TABS[state.tab].filter(list => state.rows[list.kind].length);
-    if (!lists.length) {
+    const rows = state.rows[state.tab];
+    if (!rows.length) {
         grid.innerHTML = '<p class="tnc-mc-loading">No bets available right now.</p>';
         return;
     }
-    grid.innerHTML = lists.map(renderList).join('');
+    grid.innerHTML = rows.map((row, idx) => renderCard(state.tab, row, idx)).join('');
 }
 
 function renderWindow() {
@@ -685,9 +665,8 @@ async function loadLineup(owner) {
 
 // A newer run is live: show its prices and its window, drop the picks made on the old ones and move the slip onto it.
 async function reloadTab() {
-    const tabKinds = TABS[state.tab].map(list => list.kind);
     const slipKinds = state.slip.legs.map(leg => leg.kind);
-    const kinds = new Set([...tabKinds, ...slipKinds]);
+    const kinds = new Set([state.tab, ...slipKinds]);
     await Promise.all([...[...kinds].map(loadRows), loadWindow(), loadBets()]);
     state.picks = {};
     state.stakes = {};
@@ -1043,18 +1022,54 @@ async function handleShow(card) {
     renderGrid();
 }
 
-function handleTab(tab) {
+// Each view keeps its own tab bar, so switching back returns to the tab left on.
+function handleTab(bar, tab) {
     state.tab = tab;
-    document.querySelectorAll('.tnc-tab').forEach(t => {
+    bar.querySelectorAll('.tnc-tab').forEach(t => {
         t.classList.toggle('is-on', t.dataset.tab === tab);
     });
     renderGrid();
 }
 
+function setViewMenuOpen(open) {
+    document.getElementById('viewMenu').hidden = !open;
+    document.getElementById('viewToggle').setAttribute('aria-expanded', String(open));
+}
+
+function handleView(option) {
+    const view = option.dataset.view;
+    document.querySelectorAll('.tnc-view-option').forEach(o => o.classList.toggle('is-on', o === option));
+    document.getElementById('viewTitle').textContent = option.textContent;
+    document.querySelectorAll('.tnc-tabs').forEach(bar => {
+        bar.hidden = bar.dataset.view !== view;
+    });
+    setViewMenuOpen(false);
+    state.tab = document.querySelector(`.tnc-tabs[data-view="${view}"] .tnc-tab.is-on`).dataset.tab;
+    renderGrid();
+}
+
+function bindViewPicker() {
+    const menu = document.getElementById('viewMenu');
+    document.getElementById('viewToggle').addEventListener('click', () => setViewMenuOpen(menu.hidden));
+    menu.addEventListener('click', e => {
+        const option = e.target.closest('.tnc-view-option');
+        if (option) handleView(option);
+    });
+    document.addEventListener('click', e => {
+        if (!e.target.closest('.tnc-view-picker')) setViewMenuOpen(false);
+    });
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') setViewMenuOpen(false);
+    });
+}
+
 function bindEvents() {
-    document.getElementById('tabs').addEventListener('click', e => {
-        const tab = e.target.closest('.tnc-tab');
-        if (tab) handleTab(tab.dataset.tab);
+    bindViewPicker();
+    document.querySelectorAll('.tnc-tabs').forEach(bar => {
+        bar.addEventListener('click', e => {
+            const tab = e.target.closest('.tnc-tab');
+            if (tab) handleTab(bar, tab.dataset.tab);
+        });
     });
 
     document.body.addEventListener('click', e => {

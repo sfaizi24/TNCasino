@@ -274,7 +274,7 @@
     }
 }
 
-/* Six tabs fit across a phone only a size down from the shared tab style, with the two-word names on two lines. */
+/* Five tabs fit across a phone only a size down from the shared tab style, with the two-word names on two lines. */
 @media (max-width: 480px) {
     .tnc-tabs .tnc-tab {
         padding: 6px 3px;
@@ -283,6 +283,78 @@
         white-space: normal;
         min-width: min-content;
     }
+}
+
+/* The page title picks the view: this week's matchups or the season's futures. */
+.tnc-view-picker {
+    position: relative;
+}
+
+.tnc-view-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    cursor: pointer;
+}
+
+.tnc-view-chevron {
+    color: var(--tnc-fg-muted);
+    transition: transform var(--tnc-dur-fast) var(--tnc-ease);
+}
+
+.tnc-view-toggle:hover .tnc-view-chevron {
+    color: var(--tnc-fg);
+}
+
+.tnc-view-toggle[aria-expanded="true"] .tnc-view-chevron {
+    transform: rotate(180deg);
+}
+
+.tnc-view-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    min-width: 220px;
+    padding: 4px;
+    background: var(--tnc-surface);
+    border: 1px solid var(--tnc-border);
+    border-radius: var(--tnc-r-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.tnc-view-menu[hidden],
+.tnc-tabs[hidden] {
+    display: none;
+}
+
+.tnc-view-option {
+    padding: 11px 12px;
+    background: none;
+    border: none;
+    border-radius: var(--tnc-r-sm);
+    color: var(--tnc-fg);
+    font-family: inherit;
+    font-size: var(--tnc-fs-14);
+    font-weight: var(--tnc-fw-semi);
+    text-align: left;
+    cursor: pointer;
+}
+
+.tnc-view-option:hover {
+    background: var(--tnc-bg);
+}
+
+.tnc-view-option.is-on {
+    color: var(--tnc-blue);
 }
 
 .tnc-mc-grid {
@@ -970,20 +1042,6 @@
 
 .tnc-scorer-pick .tnc-mc-odd-prob {
     font-size: var(--tnc-fs-12);
-}
-
-.tnc-fu-head {
-    grid-column: 1 / -1;
-    margin: 10px 2px 0;
-    color: var(--tnc-fg-muted);
-    font-size: var(--tnc-fs-11);
-    font-weight: var(--tnc-fw-bold);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.tnc-fu-head:first-child {
-    margin-top: 0;
 }
 
 /* No lineup toggle sits under a futures pick, so the card pads its own foot. */
