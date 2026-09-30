@@ -611,6 +611,20 @@ a.tnc-model-name:hover .tnc-model-link-icon {
     text-align: right;
 }
 
+.tnc-lp-lock {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--tnc-surface-2);
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-10);
+    font-weight: var(--tnc-fw-semi);
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    vertical-align: middle;
+}
+
 .tnc-lp-empty {
     color: var(--tnc-fg-muted);
     font-size: var(--tnc-fs-11);

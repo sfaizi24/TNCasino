@@ -284,9 +284,10 @@ def create_analytics_tables(session):
         text("""
         CREATE TABLE team_lineups (
             roster_id INTEGER, team_name TEXT, owner TEXT, record TEXT,
-            slot TEXT, player_name TEXT, position TEXT,
+            slot TEXT, sleeper_player_id TEXT, player_name TEXT, position TEXT,
             mu REAL, sigma REAL, var REAL, n_sources INTEGER,
-            is_replacement INTEGER, week INTEGER, season TEXT, timestamp TEXT
+            is_replacement INTEGER, is_locked INTEGER, locked_points REAL,
+            week INTEGER, season TEXT, timestamp TEXT
         )
     """)
     )
@@ -495,19 +496,22 @@ def seed_analytics(session):
     )
     session.execute(
         text("""
-        INSERT INTO team_lineups (roster_id, owner, week, slot, player_name, position, mu, var)
-        VALUES (1, 'Alice A', 10, 'QB', 'Patrick Mahomes', 'QB', 22.5, 7.0),
-               (1, 'Alice A', 10, 'RB1', 'Derrick Henry', 'RB', 15.0, 8.0),
-               (1, 'Alice A', 10, 'WR1', 'Tyreek Hill', 'WR', 18.0, 9.0),
-               (2, 'Bob B', 10, 'QB', 'Josh Allen', 'QB', 21.0, 6.5)
+        INSERT INTO team_lineups
+            (roster_id, owner, season, week, slot, sleeper_player_id, player_name, position,
+             mu, sigma, var, is_locked, locked_points)
+        VALUES (1, 'Alice A', '2025', 10, 'QB', '4046', 'Patrick Mahomes', 'QB', 22.5, 2.65, 7.0, 0, NULL),
+               (1, 'Alice A', '2025', 10, 'RB1', '3198', 'Derrick Henry', 'RB', 15.0, 2.83, 8.0, 0, NULL),
+               (1, 'Alice A', '2025', 10, 'WR1', '3321', 'Tyreek Hill', 'WR', 14.2, 0.0, 0.0, 1, 14.2),
+               (2, 'Bob B', '2025', 10, 'QB', '4984', 'Josh Allen', 'QB', 21.0, 2.55, 6.5, 0, NULL)
     """)
     )
     session.execute(
         text("""
-        INSERT INTO projections_rosters (roster_id, first_name, last_name, position, week, mu, var, starting_status)
-        VALUES (1, 'Patrick', 'Mahomes', 'QB', 10, 22.5, 7.0, 1),
-               (1, 'Bench', 'Player', 'WR', 10, 5.0, 3.0, 0),
-               (99, 'Wrong', 'League', 'QB', 10, 99.0, 99.0, 1)
+        INSERT INTO projections_rosters
+            (roster_id, sleeper_player_id, first_name, last_name, position, season, week, mu, var, starting_status)
+        VALUES (1, '4046', 'Patrick', 'Mahomes', 'QB', '2025', 10, 22.5, 7.0, 1),
+               (1, '9001', 'Bench', 'Player', 'WR', '2025', 10, 5.0, 3.0, 0),
+               (99, '9002', 'Wrong', 'League', 'QB', '2025', 10, 99.0, 99.0, 1)
     """)
     )
 
