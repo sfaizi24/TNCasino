@@ -50,6 +50,7 @@ python -m pipeline run --week 4 --steps publish
 python -m pipeline status --week 4           # latest status of each step for the week
 python -m pipeline review --week 4 --source espn.com --verdict ok --note "top 15 look right"
 python -m pipeline fit-model --season 2025 --weeks 10-16 --out v2   # writes model params
+python -m pipeline backfill --season 2025 --weeks 10-16 --source fftoday   # store a past season's weeks of one source for the fit
 ```
 
 Exit code 0 when every requested step finished with status `ok` or `warn`; 1 otherwise. The
@@ -337,6 +338,16 @@ table (name, team, points). The runbook tells the agent to eyeball them and reco
 `python -m pipeline review --week N --source <website> --verdict ok|reject --note "..."`.
 A `reject` verdict deletes that source's rows for the week; the agent then reruns from `clean`.
 Verdicts show on the dashboard next to the checks.
+
+Backfill: `python -m pipeline backfill --season 2025 --weeks 10-16 --source fftoday` stores one
+source's projections for weeks already played, so the model can be fitted on them; a week without
+actual scores in `league.db.player_stats` is refused, which keeps the week in play out. A fetch that
+fails and every check above except `value_agreement` still refuse the week. `value_agreement` is
+advisory there: its r and median gap are printed and the rows are stored regardless, because on a
+past season it measures Sleeper's level rather than the source (Sleeper's 2025 QBs ran about 3
+points above every other source, so FFToday failed it at QB in six of 2025's weeks 10 to 16, r 0.72
+to 0.88, median gaps 3.0 to 4.3, while every other check passed). Each stored week is then cleaned
+and matched as a weekly run would; the weekly `run` path is unchanged.
 
 ---
 

@@ -22,6 +22,7 @@ TNCasino — fantasy football analytics & fake-money betting platform. Flask web
 - **Run locally**: `python -m app` (Flask on 0.0.0.0:5000)
 - **Scrape projections**: `python -m scripts.scrape --week 17` (runs all scrapers, validates)
 - **Validate scraping**: `python -m scripts.validate_scraping --week 17` (checks data quality)
+- **Backfill a source's past weeks**: `python -m pipeline backfill --season 2025 --weeks 10-16 --source fftoday` (weeks already played only; `value_agreement` is advisory there, every other check still refuses)
 - **Install browser drivers**: `playwright install chromium` (required for FanDuel scraper)
 - **Format**: `ruff format <file>` | **Lint**: `ruff check <file>`
 
