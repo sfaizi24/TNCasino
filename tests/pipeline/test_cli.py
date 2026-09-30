@@ -276,6 +276,39 @@ def test_fit_model_passes_the_excluded_sources(monkeypatch, local_settings):
     assert calls == [(local_settings, 2025, [12], "v2", ["fantasypros.com", "fanduel.com"])]
 
 
+def test_backfill_passes_the_season_weeks_and_source(monkeypatch, settings):
+    calls = []
+    monkeypatch.setitem(
+        sys.modules, "pipeline.backfill", SimpleNamespace(backfill=lambda *args: calls.append(args) or 0)
+    )
+
+    assert cli.main(["backfill", "--season", "2025", "--weeks", "10-16", "--source", "fftoday"]) == 0
+    options = {"sources": ["fftoday"], "no_charts": True, "dry_run": False}
+    assert calls == [(replace(settings, season=2025, week=10), [10, 11, 12, 13, 14, 15, 16], "fftoday", options)]
+
+
+def test_backfill_returns_the_backfill_exit_code(monkeypatch):
+    monkeypatch.setitem(sys.modules, "pipeline.backfill", SimpleNamespace(backfill=lambda *args: 1))
+
+    assert cli.main(["backfill", "--season", "2025", "--weeks", "12", "--source", "fftoday"]) == 1
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["backfill", "--season", "2025", "--weeks", "10-16", "--source", "yahoo"],
+        ["backfill", "--season", "2025", "--weeks", "10-16", "--source", "fftoday.com"],
+        ["backfill", "--weeks", "10-16", "--source", "fftoday"],
+        ["backfill", "--season", "2025", "--source", "fftoday"],
+    ],
+)
+def test_backfill_usage_errors_exit_two(argv):
+    with pytest.raises(SystemExit) as exited:
+        cli.main(argv)
+
+    assert exited.value.code == 2
+
+
 @pytest.mark.parametrize(("value", "weeks"), [("12", [12]), ("10-12", [10, 11, 12]), ("7-7", [7])])
 def test_week_range_accepts_a_week_or_a_range(value, weeks):
     assert cli.week_range(value) == weeks
