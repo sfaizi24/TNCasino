@@ -103,7 +103,7 @@ def test_defaults_match_the_current_model(monkeypatch):
 
     settings = load_settings(week=4, season=2026)
 
-    assert settings.model_version == "v2.2"
+    assert settings.model_version == "v2.3"
     assert settings.seed == 1738
     assert settings.n_sims == 50_000
 

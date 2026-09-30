@@ -111,7 +111,7 @@ from the environment, with no season, week or league, so nothing is asked of Sle
 fitted season's league in `league.db.leagues` (amended 2026-09-27).
 
 Fields: `season: int`, `week: int`, `league_id: str`, `seed: int` (default 1738),
-`n_sims: int` (default 50_000), `model_version: str` (default `"v2.2"` since 2026-09-28, `"v2.1"` from 2026-09-27, `"v1"` before),
+`n_sims: int` (default 50_000), `model_version: str` (default `"v2.3"` since 2026-09-30, `"v2.2"` from 2026-09-28, `"v2.1"` from 2026-09-27, `"v1"` before),
 `data_dir: Path` (`backend/data`), `db_paths: dict[str, Path]` (league, projections, odds, pipeline),
 `sims_dir: Path` (`backend/data/sims`), `images_dir: Path` (`backend/data/images`),
 `sleeper_username: str`.
