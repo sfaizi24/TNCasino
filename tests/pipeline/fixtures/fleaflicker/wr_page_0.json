@@ -1,0 +1,166 @@
+{
+  "players": [
+    {
+      "proPlayer": {
+        "id": 32,
+        "nameFull": "Ja'Marr Chase",
+        "nameShort": "J. Chase",
+        "nameFirst": "Ja'Marr",
+        "nameLast": "Chase",
+        "proTeamAbbreviation": "CIN",
+        "position": "WR",
+        "positionEligibility": [
+          "WR"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 20.3,
+            "formatted": "20.3"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 33,
+        "nameFull": "Justin Jefferson",
+        "nameShort": "J. Jefferson",
+        "nameFirst": "Justin",
+        "nameLast": "Jefferson",
+        "proTeamAbbreviation": "MIN",
+        "position": "WR",
+        "positionEligibility": [
+          "WR"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 18.1,
+            "formatted": "18.1"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 34,
+        "nameFull": "Puka Nacua",
+        "nameShort": "P. Nacua",
+        "nameFirst": "Puka",
+        "nameLast": "Nacua",
+        "proTeamAbbreviation": "LAR",
+        "position": "WR",
+        "positionEligibility": [
+          "WR"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 17.5,
+            "formatted": "17.5"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 35,
+        "nameFull": "Amon-Ra St. Brown",
+        "nameShort": "A. St. Brown",
+        "nameFirst": "Amon-Ra",
+        "nameLast": "St. Brown",
+        "proTeamAbbreviation": "DET",
+        "position": "WR",
+        "positionEligibility": [
+          "WR"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 16.9,
+            "formatted": "16.9"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 31,
+        "nameFull": "Deebo Samuel",
+        "nameShort": "D. Samuel",
+        "nameFirst": "Deebo",
+        "nameLast": "Samuel",
+        "proTeamAbbreviation": "WAS",
+        "position": "WR",
+        "positionEligibility": [
+          "RB",
+          "WR"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 11.2,
+            "formatted": "11.2"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    }
+  ],
+  "resultTotal": 5
+}

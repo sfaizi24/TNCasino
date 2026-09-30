@@ -1,0 +1,104 @@
+{
+  "players": [
+    {
+      "proPlayer": {
+        "id": 61,
+        "nameFull": "Seattle Seahawks",
+        "nameShort": "SEA D/ST",
+        "nameFirst": "Seattle",
+        "nameLast": "Seahawks",
+        "proTeamAbbreviation": "SEA",
+        "position": "D/ST",
+        "positionEligibility": [
+          "D/ST"
+        ],
+        "isTeamAggregate": true
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 8.7,
+            "formatted": "8.7"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 62,
+        "nameFull": "Denver Broncos",
+        "nameShort": "DEN D/ST",
+        "nameFirst": "Denver",
+        "nameLast": "Broncos",
+        "proTeamAbbreviation": "DEN",
+        "position": "D/ST",
+        "positionEligibility": [
+          "D/ST"
+        ],
+        "isTeamAggregate": true
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 8.2,
+            "formatted": "8.2"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 63,
+        "nameFull": "Philadelphia Eagles",
+        "nameShort": "PHI D/ST",
+        "nameFirst": "Philadelphia",
+        "nameLast": "Eagles",
+        "proTeamAbbreviation": "PHI",
+        "position": "D/ST",
+        "positionEligibility": [
+          "D/ST"
+        ],
+        "isTeamAggregate": true
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 7.6,
+            "formatted": "7.6"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    }
+  ],
+  "resultTotal": 3
+}

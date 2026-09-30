@@ -1,0 +1,101 @@
+{
+  "players": [
+    {
+      "proPlayer": {
+        "id": 41,
+        "nameFull": "Brock Bowers",
+        "nameShort": "B. Bowers",
+        "nameFirst": "Brock",
+        "nameLast": "Bowers",
+        "proTeamAbbreviation": "LV",
+        "position": "TE",
+        "positionEligibility": [
+          "TE"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 14.2,
+            "formatted": "14.2"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 42,
+        "nameFull": "Trey McBride",
+        "nameShort": "T. McBride",
+        "nameFirst": "Trey",
+        "nameLast": "McBride",
+        "proTeamAbbreviation": "ARI",
+        "position": "TE",
+        "positionEligibility": [
+          "TE"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 13.6,
+            "formatted": "13.6"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 43,
+        "nameFull": "George Kittle",
+        "nameShort": "G. Kittle",
+        "nameFirst": "George",
+        "nameLast": "Kittle",
+        "proTeamAbbreviation": "SF",
+        "position": "TE",
+        "positionEligibility": [
+          "TE"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 11.8,
+            "formatted": "11.8"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    }
+  ],
+  "resultTotal": 3
+}

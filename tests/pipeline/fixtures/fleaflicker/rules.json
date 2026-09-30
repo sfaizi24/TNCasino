@@ -1,0 +1,95 @@
+{
+  "rosterPositions": [
+    {"label": "QB", "start": 1},
+    {"label": "RB", "start": 2},
+    {"label": "WR", "start": 2},
+    {"label": "TE", "start": 1},
+    {"label": "RB/WR/TE", "start": 1},
+    {"label": "K", "start": 1},
+    {"label": "D/ST", "start": 1}
+  ],
+  "groups": [
+    {
+      "label": "Passing",
+      "scoringRules": [
+        {"category": {"id": 3, "abbreviation": "PaYd", "nameSingular": "Passing Yard", "namePlural": "Passing Yards"}, "points": {"value": 1.0, "formatted": "1"}, "pointsPer": {"value": 0.04, "formatted": "0.04"}, "forEvery": 25, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "1 point for every 25 Passing Yards (0.04 per)", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 5, "abbreviation": "PaTD", "nameSingular": "Passing TD", "namePlural": "Passing TDs"}, "points": {"value": 4.0, "formatted": "4"}, "pointsPer": {"value": 4.0, "formatted": "4"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "4 points for every Passing TD", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 4, "abbreviation": "Pa2P", "nameSingular": "2 Pt Conversion Passing", "namePlural": "2 Pt Conversions Passing"}, "points": {"value": 2.0, "formatted": "2"}, "pointsPer": {"value": 2.0, "formatted": "2"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "2 points for every 2 Pt Conversion Passing", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 7, "abbreviation": "Int", "nameSingular": "Interception", "namePlural": "Interceptions"}, "points": {"value": -2.0, "formatted": "-2"}, "pointsPer": {"value": -2.0, "formatted": "-2"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "-2 points for every Interception", "template": "{points} for every {forEvery} {category}"}
+      ]
+    },
+    {
+      "label": "Rushing",
+      "scoringRules": [
+        {"category": {"id": 22, "abbreviation": "RuYd", "nameSingular": "Rushing Yard", "namePlural": "Rushing Yards"}, "points": {"value": 1.0, "formatted": "1"}, "pointsPer": {"value": 0.1, "formatted": "0.1"}, "forEvery": 10, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "1 point for every 10 Rushing Yards (0.1 per)", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 23, "abbreviation": "Ru2P", "nameSingular": "2 Pt Conversion Rushing", "namePlural": "2 Pt Conversions Rushing"}, "points": {"value": 2.0, "formatted": "2"}, "pointsPer": {"value": 2.0, "formatted": "2"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "2 points for every 2 Pt Conversion Rushing", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 24, "abbreviation": "RuTD", "nameSingular": "Rushing TD", "namePlural": "Rushing TDs"}, "points": {"value": 6.0, "formatted": "6"}, "pointsPer": {"value": 6.0, "formatted": "6"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "6 points for every Rushing TD", "template": "{points} for every {forEvery} {category}"}
+      ]
+    },
+    {
+      "label": "Receiving",
+      "scoringRules": [
+        {"category": {"id": 41, "abbreviation": "Rec", "nameSingular": "Catch", "namePlural": "Catches"}, "points": {"value": 1.0, "formatted": "1"}, "pointsPer": {"value": 1.0, "formatted": "1"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "1 point for every Catch", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 42, "abbreviation": "ReYd", "nameSingular": "Receiving Yard", "namePlural": "Receiving Yards"}, "points": {"value": 1.0, "formatted": "1"}, "pointsPer": {"value": 0.1, "formatted": "0.1"}, "forEvery": 10, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "1 point for every 10 Receiving Yards (0.1 per)", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 43, "abbreviation": "Re2P", "nameSingular": "2 Pt Conversion Receiving", "namePlural": "2 Pt Conversions Receiving"}, "points": {"value": 2.0, "formatted": "2"}, "pointsPer": {"value": 2.0, "formatted": "2"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "2 points for every 2 Pt Conversion Receiving", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 44, "abbreviation": "ReTD", "nameSingular": "Receiving TD", "namePlural": "Receiving TDs"}, "points": {"value": 6.0, "formatted": "6"}, "pointsPer": {"value": 6.0, "formatted": "6"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "6 points for every Receiving TD", "template": "{points} for every {forEvery} {category}"}
+      ]
+    },
+    {
+      "label": "Misc",
+      "scoringRules": [
+        {"category": {"id": 27, "abbreviation": "FL", "nameSingular": "Fumble Lost", "namePlural": "Fumbles Lost"}, "points": {"value": -2.0, "formatted": "-2"}, "pointsPer": {"value": -2.0, "formatted": "-2"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "-2 points for every Fumble Lost", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 118, "abbreviation": "OFTD", "nameSingular": "Offensive Fumble Recovery TD", "namePlural": "Offensive Fumble Recovery TDs"}, "points": {"value": 6.0, "formatted": "6"}, "pointsPer": {"value": 6.0, "formatted": "6"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "6 points for every Offensive Fumble Recovery TD", "template": "{points} for every {forEvery} {category}"}
+      ]
+    },
+    {
+      "label": "Kicking",
+      "scoringRules": [
+        {"category": {"id": 101, "abbreviation": "FG", "nameSingular": "Field Goal Made", "namePlural": "Field Goals Made"}, "points": {"value": 3.0, "formatted": "3"}, "pointsPer": {"value": 3.0, "formatted": "3"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "3 points for every Field Goal Made", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 102, "abbreviation": "FGYd", "nameSingular": "Field Goal Made", "namePlural": "Field Goals Made"}, "points": {"value": 1.0, "formatted": "1"}, "boundLower": 40, "boundUpper": 49, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "1 point for 40-49 Field Goals Made", "template": "{points} for {range} {category}"},
+        {"category": {"id": 102, "abbreviation": "FGYd", "nameSingular": "Field Goal Made", "namePlural": "Field Goals Made"}, "points": {"value": 2.0, "formatted": "2"}, "boundLower": 50, "rangeType": "RANGE_LOWER_BOUND", "isBonus": true, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "2 points for 50+ Field Goals Made", "template": "{points} for {range} {category}"},
+        {"category": {"id": 103, "abbreviation": "FGM", "nameSingular": "Field Goal Missed", "namePlural": "Field Goals Missed"}, "points": {"value": -1.0, "formatted": "-1"}, "pointsPer": {"value": -1.0, "formatted": "-1"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "-1 point for every Field Goal Missed", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 104, "abbreviation": "XP", "nameSingular": "XP", "namePlural": "XPs"}, "points": {"value": 1.0, "formatted": "1"}, "pointsPer": {"value": 1.0, "formatted": "1"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "1 point for every XP", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 105, "abbreviation": "XPM", "nameSingular": "XP Missed", "namePlural": "XPs Missed"}, "points": {"value": -1.0, "formatted": "-1"}, "pointsPer": {"value": -1.0, "formatted": "-1"}, "forEvery": 1, "applyTo": ["K", "QB", "RB", "TE", "WR"], "description": "-1 point for every XP Missed", "template": "{points} for every {forEvery} {category}"}
+      ]
+    },
+    {
+      "label": "Returning",
+      "scoringRules": [
+        {"category": {"id": 63, "abbreviation": "KRTD", "nameSingular": "Kick Return TD", "namePlural": "Kick Return TDs"}, "points": {"value": 6.0, "formatted": "6"}, "pointsPer": {"value": 6.0, "formatted": "6"}, "forEvery": 1, "applyToAll": true, "description": "6 points for every Kick Return TD", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 67, "abbreviation": "PRTD", "nameSingular": "Punt Return TD", "namePlural": "Punt Return TDs"}, "points": {"value": 6.0, "formatted": "6"}, "pointsPer": {"value": 6.0, "formatted": "6"}, "forEvery": 1, "applyToAll": true, "description": "6 points for every Punt Return TD", "template": "{points} for every {forEvery} {category}"}
+      ]
+    },
+    {
+      "label": "Defense",
+      "scoringRules": [
+        {"category": {"id": 84, "abbreviation": "DInt", "nameSingular": "Interception", "namePlural": "Interceptions"}, "points": {"value": 2.0, "formatted": "2"}, "pointsPer": {"value": 2.0, "formatted": "2"}, "forEvery": 1, "applyTo": ["D/ST"], "description": "2 points for every Interception", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 85, "abbreviation": "Sack", "nameSingular": "Sack", "namePlural": "Sacks"}, "points": {"value": 1.0, "formatted": "1"}, "pointsPer": {"value": 1.0, "formatted": "1"}, "forEvery": 1, "applyTo": ["D/ST"], "description": "1 point for every Sack", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 86, "abbreviation": "FF", "nameSingular": "Fumble Forced", "namePlural": "Fumbles Forced"}, "points": {"value": 1.0, "formatted": "1"}, "pointsPer": {"value": 1.0, "formatted": "1"}, "forEvery": 1, "applyTo": ["D/ST"], "description": "1 point for every Fumble Forced", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 87, "abbreviation": "FR", "nameSingular": "Fumble Recovered", "namePlural": "Fumbles Recovered"}, "points": {"value": 2.0, "formatted": "2"}, "pointsPer": {"value": 2.0, "formatted": "2"}, "forEvery": 1, "applyTo": ["D/ST"], "description": "2 points for every Fumble Recovered", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 88, "abbreviation": "Sfty", "nameSingular": "Safety", "namePlural": "Safeties"}, "points": {"value": 2.0, "formatted": "2"}, "pointsPer": {"value": 2.0, "formatted": "2"}, "forEvery": 1, "applyToAll": true, "description": "2 points for every Safety", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 89, "abbreviation": "DTD", "nameSingular": "Defensive TD", "namePlural": "Defensive TDs"}, "points": {"value": 6.0, "formatted": "6"}, "pointsPer": {"value": 6.0, "formatted": "6"}, "forEvery": 1, "applyToAll": true, "description": "6 points for every Defensive TD", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 117, "abbreviation": "Blk", "nameSingular": "Blocked Kick", "namePlural": "Blocked Kicks"}, "points": {"value": 2.0, "formatted": "2"}, "pointsPer": {"value": 2.0, "formatted": "2"}, "forEvery": 1, "applyTo": ["D/ST"], "description": "2 points for every Blocked Kick", "template": "{points} for every {forEvery} {category}"},
+        {"category": {"id": 94, "abbreviation": "PA", "nameSingular": "Point Allowed", "namePlural": "Points Allowed"}, "points": {"value": 5.0, "formatted": "5"}, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "5 points for 0 Points Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 94, "abbreviation": "PA", "nameSingular": "Point Allowed", "namePlural": "Points Allowed"}, "points": {"value": 4.0, "formatted": "4"}, "boundLower": 1, "boundUpper": 6, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "4 points for 1-6 Points Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 94, "abbreviation": "PA", "nameSingular": "Point Allowed", "namePlural": "Points Allowed"}, "points": {"value": 3.0, "formatted": "3"}, "boundLower": 7, "boundUpper": 13, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "3 points for 7-13 Points Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 94, "abbreviation": "PA", "nameSingular": "Point Allowed", "namePlural": "Points Allowed"}, "points": {"value": 1.0, "formatted": "1"}, "boundLower": 14, "boundUpper": 20, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "1 point for 14-20 Points Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 94, "abbreviation": "PA", "nameSingular": "Point Allowed", "namePlural": "Points Allowed"}, "points": {"value": -1.0, "formatted": "-1"}, "boundLower": 28, "boundUpper": 34, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "-1 point for 28-34 Points Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 94, "abbreviation": "PA", "nameSingular": "Point Allowed", "namePlural": "Points Allowed"}, "points": {"value": -4.0, "formatted": "-4"}, "boundLower": 35, "rangeType": "RANGE_LOWER_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "-4 points for 35+ Points Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 95, "abbreviation": "YdA", "nameSingular": "Net Yard Allowed", "namePlural": "Net Yards Allowed"}, "points": {"value": 5.0, "formatted": "5"}, "boundUpper": 100, "rangeType": "RANGE_UPPER_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "5 points for under 100 Net Yards Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 95, "abbreviation": "YdA", "nameSingular": "Net Yard Allowed", "namePlural": "Net Yards Allowed"}, "points": {"value": 3.0, "formatted": "3"}, "boundLower": 100, "boundUpper": 199, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "3 points for 100-199 Net Yards Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 95, "abbreviation": "YdA", "nameSingular": "Net Yard Allowed", "namePlural": "Net Yards Allowed"}, "points": {"value": 2.0, "formatted": "2"}, "boundLower": 200, "boundUpper": 299, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "2 points for 200-299 Net Yards Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 95, "abbreviation": "YdA", "nameSingular": "Net Yard Allowed", "namePlural": "Net Yards Allowed"}, "points": {"value": -1.0, "formatted": "-1"}, "boundLower": 350, "boundUpper": 399, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "-1 point for 350-399 Net Yards Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 95, "abbreviation": "YdA", "nameSingular": "Net Yard Allowed", "namePlural": "Net Yards Allowed"}, "points": {"value": -3.0, "formatted": "-3"}, "boundLower": 400, "boundUpper": 449, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "-3 points for 400-449 Net Yards Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 95, "abbreviation": "YdA", "nameSingular": "Net Yard Allowed", "namePlural": "Net Yards Allowed"}, "points": {"value": -5.0, "formatted": "-5"}, "boundLower": 450, "boundUpper": 499, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "-5 points for 450-499 Net Yards Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 95, "abbreviation": "YdA", "nameSingular": "Net Yard Allowed", "namePlural": "Net Yards Allowed"}, "points": {"value": -6.0, "formatted": "-6"}, "boundLower": 500, "boundUpper": 549, "rangeType": "RANGE_DOUBLE_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "-6 points for 500-549 Net Yards Allowed", "template": "{points} for {range} {category}"},
+        {"category": {"id": 95, "abbreviation": "YdA", "nameSingular": "Net Yard Allowed", "namePlural": "Net Yards Allowed"}, "points": {"value": -7.0, "formatted": "-7"}, "boundLower": 550, "rangeType": "RANGE_LOWER_BOUND", "isBonus": true, "applyTo": ["D/ST"], "description": "-7 points for 550+ Net Yards Allowed", "template": "{points} for {range} {category}"}
+      ]
+    },
+    {"label": "Punting"}
+  ],
+  "numStarters": 9,
+  "numBench": 6,
+  "maxActive": 15,
+  "maxRosterSize": 15
+}

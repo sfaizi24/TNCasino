@@ -1,0 +1,215 @@
+{
+  "players": [
+    {
+      "proPlayer": {
+        "id": 21,
+        "nameFull": "Jahmyr Gibbs",
+        "nameShort": "J. Gibbs",
+        "nameFirst": "Jahmyr",
+        "nameLast": "Gibbs",
+        "proTeamAbbreviation": "DET",
+        "position": "RB",
+        "positionEligibility": [
+          "RB"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 19.4,
+            "formatted": "19.4"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 22,
+        "nameFull": "Bijan Robinson",
+        "nameShort": "B. Robinson",
+        "nameFirst": "Bijan",
+        "nameLast": "Robinson",
+        "proTeamAbbreviation": "ATL",
+        "position": "RB",
+        "positionEligibility": [
+          "RB"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 18.8,
+            "formatted": "18.8"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 31,
+        "nameFull": "Deebo Samuel",
+        "nameShort": "D. Samuel",
+        "nameFirst": "Deebo",
+        "nameLast": "Samuel",
+        "proTeamAbbreviation": "WAS",
+        "position": "WR",
+        "positionEligibility": [
+          "RB",
+          "WR"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 11.2,
+            "formatted": "11.2"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 23,
+        "nameFull": "Tank Bigsby",
+        "nameShort": "T. Bigsby",
+        "nameFirst": "Tank",
+        "nameLast": "Bigsby",
+        "proTeamAbbreviation": "JAC",
+        "position": "RB",
+        "positionEligibility": [
+          "RB"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 8.6,
+            "formatted": "8.6"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 24,
+        "nameFull": "Ezekiel Elliott",
+        "nameShort": "E. Elliott",
+        "nameFirst": "Ezekiel",
+        "nameLast": "Elliott",
+        "position": "RB",
+        "positionEligibility": [
+          "RB"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 2.4,
+            "formatted": "2.4"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 25,
+        "nameFull": "Christian McCaffrey",
+        "nameShort": "C. McCaffrey",
+        "nameFirst": "Christian",
+        "nameLast": "McCaffrey",
+        "proTeamAbbreviation": "SF",
+        "position": "RB",
+        "positionEligibility": [
+          "RB"
+        ]
+      },
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 26,
+        "nameFull": "Elijah Mitchell",
+        "nameShort": "E. Mitchell",
+        "nameFirst": "Elijah",
+        "nameLast": "Mitchell",
+        "proTeamAbbreviation": "KC",
+        "position": "RB",
+        "positionEligibility": [
+          "RB"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "formatted": "0"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    }
+  ],
+  "resultTotal": 7
+}
