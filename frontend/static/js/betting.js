@@ -360,7 +360,7 @@ function renderLinePicker(card) {
     const highest = frozen || index === row.lines.length - 1 ? ' disabled' : '';
     const main = index === mainLineIndex(row)
         ? ''
-        : `<button class="tnc-sp-main" data-action="spread-main"${frozen ? ' disabled' : ''}>Main line</button>`;
+        : `<button class="tnc-sp-main" data-action="spread-main"${frozen ? ' disabled' : ''}>Reset line</button>`;
     return `
         <div class="tnc-sp-picker">
             <div class="tnc-sp-stepper">
