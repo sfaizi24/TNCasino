@@ -1,0 +1,101 @@
+{
+  "players": [
+    {
+      "proPlayer": {
+        "id": 51,
+        "nameFull": "Brandon Aubrey",
+        "nameShort": "B. Aubrey",
+        "nameFirst": "Brandon",
+        "nameLast": "Aubrey",
+        "proTeamAbbreviation": "DAL",
+        "position": "K",
+        "positionEligibility": [
+          "K"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 9.4,
+            "formatted": "9.4"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 52,
+        "nameFull": "Cameron Dicker",
+        "nameShort": "C. Dicker",
+        "nameFirst": "Cameron",
+        "nameLast": "Dicker",
+        "proTeamAbbreviation": "LAC",
+        "position": "K",
+        "positionEligibility": [
+          "K"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 8.9,
+            "formatted": "8.9"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 53,
+        "nameFull": "Jake Bates",
+        "nameShort": "J. Bates",
+        "nameFirst": "Jake",
+        "nameLast": "Bates",
+        "proTeamAbbreviation": "DET",
+        "position": "K",
+        "positionEligibility": [
+          "K"
+        ]
+      },
+      "requestedGames": [
+        {
+          "pointsProjected": {
+            "value": 8.1,
+            "formatted": "8.1"
+          },
+          "period": {
+            "ordinal": 4,
+            "startEpochMilli": "1790000000000",
+            "isNow": true
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 4,
+        "startEpochMilli": "1790000000000",
+        "isNow": true
+      }
+    }
+  ],
+  "resultTotal": 3
+}

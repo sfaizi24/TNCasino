@@ -65,6 +65,7 @@ Publishing needs the operator's local `DATABASE_URL` to point at production Post
 | `FLASK_DEBUG` | `python -m app` | no | `true` enables debug locally |
 | `OAUTHLIB_INSECURE_TRANSPORT`, `OAUTHLIB_RELAX_TOKEN_SCOPE` | flask-dance | local only | Allow OAuth over http://localhost |
 | `SLEEPER_USERNAME`, `LEAGUE_ID` | notebook 01 | pipeline | |
+| `FLEAFLICKER_LEAGUE_ID` | pipeline (Fleaflicker source) | for that source | The owner's own Fleaflicker league; unset, the source fails and a full run goes on with the others |
 
 Local and prod use separate `.env` files; the prod one is `/opt/tncasino/.env`. There is no `.env.example` in the repo.
 

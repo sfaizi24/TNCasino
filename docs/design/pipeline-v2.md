@@ -125,6 +125,9 @@ Discovery order
    list if none or several match. The 2026 league is `1387602586542018560`.
 4. `model_version`: env `PIPELINE_MODEL_VERSION`, else the default.
 
+The Fleaflicker source reads `FLEAFLICKER_LEAGUE_ID` itself at fetch time, since sources get no settings;
+unset, the source fails its fetch and the run goes on without it.
+
 Discovery results are cached per process. Tests inject settings directly; no network in tests.
 
 ---
@@ -304,6 +307,7 @@ trimmed to a few hundred rows.
 | fanduel | fanduel.com | Playwright, intercept GraphQL | no | page `https://www.fanduel.com/research/nfl/fantasy/ppr`; intercept POST responses whose URL contains `/research/api/graphql`; rows in `data.getProjections`. Runs in-process with the Playwright sync API. |
 | fftoday | fftoday.com | HTTP HTML `https://www.fftoday.com/rankings/playerwkproj.php?Season={season}&GameWeek={week}&PosID={id}&LeagueID=107644`; RB and WR follow the page's "Next Page" link once (`&order_by=FFPts&sort_order=DESC&cur_page=1`) | no | PosID 10 QB, 20 RB, 30 WR, 40 TE; LeagueID 107644 is FFToday's PPR preset, which matches league scoring for RB, WR and TE. Points rescored from the stat columns; week from `td.update`; a week not yet posted returns a "No Player Found!" page, which raises. Posts on Wednesday. No K (no field-goal distances), no DEF (none published). |
 | rotoballer | rotoballer.com | HTTP: the news sitemap `https://www.rotoballer.com/google-news-sitemap.xml`, then the week's article it lists (path `fantasy-football-projections-for-week-{week}-...-{season}/{id}`, latest by publication date) | no | Read under RotoBaller's letter of 2026-09-28: non-commercial, no raw redistribution, attribution on the about page, revocable. One table read by header name (`Comp` appears midweek only); `Fan Points` is half PPR, so points are rescored from the stat columns; week from the `<h1>`; `external_id` from the player link's `data-id`. QB, RB, WR, TE; K and D/ST come only in the Sunday update, after the lock, and are skipped. The sitemap covers about 48 hours, so a week posted after the Wednesday run (week 2 came Thursday morning) is dropped for that week. |
+| fleaflicker | fleaflicker.com | HTTP JSON, the documented API on the owner's own league: `https://www.fleaflicker.com/api/FetchLeagueRules?sport=NFL&league_id={id}` once, then `https://www.fleaflicker.com/api/FetchPlayerListing?sport=NFL&league_id={id}&sort=SORT_PROJECTIONS&sort_season={season}&sort_period={week}&filter.position.eligibility={QB\|RB\|WR\|TE\|K\|D/ST}&result_offset={offset}` per position, 30 rows a page, following `resultOffsetNext` until the last row projects 0 | no | Read under Fleaflicker's letter of 2026-09-28: non-commercial, no raw or per-player exposure, documented endpoints and rate limits, revocable. League id from `FLEAFLICKER_LEAGUE_ID`. Points are `requestedGames[0].pointsProjected.value` in the league's own scoring (`statsProjected` is a display summary, so nothing is rescored), which is why the league's rules are compared with the pinned set every run and a difference drops the source for the week. Week from `requestedGamesPeriod.ordinal`; `external_id` from `proPlayer.id`; names from `nameFirst`/`nameLast`; D/ST rows take Sleeper's form from `DEF_NAMES`. Fixtures are synthetic: the repository is public. |
 
 FantasyPros was removed in 2026-09: its logged-out pages show 10 rows per position, so it failed `position_counts` every week, and it averages sites the pipeline reads directly.
 

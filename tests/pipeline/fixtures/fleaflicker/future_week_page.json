@@ -1,0 +1,58 @@
+{
+  "players": [
+    {
+      "proPlayer": {
+        "id": 11,
+        "nameFull": "Josh Allen",
+        "nameShort": "J. Allen",
+        "nameFirst": "Josh",
+        "nameLast": "Allen",
+        "proTeamAbbreviation": "BUF",
+        "position": "QB",
+        "positionEligibility": [
+          "QB"
+        ]
+      },
+      "requestedGames": [
+        {
+          "period": {
+            "ordinal": 5,
+            "startEpochMilli": "1790604800000"
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 5,
+        "startEpochMilli": "1790604800000"
+      }
+    },
+    {
+      "proPlayer": {
+        "id": 12,
+        "nameFull": "Lamar Jackson",
+        "nameShort": "L. Jackson",
+        "nameFirst": "Lamar",
+        "nameLast": "Jackson",
+        "proTeamAbbreviation": "BAL",
+        "position": "QB",
+        "positionEligibility": [
+          "QB"
+        ]
+      },
+      "requestedGames": [
+        {
+          "period": {
+            "ordinal": 5,
+            "startEpochMilli": "1790604800000"
+          }
+        }
+      ],
+      "requestedGamesPeriod": {
+        "ordinal": 5,
+        "startEpochMilli": "1790604800000"
+      }
+    }
+  ],
+  "resultOffsetNext": 30,
+  "resultTotal": 48
+}

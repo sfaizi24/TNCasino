@@ -4,11 +4,12 @@ import re
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import requests
 
-from pipeline.sources import base, espn, fantasysharks, firstdown, sleeper
+from pipeline.sources import base, espn, fantasysharks, firstdown, fleaflicker, load_source, sleeper
 from pipeline.sources.base import REQUEST_SPACING_S, TIMEOUT_S, USER_AGENT, Projection
 from pipeline.sources.teams import CANONICAL_TEAMS
 
@@ -326,3 +327,234 @@ def test_firstdown_fetch_goes_through_get(serve, clock):
 
     assert sent == [{"url": firstdown.URL, "headers": {"User-Agent": USER_AGENT}, "timeout": TIMEOUT_S}]
     assert len(rows) == 197
+
+
+# Fleaflicker
+
+# Hand-written pages in the documented shape; every id, point, total and epoch in them is made up.
+FLEAFLICKER_PAGES = {
+    "QB": ["qb_page_0", "qb_page_1"],
+    "RB": ["rb_page_0"],
+    "WR": ["wr_page_0"],
+    "TE": ["te_page_0"],
+    "K": ["k_page_0"],
+    "D/ST": ["dst_page_0"],
+}
+FLEAFLICKER_LISTING = (
+    "https://www.fleaflicker.com/api/FetchPlayerListing"
+    "?sport=NFL&league_id=1&sort=SORT_PROJECTIONS&sort_season=2026&sort_period=4"
+)
+
+
+@pytest.fixture(scope="module")
+def fleaflicker_rules():
+    return load_json("fleaflicker/rules.json")
+
+
+@pytest.fixture(scope="module")
+def fleaflicker_pages():
+    pages = {}
+    for label, files in FLEAFLICKER_PAGES.items():
+        pages[label] = [load_json(f"fleaflicker/{name}.json") for name in files]
+    return pages
+
+
+@pytest.fixture(scope="module")
+def fleaflicker_rows(fleaflicker_pages):
+    return fleaflicker.parse(fleaflicker_pages, 2026, 4)
+
+
+def fleaflicker_server(rules: dict, pages: dict[str, list[dict]]):
+    """Answers the rules request with `rules` and each listing request with the page its label and offset name."""
+
+    def body_for(url):
+        if "FetchLeagueRules" in url:
+            return json.dumps(rules)
+        query = parse_qs(urlparse(url).query)
+        label = query["filter.position.eligibility"][0]
+        page_number = int(query["result_offset"][0]) // fleaflicker.PAGE_SIZE
+        return json.dumps(pages[label][page_number])
+
+    return body_for
+
+
+def test_fleaflicker_rows_per_position(fleaflicker_rows):
+    assert rows_per_position(fleaflicker_rows) == {"QB": 7, "RB": 4, "WR": 5, "TE": 3, "K": 3, "DEF": 3}
+
+
+def test_fleaflicker_player_row(fleaflicker_rows):
+    assert find(fleaflicker_rows, "Josh", "Allen") == Projection(
+        "fleaflicker.com", 2026, 4, "Josh", "Allen", "QB", "BUF", 24.6, external_id="11"
+    )
+
+
+def test_fleaflicker_defense_row_takes_sleeper_form(fleaflicker_rows):
+    assert find(fleaflicker_rows, "Seattle", "Seahawks") == Projection(
+        "fleaflicker.com", 2026, 4, "Seattle", "Seahawks", "DEF", "SEA", 8.7, external_id="61"
+    )
+
+
+def test_fleaflicker_free_agent_has_no_team(fleaflicker_rows):
+    assert find(fleaflicker_rows, "Ezekiel", "Elliott").team is None
+
+
+def test_fleaflicker_skips_players_without_a_positive_projection(fleaflicker_rows):
+    parsed = names(fleaflicker_rows)
+
+    assert ("Christian", "McCaffrey") not in parsed  # on bye: no requestedGames
+    assert ("Elijah", "Mitchell") not in parsed  # projected 0, so the value is left out
+
+
+def test_fleaflicker_normalises_jacksonville(fleaflicker_rows):
+    assert find(fleaflicker_rows, "Trevor", "Lawrence").team == "JAX"  # the listing says JAC
+    assert find(fleaflicker_rows, "Tank", "Bigsby").team == "JAX"
+
+
+def test_fleaflicker_rows_carry_the_listing_week(fleaflicker_pages):
+    rows = fleaflicker.parse(fleaflicker_pages, 2026, 5)
+
+    assert {row.week for row in rows} == {4}
+
+
+def test_fleaflicker_keeps_a_dual_eligible_player_once(fleaflicker_pages, fleaflicker_rows):
+    listed_under = []
+    for label, pages in fleaflicker_pages.items():
+        for page in pages:
+            for row in page["players"]:
+                if row["proPlayer"]["nameFull"] == "Deebo Samuel":
+                    listed_under.append(label)
+    assert listed_under == ["RB", "WR"]
+
+    assert find(fleaflicker_rows, "Deebo", "Samuel").position == "WR"
+
+
+def test_fleaflicker_future_week_raises():
+    page = load_json("fleaflicker/future_week_page.json")
+
+    with pytest.raises(ValueError, match="no QB projections for week 5: it projects only the week in play"):
+        fleaflicker.parse({"QB": [page]}, 2026, 5)
+
+
+def test_fleaflicker_listing_that_fell_back_to_all_raises():
+    page = load_json("fleaflicker/mixed_positions_page.json")
+
+    with pytest.raises(ValueError, match="listing for K holds QB, RB, WR players"):
+        fleaflicker.parse({"K": [page]}, 2026, 4)
+
+
+def test_fleaflicker_pinned_rules_match_the_league(fleaflicker_rules):
+    assert fleaflicker.PINNED_RULES.total() == 42
+
+    fleaflicker.check_rules(fleaflicker_rules)
+
+
+def test_fleaflicker_changed_rule_raises(fleaflicker_rules):
+    rules = copy.deepcopy(fleaflicker_rules)
+    passing_td = rules["groups"][0]["scoringRules"][1]
+    passing_td["points"]["value"] = 6.0
+
+    with pytest.raises(ValueError, match="differs from the pinned rules") as raised:
+        fleaflicker.check_rules(rules)
+
+    assert f"not pinned: {passing_td['description']}" in str(raised.value)
+    assert "missing: category 5 at 4.0 points" in str(raised.value)
+
+
+def test_fleaflicker_added_rule_raises(fleaflicker_rules):
+    rules = copy.deepcopy(fleaflicker_rules)
+    catch = rules["groups"][2]["scoringRules"][0]
+    rules["groups"][2]["scoringRules"].append(copy.deepcopy(catch))
+
+    with pytest.raises(ValueError, match=f"not pinned: {catch['description']}$"):
+        fleaflicker.check_rules(rules)
+
+
+def test_fleaflicker_removed_rule_raises(fleaflicker_rules):
+    rules = copy.deepcopy(fleaflicker_rules)
+    del rules["groups"][4]["scoringRules"][2]  # the 50+ yard field goal bonus
+
+    with pytest.raises(ValueError, match="pinned rules: missing: category 102 at 2.0 points$"):
+        fleaflicker.check_rules(rules)
+
+
+def test_fleaflicker_fetch_checks_the_rules_then_pages_each_position(
+    serve, clock, monkeypatch, fleaflicker_rules, fleaflicker_pages
+):
+    monkeypatch.setenv("FLEAFLICKER_LEAGUE_ID", "1")
+    sent = serve(fleaflicker_server(fleaflicker_rules, fleaflicker_pages))
+
+    rows = fleaflicker.SOURCE.fetch(2026, 4)
+
+    assert [request["url"] for request in sent] == [
+        "https://www.fleaflicker.com/api/FetchLeagueRules?sport=NFL&league_id=1",
+        f"{FLEAFLICKER_LISTING}&filter.position.eligibility=QB&result_offset=0",
+        f"{FLEAFLICKER_LISTING}&filter.position.eligibility=QB&result_offset=30",
+        f"{FLEAFLICKER_LISTING}&filter.position.eligibility=RB&result_offset=0",
+        f"{FLEAFLICKER_LISTING}&filter.position.eligibility=WR&result_offset=0",
+        f"{FLEAFLICKER_LISTING}&filter.position.eligibility=TE&result_offset=0",
+        f"{FLEAFLICKER_LISTING}&filter.position.eligibility=K&result_offset=0",
+        f"{FLEAFLICKER_LISTING}&filter.position.eligibility=D%2FST&result_offset=0",
+    ]
+    assert all(request["headers"] == {"User-Agent": USER_AGENT, "Accept": "application/json"} for request in sent)
+    assert clock.sleeps == [REQUEST_SPACING_S] * 7
+    assert rows == fleaflicker.parse(fleaflicker_pages, 2026, 4)
+
+
+def test_fleaflicker_fetch_needs_the_league_id(serve, clock, monkeypatch):
+    monkeypatch.delenv("FLEAFLICKER_LEAGUE_ID", raising=False)
+    sent = serve(lambda url: "{}")
+
+    with pytest.raises(RuntimeError, match="FLEAFLICKER_LEAGUE_ID is not set"):
+        fleaflicker.SOURCE.fetch(2026, 4)
+
+    assert sent == []
+
+
+def test_fleaflicker_paging_stops_when_the_projections_run_out(
+    serve, clock, monkeypatch, fleaflicker_rules, fleaflicker_pages
+):
+    pages = copy.deepcopy(fleaflicker_pages)
+    last_quarterback = pages["QB"][0]["players"][-1]
+    last_quarterback["requestedGames"][0]["pointsProjected"]["value"] = 0
+    assert pages["QB"][0]["resultOffsetNext"] == 30
+    monkeypatch.setenv("FLEAFLICKER_LEAGUE_ID", "1")
+    sent = serve(fleaflicker_server(fleaflicker_rules, pages))
+
+    fleaflicker.SOURCE.fetch(2026, 4)
+
+    assert not any("result_offset=30" in request["url"] for request in sent)
+    assert len(sent) == 7
+
+
+def test_fleaflicker_paging_raises_past_the_page_limit(serve, clock, monkeypatch, fleaflicker_rules, fleaflicker_pages):
+    endless = {label: [fleaflicker_pages["QB"][0]] * 20 for label in FLEAFLICKER_PAGES}
+    monkeypatch.setenv("FLEAFLICKER_LEAGUE_ID", "1")
+    sent = serve(fleaflicker_server(fleaflicker_rules, endless))
+
+    with pytest.raises(ValueError, match="more than 10 pages of QB players for week 4"):
+        fleaflicker.SOURCE.fetch(2026, 4)
+
+    assert len(sent) == 1 + fleaflicker.MAX_PAGES
+
+
+def test_fleaflicker_parse_is_pure(fleaflicker_pages):
+    untouched = copy.deepcopy(fleaflicker_pages)
+
+    assert fleaflicker.parse(fleaflicker_pages, 2026, 4) == fleaflicker.parse(fleaflicker_pages, 2026, 4)
+    assert fleaflicker_pages == untouched
+
+
+def test_fleaflicker_rows_are_canonical(fleaflicker_rows):
+    for row in fleaflicker_rows:
+        assert row.source == fleaflicker.WEBSITE
+        assert row.season == 2026
+        assert row.position in POSITIONS
+        assert row.team in CANONICAL_TEAMS or (row.first_name, row.last_name) == ("Ezekiel", "Elliott")
+        assert row.points > 0
+        assert row.external_id
+
+
+def test_fleaflicker_is_registered():
+    source = load_source("fleaflicker")
+
+    assert (source.name, source.website, source.supports_future_weeks) == ("fleaflicker", "fleaflicker.com", False)
