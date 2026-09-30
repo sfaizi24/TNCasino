@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app import create_app, matrices, windows
 from app.database import db as _db
 from app.models import BettingPeriod, User
+from app.routes import odds
 from pipeline.markets import encode_totals
 
 TEST_CONFIG = {
@@ -208,8 +209,9 @@ def window_clock(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def fresh_matrix_cache():
-    """Every test seeds its own database, so a matrix cached under a run id in the last test is stale."""
+    """Every test seeds its own database, so a matrix or prices cached under a run id in the last test are stale."""
     matrices.score_matrix.cache_clear()
+    odds._spread_lines.cache_clear()
 
 
 def create_analytics_tables(session):

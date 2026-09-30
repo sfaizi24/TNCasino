@@ -1,6 +1,7 @@
 import json
 import logging
 from collections import defaultdict
+from functools import lru_cache
 
 import numpy as np
 from flask import Blueprint, jsonify, request
@@ -23,8 +24,8 @@ odds_bp = Blueprint("odds", __name__)
 # League-wide views slice FLEX out of RB/WR/TE so it stacks/charts as its own group.
 POSITION_GROUPS = ("QB", "RB", "WR", "TE", "FLEX", "K", "DEF")
 
-# The alternate spread lines either side of the main line, in half points: from 10 points below to 10 above.
-ALTERNATE_SPREAD_STEPS = 20
+# Every spread line offered, as team1's line in half points, the same for every matchup.
+SPREAD_LINES = [step / 2 for step in range(-2 * markets.SPREAD_LIMIT, 2 * markets.SPREAD_LIMIT + 1)]
 
 
 @odds_bp.route("/api/matchups")
@@ -92,12 +93,11 @@ def _matchup_rows(week):
 
 
 def _spread_row(row, run_id, matrix, team_mapping):
-    """A matchup's spreads: team1's main line, the median margin to the half point, and the alternates around it."""
+    """A matchup's spreads: team1's main line, the median margin to the half point, and every line offered."""
     market = markets.parse_key(markets.key_for_row("spread", row))
     team1, team2 = market.teams
     margins = matrix.scores[:, matrix.columns[team1]] - matrix.scores[:, matrix.columns[team2]]
-    main_line = round(-2 * np.median(margins)) / 2
-    lines = [main_line + step / 2 for step in range(-ALTERNATE_SPREAD_STEPS, ALTERNATE_SPREAD_STEPS + 1)]
+    main_line = np.clip(round(-2 * np.median(margins)) / 2, -markets.SPREAD_LIMIT, markets.SPREAD_LIMIT)
 
     return {
         "market": market.key,
@@ -106,9 +106,17 @@ def _spread_row(row, run_id, matrix, team_mapping):
         "team1_name": team_mapping.get(team1, f"Team {team1}"),
         "team2_id": team2,
         "team2_name": team_mapping.get(team2, f"Team {team2}"),
-        "line": main_line,
-        "lines": [_spread_prices(market, line, run_id, matrix) for line in lines if abs(line) <= markets.SPREAD_LIMIT],
+        "line": float(main_line),
+        "lines": list(_spread_lines(market.key, run_id)),
     }
+
+
+# A run's prices never change, so a worker prices each matchup's lines once per run.
+@lru_cache(maxsize=64)
+def _spread_lines(market_key, run_id):
+    market = markets.parse_key(market_key)
+    matrix = score_matrix(run_id)
+    return tuple(_spread_prices(market, line, run_id, matrix) for line in SPREAD_LINES)
 
 
 def _spread_prices(market, line, run_id, matrix):

@@ -33,8 +33,8 @@ SHAPES = {
     "champion": (False, ()),
 }
 
-# A spread line is the selected roster's, a multiple of 0.5 no further from zero than the margin curves reach.
-SPREAD_LIMIT = 40
+# A spread line is the selected roster's, a multiple of 0.5 no more than 50 points either way.
+SPREAD_LIMIT = 50
 
 # Roster ids stop at nine digits, so no key can overflow an integer column.
 KEY_PATTERN = re.compile(

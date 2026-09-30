@@ -1022,7 +1022,7 @@
     cursor: not-allowed;
 }
 
-/* Wide enough for -10.5, so the steps do not move as the line changes. */
+/* Wide enough for -50.0, so the steps do not move as the line changes. */
 .tnc-sp-line {
     display: flex;
     align-items: center;
@@ -1031,6 +1031,38 @@
     color: var(--tnc-fg);
     font-size: var(--tnc-fs-14);
     font-weight: var(--tnc-fw-bold);
+}
+
+.tnc-sp-line-edit {
+    padding: 0;
+    background: transparent;
+    border: none;
+    font-family: inherit;
+    cursor: text;
+}
+
+.tnc-sp-line-edit:hover {
+    color: var(--tnc-blue);
+}
+
+/* 16px keeps iOS from zooming the page when the field takes focus. */
+.tnc-sp-line-input {
+    width: 56px;
+    padding: 0;
+    background: var(--tnc-blue-tint);
+    border: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 16px;
+    text-align: center;
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+.tnc-sp-line-input::-webkit-inner-spin-button,
+.tnc-sp-line-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
 }
 
 /* Styled as the card's other quiet control, Show lineups. */

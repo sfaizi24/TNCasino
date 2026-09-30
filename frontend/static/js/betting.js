@@ -36,6 +36,7 @@ const state = {
     opens: {},
     lineupCache: {},
     spreadLines: {},
+    editingLine: null,
     rows: { ml: [], sp: [], ou: [], hi: [], lo: [], fp: [], mp: [], lp: [], ch: [] },
     slip: emptySlip(),
 };
@@ -365,12 +366,21 @@ function renderLinePicker(card) {
         <div class="tnc-sp-picker">
             <div class="tnc-sp-stepper">
                 <button class="tnc-sp-step" data-action="spread-line" data-delta="-0.5" aria-label="Line down half a point"${lowest}>&minus;&frac12;</button>
-                <span class="tnc-sp-line tnc-tab-num">${fmtLine(row.lines[index].line)}</span>
+                ${renderLineValue(card, row.lines[index].line)}
                 <button class="tnc-sp-step" data-action="spread-line" data-delta="0.5" aria-label="Line up half a point"${highest}>+&frac12;</button>
             </div>
             ${main}
         </div>
     `;
+}
+
+// The line is typed in as team1's, the one the stepper shows; a card with a bet on it keeps its line.
+function renderLineValue(card, line) {
+    if (card.placed.length) return `<span class="tnc-sp-line tnc-tab-num">${fmtLine(line)}</span>`;
+    if (state.editingLine === card.row.market) {
+        return `<input class="tnc-sp-line tnc-sp-line-input tnc-tab-num" data-action="spread-type" type="number" step="0.5" min="-50" max="50" value="${line}" aria-label="Spread line">`;
+    }
+    return `<button class="tnc-sp-line tnc-sp-line-edit tnc-tab-num" data-action="spread-edit" aria-label="Type a line">${fmtLine(line)}</button>`;
 }
 
 function renderSpreadPicks(card) {
@@ -806,6 +816,39 @@ function handleSpreadStep(card, delta) {
     setSpreadLine(card, row.lines.findIndex(entry => entry.line === line));
 }
 
+function handleSpreadEdit(card) {
+    state.editingLine = cardForKey(card.dataset.key).row.market;
+    renderGrid();
+    const input = document.querySelector('#grid .tnc-sp-line-input');
+    input.focus();
+    input.select();
+}
+
+// A typed line rounds to the nearest half point inside the offered lines; anything that is not a number keeps the old line.
+function commitTypedLine(card, input) {
+    if (state.editingLine === null) return;
+    state.editingLine = null;
+    const { row } = cardForKey(card.dataset.key);
+    const typed = Number(input.value);
+    const limit = Math.abs(row.lines[0].line);
+    const line = Math.min(Math.max(Math.round(typed * 2) / 2, -limit), limit);
+    const index = row.lines.findIndex(entry => entry.line === line);
+    if (input.value.trim() === '' || !Number.isFinite(typed) || index === lineIndex(row)) {
+        renderGrid();
+        return;
+    }
+    setSpreadLine(card, index);
+}
+
+function handleLineKey(e) {
+    if (e.target.dataset.action !== 'spread-type') return;
+    if (e.key === 'Enter') e.target.blur();
+    if (e.key === 'Escape') {
+        e.target.value = '';
+        e.target.blur();
+    }
+}
+
 function handleSpreadMain(card) {
     const { row } = cardForKey(card.dataset.key);
     setSpreadLine(card, mainLineIndex(row));
@@ -1129,6 +1172,13 @@ function bindEvents() {
         else if (action === 'show') handleShow(card);
         else if (action === 'spread-line') handleSpreadStep(card, Number(target.dataset.delta));
         else if (action === 'spread-main') handleSpreadMain(card);
+        else if (action === 'spread-edit') handleSpreadEdit(card);
+    });
+
+    document.body.addEventListener('keydown', handleLineKey);
+    document.body.addEventListener('focusout', e => {
+        if (e.target.dataset.action !== 'spread-type') return;
+        commitTypedLine(e.target.closest('.tnc-mc'), e.target);
     });
 
     document.body.addEventListener('input', e => {

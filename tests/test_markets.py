@@ -242,15 +242,15 @@ def test_a_spread_side_that_always_or_never_covers_has_no_price(seeded_analytics
     assert quote.probability in (0.0, 1.0)
 
 
-@pytest.mark.parametrize("line", [None, 3.25, 41, -40.5, "x", float("nan")])
-def test_a_spread_line_must_be_a_half_point_within_40(seeded_analytics, line):
+@pytest.mark.parametrize("line", [None, 3.25, 51, -50.5, "x", float("nan")])
+def test_a_spread_line_must_be_a_half_point_within_50(seeded_analytics, line):
     with pytest.raises(MarketError, match="Unknown line"):
         markets.find_quote(markets.parse_key(SPREAD), "1", line)
 
 
-def test_a_spread_line_of_40_either_way_is_offered(seeded_analytics):
-    assert markets.find_quote(markets.parse_key(SPREAD), "2", -40).probability == 0.0
-    assert markets.find_quote(markets.parse_key(SPREAD), "2", 40).probability == 1.0
+def test_a_spread_line_of_50_either_way_is_offered(seeded_analytics):
+    assert markets.find_quote(markets.parse_key(SPREAD), "2", -50).probability == 0.0
+    assert markets.find_quote(markets.parse_key(SPREAD), "2", 50).probability == 1.0
 
 
 def test_the_line_is_checked_before_the_matchup(seeded_analytics):
