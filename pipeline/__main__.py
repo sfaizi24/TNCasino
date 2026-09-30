@@ -1,4 +1,4 @@
-"""Command line for the weekly pipeline: run steps, check their status, review sources, fit the model."""
+"""Command line for the weekly pipeline: run steps, check their status, review sources, backfill and fit the model."""
 
 import argparse
 import json
@@ -78,6 +78,14 @@ def fit_model_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def backfill_command(args: argparse.Namespace) -> int:
+    from pipeline.backfill import backfill
+
+    settings = load_settings(week=args.weeks[0], season=args.season)
+    options = {"sources": [args.source], "no_charts": True, "dry_run": False}
+    return backfill(settings, args.weeks, args.source, options)
+
+
 def migrate_legacy_command(args: argparse.Namespace) -> int:
     from pipeline.legacy import migrate
 
@@ -146,6 +154,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated source websites to leave out of the fit, e.g. fanduel.com",
     )
     fit_model.set_defaults(handler=fit_model_command)
+
+    backfill = commands.add_parser(
+        "backfill", help="store a source's projections for weeks already played, for the model fit"
+    )
+    backfill.add_argument("--season", type=int, required=True)
+    backfill.add_argument("--weeks", type=week_range, required=True, help="a week or a range, e.g. 10-16")
+    backfill.add_argument("--source", choices=SOURCE_NAMES, required=True)
+    backfill.set_defaults(handler=backfill_command)
 
     migrate_legacy = commands.add_parser(
         "migrate-legacy", help="convert the 2025 databases to integer seasons and weeks"
