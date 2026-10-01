@@ -31,7 +31,7 @@ def test_user_defaults(db_session):
     db_session.session.add(user)
     db_session.session.commit()
 
-    assert user.account_balance == 1000.0
+    assert user.account_balance == 5000.0
     assert user.total_pnl == 0.0
     assert user.is_admin is False
     assert user.created_at is not None

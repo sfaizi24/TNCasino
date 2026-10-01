@@ -21,7 +21,7 @@ class User(UserMixin, db.Model):
     last_name = db.Column(db.String, nullable=True)
     profile_image_url = db.Column(db.String, nullable=True)
 
-    account_balance = db.Column(db.Float, default=1000.0)
+    account_balance = db.Column(db.Float, default=5000.0)
     total_pnl = db.Column(db.Float, default=0.0)
     is_admin = db.Column(db.Boolean, default=False)
 

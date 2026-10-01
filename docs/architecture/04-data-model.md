@@ -116,7 +116,7 @@ erDiagram
         string first_name
         string last_name
         string profile_image_url
-        float account_balance "starts at 1000"
+        float account_balance "starts at 5000"
         float total_pnl
         bool is_admin
         timestamptz created_at

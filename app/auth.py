@@ -76,7 +76,7 @@ def init_auth(app):
                 last_name=info.get("family_name"),
                 profile_image_url=info.get("picture"),
                 is_admin=google_email in admin_emails,
-                account_balance=1000.0,
+                account_balance=5000.0,
             )
             db.session.add(user)
         else:

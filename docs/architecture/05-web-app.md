@@ -56,7 +56,7 @@ sequenceDiagram
     U->>G: consent (openid, email, profile)
     G-->>A: /auth/google/authorized
     A->>G: fetch userinfo
-    A->>A: find or create User (id = Google id, balance 1000)<br/>is_admin = email in ADMIN_EMAILS
+    A->>A: find or create User (id = Google id, balance 5000)<br/>is_admin = email in ADMIN_EMAILS
     A-->>U: login_user (permanent session) → 302 next URL
 ```
 

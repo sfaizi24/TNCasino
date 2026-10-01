@@ -1,6 +1,6 @@
 # 06 – Betting Lifecycle
 
-All money is fake. Every user starts with **1,000**. Code: `app/routes/betting.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/windows.py`, `app/ledger.py`, `app/markets.py`, `app/parlays.py`, `app/matrices.py`, `app/settlement.py`, `app/cashout.py`.
+All money is fake. Every user starts with **5,000**. Code: `app/routes/betting.py`, `app/routes/admin.py`, `app/routes/helpers.py`, `app/windows.py`, `app/ledger.py`, `app/markets.py`, `app/parlays.py`, `app/matrices.py`, `app/settlement.py`, `app/cashout.py`.
 
 ## Betting period (one per week)
 
