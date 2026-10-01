@@ -17,15 +17,6 @@
     border-bottom: 1px solid var(--tnc-border);
 }
 
-.ab-eyebrow {
-    margin-bottom: 10px;
-    color: var(--tnc-blue);
-    font-size: var(--tnc-fs-12);
-    font-weight: var(--tnc-fw-semi);
-    letter-spacing: var(--tnc-track-caps);
-    text-transform: uppercase;
-}
-
 .ab-title {
     margin-bottom: 14px;
     color: var(--tnc-fg);
@@ -38,38 +29,6 @@
 .ab-lede {
     font-size: var(--tnc-fs-18);
     line-height: var(--tnc-lh-normal);
-}
-
-.ab-stats {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1px;
-    margin-top: 24px;
-    background: var(--tnc-border);
-    border: 1px solid var(--tnc-border);
-    border-radius: var(--tnc-r-lg);
-    overflow: hidden;
-}
-
-.ab-stats div {
-    display: flex;
-    flex-direction: column-reverse;
-    gap: 2px;
-    padding: 14px;
-    background: var(--tnc-surface);
-}
-
-.ab-stats dt {
-    color: var(--tnc-fg-muted);
-    font-size: var(--tnc-fs-12);
-    line-height: 1.3;
-}
-
-.ab-stats dd {
-    color: var(--tnc-fg);
-    font-size: var(--tnc-fs-24);
-    font-weight: var(--tnc-fw-bold);
-    line-height: 1.2;
 }
 
 /* Sections */
@@ -93,7 +52,7 @@
     margin-top: 14px;
 }
 
-/* The five steps, numbered down a rail */
+/* The steps, numbered down a rail */
 
 .ab-steps {
     list-style: none;
@@ -255,13 +214,7 @@
     color: var(--tnc-blue);
 }
 
-.ab-note {
-    margin-top: 12px;
-    color: var(--tnc-fg-muted);
-    font-size: var(--tnc-fs-14);
-}
-
-/* Markets */
+/* New in V4 */
 
 .ab-markets {
     display: grid;
@@ -377,10 +330,6 @@
 @media (min-width: 768px) {
     .ab-title {
         font-size: var(--tnc-fs-48);
-    }
-
-    .ab-stats {
-        grid-template-columns: repeat(4, 1fr);
     }
 
     .ab-markets {

@@ -9,102 +9,84 @@
 {% block content %}
 <article class="ab">
     <header class="ab-hero">
-        <p class="ab-eyebrow">How The Model<sup>&trade;</sup> V4 works</p>
-        <h1 class="ab-title">Every line on this site is a count.</h1>
-        <p class="ab-lede">Each week I play every matchup in the league 50,000 times. If a team wins 32,000 of them, it's a 64% favorite and its moneyline is &minus;178. No bookie, no house edge, just counting.</p>
-        <dl class="ab-stats">
-            <div><dt>Simulated weeks per run</dt><dd class="tnc-tab-num">50,000</dd></div>
-            <div><dt>Projection sources</dt><dd class="tnc-tab-num">8</dd></div>
-            <div><dt>Simulated seasons for futures</dt><dd class="tnc-tab-num">20,000</dd></div>
-            <div><dt>House edge</dt><dd class="tnc-tab-num">0%</dd></div>
-        </dl>
+        <h1 class="ab-title">How the odds are made</h1>
+        <p class="ab-lede">Every price on TNCasino comes from simulating the week 50,000 times. A team that wins 32,000 of those simulations is a 64% favorite, priced at &minus;178. No house edge is applied.</p>
     </header>
 
     <section class="ab-section">
-        <h2 class="ab-h2">How a week gets priced</h2>
+        <h2 class="ab-h2">The Model<sup>&trade;</sup> V4</h2>
         <ol class="ab-steps">
             <li>
-                <h3>Collect the projections</h3>
-                <p>Eight sources, pulled midweek and again after Thursday's game. Each one is checked against Sleeper before it counts: the wrong week, scrambled positions or numbers way off everyone else's, and that source sits the week out. I won't name them all because my wife is not yet bar-certified.</p>
+                <h3>Data science modeling</h3>
+                <p>Projections come from eight sources, each checked against Sleeper before it's used. Every source is corrected for its historical bias at each position and weighted by its past accuracy. I won't name them all because my wife is not yet bar-certified.</p>
             </li>
             <li>
-                <h3>Correct for each source's lean</h3>
-                <p>Every source leans somewhere. One projects quarterbacks too high, another lowballs running backs. Graded against last season's real scores, each source is corrected for its lean at every position and weighted by how close it usually lands.</p>
-            </li>
-            <li>
-                <h3>Give every player a range</h3>
-                <p>A projection is a guess, so each player gets a distribution instead of a number. It leans right, because boom weeks run bigger than bust weeks, and it carries a real chance of a dud: the receiver hurt on the first drive, the backup who never sees the field. Teammates move together, so when a quarterback goes off, his receivers usually do too.</p>
+                <h3>Player distributions</h3>
+                <p>Each player gets a right-skewed distribution around their projection, with a fitted probability of a near-zero game. Teammates' scores are correlated.</p>
                 <figure class="ab-figure">
                     <svg class="ab-curve" id="playerCurve" viewBox="0 0 320 150" role="img" aria-labelledby="curveCaption"></svg>
-                    <figcaption id="curveCaption">A receiver projected for 14 points. The shelf at zero is his dud chance, about 8%. The long tail on the right is the 30-point week.</figcaption>
+                    <figcaption id="curveCaption">A WR projected for 14 points under V4. Dud probability: 8%.</figcaption>
                 </figure>
             </li>
             <li>
-                <h3>Set the lineups</h3>
-                <p>Each team starts its best healthy lineup. Byes, injuries and IR are skipped, and an empty slot is filled from waivers in FAAB order, the way a real owner would before kickoff.</p>
-            </li>
-            <li>
-                <h3>Play the week 50,000 times</h3>
-                <p>Every starter's score is drawn, each team's scores are added up, and every market is judged in every one of the 50,000 versions of the week. The odds are how often each thing happened.</p>
+                <h3>Simulation</h3>
+                <p>Every starting lineup is simulated 50,000 times. A market's odds are the share of simulations in which it wins.</p>
             </li>
         </ol>
     </section>
 
     <section class="ab-section">
-        <h2 class="ab-h2">From a count to a price</h2>
+        <h2 class="ab-h2">Simulations to odds</h2>
         <div class="ab-converter">
             <label class="ab-converter-label" for="winsSlider">
-                Wins in <strong class="tnc-tab-num" id="winsCount">32,000</strong> of 50,000 sims
+                Wins in <strong class="tnc-tab-num" id="winsCount">32,000</strong> of 50,000 simulations
             </label>
             <input class="ab-slider" id="winsSlider" type="range" min="500" max="49500" step="500" value="32000">
             <dl class="ab-converter-out">
-                <div><dt>Chance</dt><dd class="tnc-tab-num" id="winsChance">64%</dd></div>
+                <div><dt>Probability</dt><dd class="tnc-tab-num" id="winsChance">64%</dd></div>
                 <div><dt>Odds</dt><dd class="tnc-tab-num" id="winsOdds">&minus;178</dd></div>
                 <div><dt>$100 returns</dt><dd class="tnc-tab-num" id="winsReturn">$156.18</dd></div>
             </dl>
         </div>
-        <p class="ab-note">The price is the fair one. A book would shade it to keep a cut; this one doesn't, so a 1-in-50,000 longshot is priced like one.</p>
     </section>
 
     <section class="ab-section">
-        <h2 class="ab-h2">What you can bet</h2>
+        <h2 class="ab-h2">New in V4</h2>
         <dl class="ab-markets">
-            <div><dt>Moneyline</dt><dd>Who wins the matchup.</dd></div>
-            <div><dt>Spreads</dt><dd>Any line from &minus;50 to +50, each priced at that line.</dd></div>
-            <div><dt>Over/Under</dt><dd>A team's total, set at its median so both sides are even money.</dd></div>
-            <div><dt>Highest &amp; Lowest Scorer</dt><dd>The week's top and bottom team.</dd></div>
-            <div><dt>Parlays</dt><dd>Two to four picks, priced on the sims where every one of them hits, so picks that go together aren't priced as if they don't.</dd></div>
-            <div><dt>Futures</dt><dd>First place, making the playoffs, last place and the title, from 20,000 simulated rest-of-seasons.</dd></div>
+            <div><dt>Futures</dt><dd>First place, playoffs, last place and champion, from 20,000 simulated rest-of-seasons.</dd></div>
+            <div><dt>Parlays</dt><dd>Two to four legs, priced from the simulations where every leg wins, so correlated legs are priced correctly.</dd></div>
+            <div><dt>Cash out</dt><dd>Once the odds update, an open bet can be cashed out for 95% of its fair value.</dd></div>
+            <div><dt>More sources</dt><dd>Eight projection sources, each verified every week.</dd></div>
         </dl>
     </section>
 
     <section class="ab-section">
-        <h2 class="ab-h2">House rules</h2>
+        <h2 class="ab-h2">Rules</h2>
         <ul class="ab-rules">
-            <li><strong>When.</strong> New odds go up midweek and again after Thursday's game. Betting pauses at each kickoff until the next update and locks for the week at Sunday's first kickoff.</li>
-            <li><strong>Changing your mind.</strong> Until the odds update, cancel any bet for a full refund. After they update, cash out for 95% of what it's worth at the new odds.</li>
-            <li><strong>Settling.</strong> Bets settle from Sleeper's final scores after Monday night. Landing exactly on a line is a push, and the stake comes back.</li>
-            <li><strong>Stakes.</strong> The money is fake and everyone starts with $1,000. The prizes are real: $20 for the week's top net profit, $100 for the season's.</li>
+            <li>Odds update midweek and after Thursday's game. Betting pauses at each kickoff and locks at Sunday's first kickoff.</li>
+            <li>Bets can be cancelled for a full refund until the odds update.</li>
+            <li>Bets settle on Sleeper's final scores. A result exactly on the line is a push.</li>
+            <li>Everyone starts with $1,000 in fake money. Prizes are real: $20 for the week's top profit, $100 for the season's.</li>
         </ul>
     </section>
 
     <section class="ab-section">
-        <h2 class="ab-h2">Is it any good?</h2>
-        <p>Before switching to V4 I tested it on 2025's weeks 10&ndash;16, predicting each week from the others. A player's 80% range should catch 80% of real scores.</p>
-        <div class="ab-bars" role="img" aria-label="Share of player scores inside their 80% range: last season's model 66%, The Model V4 77%, target 80%">
+        <h2 class="ab-h2">Model performance</h2>
+        <p>Backtested on 2025 weeks 10&ndash;16. Share of player scores inside their 80% prediction interval:</p>
+        <div class="ab-bars" role="img" aria-label="Player scores inside their 80% interval: V3 66%, V4 77%, target 80%">
             <div class="ab-bar-row">
-                <span class="ab-bar-label">Last season's model</span>
+                <span class="ab-bar-label">V3</span>
                 <span class="ab-bar"><span class="ab-bar-fill is-old" style="width: 66%"></span></span>
                 <span class="ab-bar-value tnc-tab-num">66%</span>
             </div>
             <div class="ab-bar-row">
-                <span class="ab-bar-label">The Model<sup>&trade;</sup> V4</span>
+                <span class="ab-bar-label">V4</span>
                 <span class="ab-bar"><span class="ab-bar-fill" style="width: 77%"></span></span>
                 <span class="ab-bar-value tnc-tab-num">77%</span>
             </div>
             <span class="ab-bar-target" aria-hidden="true">80% target</span>
         </div>
-        <p>Team totals land inside their 10th&ndash;90th percentile range 79% of the time, and the average miss on a team's score is about 20 points. Fantasy football is noisy, which is the whole reason there's something to bet on. The moneylines came out a little sharper than last season's, but not yet by enough to brag about.</p>
+        <p>Team scores fell inside their 80% interval 79% of the time, with a mean absolute error of 20 points. Moneyline Brier score: 0.236 (V3: 0.237).</p>
     </section>
 
     <footer class="ab-credits">
