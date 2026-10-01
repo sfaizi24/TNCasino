@@ -15,14 +15,14 @@ const SOURCES = {
     ch: '/api/champion',
 };
 
-// Active bets are listed in one group per tab.
+// Active bets are listed in one group per tab, and each view lists only its own: the week's or the futures.
 const ACTIVE_GROUPS = [
     { label: 'ML', types: ['moneyline'] },
     { label: 'SPREAD', types: ['spread'] },
     { label: 'O/U', types: ['team_total'] },
     { label: 'HIGH', types: ['highest_scorer'] },
     { label: 'LOW', types: ['lowest_scorer'] },
-    { label: 'FUTURES', types: ['first_place', 'make_playoffs', 'last_place', 'champion'] },
+    { label: 'FUTURES', types: ['first_place', 'make_playoffs', 'last_place', 'champion'], future: true },
     { label: 'PARLAY', types: ['parlay'] },
 ];
 
@@ -515,7 +515,9 @@ function renderActiveChip(bet) {
 
 function renderActiveBets() {
     const container = document.getElementById('activeBets');
+    const onFutures = isFuture(state.tab);
     const groups = ACTIVE_GROUPS
+        .filter(group => Boolean(group.future) === onFutures)
         .map(group => ({ label: group.label, bets: state.bets.filter(bet => group.types.includes(bet.bet_type)) }))
         .filter(group => group.bets.length);
     if (!groups.length) {
@@ -1124,6 +1126,7 @@ function handleView(option) {
     });
     setViewMenuOpen(false);
     state.tab = document.querySelector(`.tnc-tabs[data-view="${view}"] .tnc-tab.is-on`).dataset.tab;
+    renderActiveBets();
     renderGrid();
 }
 
