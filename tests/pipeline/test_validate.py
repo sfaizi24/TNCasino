@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from pipeline import markets
 from pipeline.runner import StepContext, StepFailed, StepResult
 from pipeline.settings import Settings
 from pipeline.steps import odds, playoffs, simulate, validate
@@ -27,6 +28,9 @@ USERS = [
 ]
 OWNERS = {1: "alice", 2: "bob", 3: "carol", 4: "dave"}
 GAMES = {1: 1, 2: 1, 3: 2, 4: 2}  # roster_id -> matchup_id_number
+# Every roster at every place and every roster champion in a quarter of the sims, as write_futures prices them.
+POSITIONS = np.tile([[1, 2, 3, 4], [2, 3, 4, 1], [3, 4, 1, 2], [4, 1, 2, 3]], (N_SIMS // 4, 1))
+CHAMPIONS = np.arange(N_SIMS) % 4
 
 BREAKS = [
     ("lineup_slots", "projections", "DELETE FROM team_lineups WHERE roster_id = 3 AND slot = 'WR'", "(3, WR)"),
@@ -65,6 +69,12 @@ BREAKS = [
     ("simulation_draws", "odds", "UPDATE simulation_runs SET draws_path = 'sims/gone.parquet'", "sims/gone.parquet"),
     ("simulation_draws", "odds", "UPDATE simulation_runs SET n_teams = 3", "4000 rows, not 1000 sims x 3 teams"),
     ("frozen_tables", "league", "DELETE FROM projections_rosters", "in projections_rosters"),
+    (
+        "standings_matrix",
+        "odds",
+        "DELETE FROM simulation_standings",
+        f"simulation_standings has no row for run {SIMULATION_RUN_ID}",
+    ),
     (
         "probabilities",
         "odds",
@@ -206,16 +216,16 @@ def write_lineups(conn: sqlite3.Connection, settings: Settings) -> None:
 
 
 def write_futures(conn: sqlite3.Connection, settings: Settings) -> None:
-    """The playoffs step's tables: every market priced for every roster, and each roster's finishing positions."""
+    """The playoffs step's tables: every market priced for every roster, each roster's finishing positions, and the
+    simulated seasons they were counted from."""
     conn.executescript(playoffs.FUTURES_DDL)
     stamp = {"run_id": SIMULATION_RUN_ID, "week": settings.week, "season": settings.season}
-    markets = [
-        ("betting_odds_first_place", 0.25),
+    chances = [
         ("betting_odds_make_playoffs", 0.5),
         ("betting_odds_last_place", 0.25),
         ("betting_odds_champion", 0.25),
     ]
-    for table, probability in markets:
+    for table, probability in chances:
         rows = [
             stamp
             | {
@@ -242,6 +252,15 @@ def write_futures(conn: sqlite3.Connection, settings: Settings) -> None:
         for position in range(1, len(OWNERS) + 1)
     ]
     insert_rows(conn, "standings_probability_matrix", matrix)
+    conn.execute("UPDATE betting_odds_make_playoffs SET no_probability = 0.5, no_american_odds = '-100'")
+    standings = {
+        "created_at": WRITTEN_AT,
+        "n_sims": N_SIMS,
+        "playoff_teams": 2,
+        "roster_ids": "1,2,3,4",
+        "standings": markets.encode_standings(POSITIONS, CHAMPIONS),
+    }
+    insert_rows(conn, "simulation_standings", [stamp | standings])
     conn.commit()
 
 
@@ -277,7 +296,7 @@ def test_a_consistent_week_passes_every_check_and_logs_each_one(settings, capsys
     result = run_validate(settings)
 
     assert statuses(result) == {check.__name__: "ok" for check in validate.CHECKS}
-    assert (result.summary["n_ok"], result.summary["n_warn"], result.summary["n_fail"]) == (12, 0, 0)
+    assert (result.summary["n_ok"], result.summary["n_warn"], result.summary["n_fail"]) == (13, 0, 0)
     assert result.warnings == []
     logged = [line for line in capsys.readouterr().out.splitlines() if line.startswith("  [validate]")]
     assert logged == [f"  [validate] {check['name']}: ok - {check['detail']}" for check in result.summary["checks"]]
@@ -300,9 +319,9 @@ def test_a_failure_keeps_every_check_on_record(settings):
         run_validate(settings)
 
     summary = failure.value.summary
-    assert str(failure.value) == "1 of 12 checks failed: probabilities"
+    assert str(failure.value) == "1 of 13 checks failed: probabilities"
     assert [check["name"] for check in summary["checks"]] == [check.__name__ for check in validate.CHECKS]
-    assert (summary["n_ok"], summary["n_warn"], summary["n_fail"]) == (11, 0, 1)
+    assert (summary["n_ok"], summary["n_warn"], summary["n_fail"]) == (12, 0, 1)
 
 
 def test_futures_missing_in_the_regular_season_are_a_warning(tmp_path):
@@ -312,7 +331,7 @@ def test_futures_missing_in_the_regular_season_are_a_warning(tmp_path):
     result = run_validate(settings)
 
     assert statuses(result)["frozen_tables"] == "warn"
-    assert (result.summary["n_ok"], result.summary["n_warn"], result.summary["n_fail"]) == (11, 1, 0)
+    assert (result.summary["n_ok"], result.summary["n_warn"], result.summary["n_fail"]) == (12, 1, 0)
     assert result.warnings == [
         "frozen_tables: no standings for week 4 in standings_probability_matrix; has the playoffs step run?"
     ]
@@ -322,7 +341,7 @@ def test_every_futures_market_offered_is_counted(settings):
     result = run_validate(settings)
 
     details = {check["name"]: check["detail"] for check in result.summary["checks"]}
-    assert details["frozen_tables"] == "9 tables have rows for week 4; 4 futures markets offered"
+    assert details["frozen_tables"] == "9 tables have rows for week 4; 3 futures markets offered"
 
 
 def test_empty_futures_markets_are_fine_once_the_standings_are_written(tmp_path):
@@ -339,14 +358,42 @@ def test_empty_futures_markets_are_fine_once_the_standings_are_written(tmp_path)
     assert details["frozen_tables"] == "9 tables have rows for week 4; 0 futures markets offered"
 
 
+def test_the_standings_matrix_of_the_futures_run_must_decode(settings):
+    result = run_validate(settings)
+
+    details = {check["name"]: check["detail"] for check in result.summary["checks"]}
+    assert details["standings_matrix"] == f"run {SIMULATION_RUN_ID}'s standings hold 1000 sims x 4 teams"
+
+
+@pytest.mark.parametrize(
+    ("positions", "champions", "culprit"),
+    [
+        (POSITIONS[:, :3], CHAMPIONS, "standings do not decode to 1000 sims x 4 teams"),
+        (POSITIONS[:-1], CHAMPIONS[:-1], "standings do not decode to 1000 sims x 4 teams"),
+        (POSITIONS + 1, CHAMPIONS, "standings hold a place outside 1-4 or a champion outside its teams"),
+        (POSITIONS, CHAMPIONS + 1, "standings hold a place outside 1-4 or a champion outside its teams"),
+    ],
+)
+def test_a_standings_matrix_that_does_not_fit_its_run_fails(settings, positions, champions, culprit):
+    with closing(sqlite3.connect(settings.db_paths["odds"])) as conn:
+        conn.execute("UPDATE simulation_standings SET standings = ?", (markets.encode_standings(positions, champions),))
+        conn.commit()
+
+    failures = failed_checks(settings)
+
+    assert list(failures) == ["standings_matrix"]
+    assert failures["standings_matrix"] == f"run {SIMULATION_RUN_ID}'s {culprit}"
+
+
 def test_a_playoff_week_expects_odds_only_for_the_teams_with_a_game(tmp_path):
     settings = week_settings(tmp_path)
     build_week(settings, games={1: 1, 2: 1, 3: None, 4: None}, futures=False, playoff_week_start=4)
 
     result = run_validate(settings)
 
-    assert result.summary["n_ok"] == 12
+    assert result.summary["n_ok"] == 13
     details = {check["name"]: check["detail"] for check in result.summary["checks"]}
+    assert details["standings_matrix"] == "no futures in week 4, so no standings matrix is needed"
     assert details["scorer_markets"] == "highest and lowest scorer price the 2 teams in play"
     assert details["lineup_slots"] == "4 rosters fill all 3 slots"
 

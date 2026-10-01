@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
+from pipeline import markets
 from pipeline.runner import StepContext, StepFailed, StepResult
 from pipeline.steps.league import LeagueSettings, load_league_settings
 
@@ -27,10 +28,9 @@ WEEKLY_ODDS_TABLES = [
     "team_distribution_curves",
     "team_matchup_margin_curves",
 ]
-# The playoffs step's futures, which end when the playoffs start. A market is empty when every team is priced
-# outside its 1-99% band, so the standings matrix, written on every run, is what shows the step has run.
+# The playoffs step's futures, which end when the playoffs start. Last place and champion are empty when every team is
+# priced outside their 1-99% band, so the standings matrix, written on every run, is what shows the step has run.
 FUTURES_TABLES = [
-    "betting_odds_first_place",
     "betting_odds_make_playoffs",
     "betting_odds_last_place",
     "betting_odds_champion",
@@ -57,8 +57,7 @@ PROBABILITY_COLUMNS = {
     "betting_odds_matchup_ml": ["team1_win_prob", "team2_win_prob"],
     "betting_odds_highest_scorer": ["probability"],
     "betting_odds_lowest_scorer": ["probability"],
-    "betting_odds_first_place": ["probability"],
-    "betting_odds_make_playoffs": ["probability"],
+    "betting_odds_make_playoffs": ["probability", "no_probability"],
     "betting_odds_last_place": ["probability"],
     "betting_odds_champion": ["probability"],
     "standings_probability_matrix": ["probability"],
@@ -70,7 +69,6 @@ OWNER_COLUMNS = {
     "betting_odds_team_ou": ["owner"],
     "betting_odds_highest_scorer": ["owner"],
     "betting_odds_lowest_scorer": ["owner"],
-    "betting_odds_first_place": ["owner"],
     "betting_odds_make_playoffs": ["owner"],
     "betting_odds_last_place": ["owner"],
     "betting_odds_champion": ["owner"],
@@ -161,6 +159,7 @@ def load_week(ctx: StepContext) -> Week:
         "projections_rosters": read_rows(league, "projections_rosters", WEEK_ROWS, params),
         "team_lineups": read_rows(ctx.db("projections"), "team_lineups", WEEK_ROWS, params),
         "simulation_runs": read_rows(odds, "simulation_runs", LATEST_FIRST, params),
+        "simulation_standings": read_rows(odds, "simulation_standings", WEEK_ROWS, params),
     }
     for table in RUN_TABLES:
         rows[table] = read_rows(odds, table, LATEST_RUN_ROWS, params)
@@ -324,8 +323,30 @@ def frozen_tables(week: Week) -> tuple[str, str]:
         return "ok", f"{len(REQUIRED_TABLES)} tables have rows for week {week.number}; futures end at the playoffs"
     if not week.rows[STANDINGS_TABLE]:
         return "warn", f"no standings for week {week.number} in {STANDINGS_TABLE}; has the playoffs step run?"
-    markets = sum(1 for table in FUTURES_TABLES if week.rows[table])
-    return "ok", f"{len(REQUIRED_TABLES)} tables have rows for week {week.number}; {markets} futures markets offered"
+    offered = sum(1 for table in FUTURES_TABLES if week.rows[table])
+    return "ok", f"{len(REQUIRED_TABLES)} tables have rows for week {week.number}; {offered} futures markets offered"
+
+
+def standings_matrix(week: Week) -> tuple[str, str]:
+    """Futures parlays are priced on the simulated seasons the futures were priced from, stored once per run."""
+    if week.is_playoffs:
+        return "ok", f"no futures in week {week.number}, so no standings matrix is needed"
+    priced = week.rows[STANDINGS_TABLE]
+    if not priced:
+        return "ok", f"no futures priced for week {week.number}"
+    run_id = priced[0]["run_id"]
+    stored = {row["run_id"]: row for row in week.rows["simulation_standings"]}
+    if run_id not in stored:
+        return "fail", f"simulation_standings has no row for run {run_id}, so its futures cannot be parlayed"
+    row = stored[run_id]
+    n_sims, n_teams = row["n_sims"], len(row["roster_ids"].split(","))
+    try:
+        positions, champions = markets.decode_standings(row["standings"], n_sims, n_teams)
+    except ValueError:
+        return "fail", f"run {run_id}'s standings do not decode to {n_sims} sims x {n_teams} teams"
+    if positions.min() < 1 or positions.max() > n_teams or champions.max() >= n_teams:
+        return "fail", f"run {run_id}'s standings hold a place outside 1-{n_teams} or a champion outside its teams"
+    return "ok", f"run {run_id}'s standings hold {n_sims} sims x {n_teams} teams"
 
 
 def owners(week: Week) -> tuple[str, str]:
@@ -363,6 +384,7 @@ CHECKS = [
     simulation_draws,
     odds_run,
     frozen_tables,
+    standings_matrix,
     owners,
     unique_orderings,
 ]

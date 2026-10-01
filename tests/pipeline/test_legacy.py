@@ -54,7 +54,6 @@ TEAM_PROBABILITY_COLUMNS = [
     *CREATED_AT_AND_SEASON,
 ]
 LEGACY_STANDINGS_SHAPES = {
-    "betting_odds_first_place": (TEAM_PROBABILITY_COLUMNS, ["run_id", "week", "team_id"]),
     "betting_odds_make_playoffs": (TEAM_PROBABILITY_COLUMNS, ["run_id", "week", "team_id"]),
     "standings_probability_matrix": (
         [
