@@ -207,7 +207,7 @@ def test_a_week_nobody_has_played_counts_the_teams_without_a_score():
 
 
 @pytest.mark.parametrize(
-    ("market", "selection"), [("2026-first_place", "1"), ("2026-make_playoffs-1", "yes"), ("2026-last_place", "2")]
+    ("market", "selection"), [("2026-make_playoffs-1", "yes"), ("2026-make_playoffs-1", "no"), ("2026-last_place", "2")]
 )
 def test_standings_futures_wait_for_the_final_standings(market, selection):
     result = _judge(market, selection, _scores(120.5, 98.25, 110.5))
@@ -248,6 +248,13 @@ def test_one_lost_leg_loses_the_parlay_and_every_leg_keeps_its_own_outcome():
 
     assert (result.outcome, result.reason) == (LOST, "lost: Bob 98.25 vs Alice 120.50")
     assert (result.potential_win, result.leg_statuses) == (None, {1: LOST, 2: PUSH, 3: WON})
+
+
+def test_one_lost_leg_loses_the_parlay_at_once_and_the_legs_still_waiting_with_it():
+    result = outcome_for(_parlay(BOB_WINS, ALICE_OVER, ALICE_HIGHEST), _scores(120.5, 98.25, None))
+
+    assert (result.outcome, result.reason) == (LOST, "lost: Bob 98.25 vs Alice 120.50")
+    assert result.leg_statuses == {1: LOST, 2: WON, 3: LOST}
 
 
 def test_a_parlay_wins_when_every_leg_wins():
@@ -345,10 +352,10 @@ def _judge_on_the_standings(market, selection):
 @pytest.mark.parametrize(
     ("market", "selection", "outcome", "reason"),
     [
-        ("2026-first_place", "1", WON, "1st of 2: 7-3, 1,140.25 pts"),
-        ("2026-first_place", "2", LOST, "2nd of 2: 3-7, 1,100.00 pts"),
         ("2026-make_playoffs-1", "yes", WON, "1st of 2: 7-3, 1,140.25 pts"),
         ("2026-make_playoffs-2", "yes", LOST, "2nd of 2: 3-7, 1,100.00 pts"),
+        ("2026-make_playoffs-2", "no", WON, "2nd of 2: 3-7, 1,100.00 pts"),
+        ("2026-make_playoffs-1", "no", LOST, "1st of 2: 7-3, 1,140.25 pts"),
         ("2026-last_place", "2", WON, "2nd of 2: 3-7, 1,100.00 pts"),
         ("2026-last_place", "1", LOST, "1st of 2: 7-3, 1,140.25 pts"),
     ],
@@ -371,7 +378,7 @@ def test_the_final_standings_decide_each_standings_future(
 def test_level_wins_rank_by_points_for_then_roster_id(seeded_analytics, db_session, season, first, reason):
     _play_season(db_session.session, season)
 
-    result = _judge_on_the_standings("2026-first_place", first)
+    result = _judge_on_the_standings(f"2026-make_playoffs-{first}", "yes")
 
     assert (result.outcome, result.reason) == (WON, reason)
 
@@ -418,6 +425,45 @@ def test_the_champion_settles_by_hand_whatever_the_standings(seeded_analytics, d
     assert {(result.outcome, result.reason) for result in results} == {
         (UNDECIDED, "champion: settle by hand after the final")
     }
+
+
+ALICE_IN = ("2026-make_playoffs-1", "yes", None, -400)
+ALICE_LAST = ("2026-last_place", "1", None, 400)
+BOB_LAST = ("2026-last_place", "2", None, 230)
+ALICE_CHAMPION = ("2026-champion", "1", None, 233)
+
+
+def test_a_futures_parlay_waits_for_the_final_standings(seeded_analytics):
+    result = outcome_for(_parlay(ALICE_IN, BOB_LAST), {})
+
+    assert (result.outcome, result.reason) == (UNDECIDED, "0 of 2 legs decided")
+
+
+def test_a_futures_parlay_settles_from_the_final_standings(seeded_analytics, db_session):
+    _play_season(db_session.session, ALICE_ON_TOP)
+
+    result = outcome_for(_parlay(ALICE_IN, BOB_LAST), {}, final_standings(10))
+
+    assert (result.outcome, result.reason) == (WON, "won, 2 legs")
+    assert (result.potential_win, result.leg_statuses) == (None, {1: WON, 2: WON})
+
+
+def test_a_futures_parlay_with_a_champion_leg_waits_for_the_final_once_the_rest_have_won(seeded_analytics, db_session):
+    _play_season(db_session.session, ALICE_ON_TOP)
+
+    result = outcome_for(_parlay(BOB_LAST, ALICE_CHAMPION), {}, final_standings(10))
+
+    assert (result.outcome, result.reason) == (UNDECIDED, "1 of 2 legs decided")
+    assert result.leg_statuses is None
+
+
+def test_a_futures_parlay_is_lost_with_its_champion_leg_once_a_standings_leg_loses(seeded_analytics, db_session):
+    _play_season(db_session.session, ALICE_ON_TOP)
+
+    result = outcome_for(_parlay(ALICE_LAST, ALICE_CHAMPION), {}, final_standings(10))
+
+    assert (result.outcome, result.reason) == (LOST, "lost: 1st of 2: 7-3, 1,140.25 pts")
+    assert result.leg_statuses == {1: LOST, 2: LOST}
 
 
 @pytest.mark.parametrize(

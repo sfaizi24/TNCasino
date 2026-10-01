@@ -1,9 +1,11 @@
-"""Parlays: two to four of the week's picks priced together at the joint chance of the latest run.
+"""Parlays: two to four of the week's picks, or two to four futures picks, priced together.
 
-A parlay wins only if every leg wins, so its chance is the share of the run's sims in which every
-leg wins, at fair odds with no cap and no house edge. Two combinations are refused: two legs from
-one market, which can only win together on a tie, and a leg that adds nothing to the others.
-Nothing here moves money.
+A parlay wins only if every leg wins, so its chance is the share of a run's sims in which every leg
+wins, at fair odds with no cap and no house edge. A slip of the week's picks is priced on the week's
+latest score matrix; a slip of futures picks on the standings matrix of the playoffs run its page
+showed. Four combinations are refused: weekly and futures picks together, two legs from one market,
+legs the sims never see win together, and a leg that adds nothing to the others. Nothing here moves
+money.
 """
 
 from collections import Counter
@@ -12,7 +14,14 @@ from dataclasses import dataclass
 import numpy as np
 
 from .markets import Market, MarketError, Quote, find_quote, odds_from_probability, parse_key, price_from_odds
-from .matrices import MissingMatrix, joint_probability, leg_outcome, score_matrix
+from .matrices import (
+    MissingMatrix,
+    futures_outcome,
+    joint_probability,
+    leg_outcome,
+    score_matrix,
+    standings_matrix,
+)
 
 CANNOT_PRICE = "Not offered: the simulations cannot price this parlay"
 
@@ -47,22 +56,31 @@ class ParlayRefusal(Exception):
 
 
 def quote(requests, week, run_id):
-    """The parlay of the legs the page sent, priced at the week's latest run, or the first rule it breaks."""
+    """The parlay of the legs the page sent, priced at the run the page showed, or the first rule it breaks."""
     if not 2 <= len(requests) <= 4:
         raise ParlayRefusal("A parlay has 2 to 4 legs", "size")
     legs = _legs(requests, week)
+    _require_one_kind(legs)
     _require_distinct_markets(legs)
     _require_current_quotes(legs, requests, run_id)
 
     try:
-        matrix = score_matrix(run_id)
+        outcomes = _outcomes(legs, run_id)
     except MissingMatrix:
         raise ParlayRefusal("Not offered", "no_price") from None
-    outcomes = [leg_outcome(leg.market, leg.selection, leg.line, matrix) for leg in legs]
     probability, odds = joint_price(outcomes)
 
     _require_every_leg_counts(legs, outcomes)
     return Parlay(run_id, legs, probability, odds)
+
+
+def is_futures(requests):
+    """Whether every pick names a futures market; a pick whose key does not parse counts as weekly."""
+    try:
+        markets = [parse_key(request.get("market") if isinstance(request, dict) else None) for request in requests]
+    except MarketError:
+        return False
+    return all(market.week is None for market in markets)
 
 
 def joint_price(outcomes):
@@ -91,12 +109,19 @@ def _legs(requests, week):
 
 def _leg(key, selection, line, week):
     market = parse_key(key)
-    if market.week is None:
-        raise MarketError("Futures cannot be parlayed")
-    if market.week != week:
+    if market.week not in (None, week):
         raise MarketError("Not this week's market")
     single = find_quote(market, selection, line)
     return Leg(market, selection, single.line, single)
+
+
+def _require_one_kind(legs):
+    """A slip holds the week's picks or futures picks; the kind it holds fewer of is named, futures on a tie."""
+    weekly = [leg.market.key for leg in legs if leg.market.week is not None]
+    futures = [leg.market.key for leg in legs if leg.market.week is None]
+    if weekly and futures:
+        named = weekly if len(weekly) < len(futures) else futures
+        raise ParlayRefusal("Weekly and futures picks cannot be parlayed together", "mixed", named)
 
 
 def _require_distinct_markets(legs):
@@ -125,6 +150,15 @@ def _moved(leg, request, run_id):
         return round(float(request.get("line")), 2) != round(leg.quote.line, 2)
     except (TypeError, ValueError):
         return True
+
+
+def _outcomes(legs, run_id):
+    """Each leg judged sim by sim on the run's standings matrix for futures, on its score matrix otherwise."""
+    if legs[0].market.week is None:
+        standings = standings_matrix(run_id)
+        return [futures_outcome(leg.market, leg.selection, standings) for leg in legs]
+    matrix = score_matrix(run_id)
+    return [leg_outcome(leg.market, leg.selection, leg.line, matrix) for leg in legs]
 
 
 def _require_every_leg_counts(legs, outcomes):

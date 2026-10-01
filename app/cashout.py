@@ -3,17 +3,17 @@
 A bet's fair value is its payout times its chance of winning in the latest run, at the bet's own
 line; the offer is 95% of that. A weekly bet's chance is the share of the week's latest score matrix
 in `simulation_totals` in which every leg wins, through the win rule each leg's market was priced
-with, so a single and a parlay are priced alike. A futures bet's chance is the latest futures quote,
-because the standings simulation behind it is not stored as a matrix. There is no offer while the
-bet's own run is still the latest, because removing the bet is the way out then. Nothing here moves
-money.
+with, so a single and a parlay are priced alike. A futures single's chance is its latest quote, and a
+futures parlay's is the share of the latest futures run's standings matrix in `simulation_standings`
+in which every leg wins. There is no offer while the bet's own run is still the latest, because
+removing the bet is the way out then. Nothing here moves money.
 """
 
 from dataclasses import dataclass
 from functools import cache, partial
 
 from .markets import MarketError, find_quote, parse_key
-from .matrices import MissingMatrix, joint_probability, leg_outcome, score_matrix
+from .matrices import MissingMatrix, futures_outcome, joint_probability, leg_outcome, score_matrix, standings_matrix
 from .routes.helpers import get_current_week, query_analytics
 from .windows import betting_window
 
@@ -62,9 +62,8 @@ def _price(bet, window_of):
     except MarketError:
         raise NoOffer(NO_OFFER) from None
 
-    # A futures bet is always a single: parlays refuse futures legs.
-    if markets[0].week is None:
-        probability, run_id = _futures_probability(bet, markets[0], bet.legs[0], window_of)
+    if all(market.week is None for market in markets):
+        probability, run_id = _futures_probability(bet, markets, window_of)
     else:
         probability, run_id = _weekly_probability(bet, markets, window_of)
 
@@ -92,11 +91,12 @@ def _weekly_probability(bet, markets, window_of):
     return joint_probability(outcomes), window.run_id
 
 
-def _futures_probability(bet, market, leg, window_of):
+def _futures_probability(bet, markets, window_of):
+    """A single's latest quote, or the share of the latest futures run's simulated seasons every leg wins."""
     window = window_of(get_current_week())
     _require_open(window)
     try:
-        quote = find_quote(market, leg.selection)
+        quote = find_quote(markets[0], bet.legs[0].selection)
     except MarketError:
         raise NoOffer(CANNOT_PRICE) from None
     _require_newer_run(bet, quote.run_id)
@@ -105,7 +105,17 @@ def _futures_probability(bet, market, leg, window_of):
     runs = query_analytics(STANDINGS_SQL, {"run_id": window.run_id})
     if not runs or runs[0]["standings_through_week"] < window.week - 1:
         raise NoOffer("No offer until the next run: the standings are behind")
-    return quote.probability, quote.run_id
+    if len(markets) == 1:
+        return quote.probability, quote.run_id
+
+    try:
+        standings = standings_matrix(quote.run_id)
+        outcomes = [
+            futures_outcome(market, leg.selection, standings) for market, leg in zip(markets, bet.legs, strict=True)
+        ]
+    except (MissingMatrix, KeyError):
+        raise NoOffer(CANNOT_PRICE) from None
+    return joint_probability(outcomes), quote.run_id
 
 
 def _require_open(window):

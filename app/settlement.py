@@ -4,10 +4,12 @@ Every bet whose market key names the scores it depends on gets an outcome, won, 
 undecided, and a reason the admin reads beside it before confirming. A decided outcome comes from the
 win rule in `pipeline/markets.py`, applied to the week's scores as a one-row score matrix, so a bet
 settles by the rule its market was priced with. A parlay is judged leg by leg and settles all or
-nothing; its pushed legs drop out and the rest are re-priced on the matrix of the run it was placed at.
-The standings futures wait for the regular season's last week, which judges every one still pending
-from the final standings; the champion and bets placed before market keys settle by hand. Nothing here
-moves money or commits: the admin routes settle through the ledger.
+nothing: one lost leg loses it at once, even while other legs wait, and otherwise it waits for every
+leg; its pushed legs drop out and the rest are re-priced on the matrix of the run it was placed at.
+Make playoffs, yes or no, and last place wait for the regular season's last week, which judges every
+pending bet holding one from the final standings, singles and futures parlays alike; the champion and
+bets placed before market keys settle by hand. Nothing here moves money or commits: the admin routes
+settle through the ledger.
 """
 
 import json
@@ -22,16 +24,13 @@ from . import parlays
 from .database import db
 from .markets import MarketError, parse_key, potential_win, price_from_odds
 from .matrices import MissingMatrix, leg_outcome, score_matrix
-from .models import Bet
+from .models import Bet, BetLeg
 from .routes.helpers import get_league_id_for_week, get_team_mapping, query_analytics
 
 WON = "won"
 LOST = "lost"
 PUSH = "push"
 UNDECIDED = "undecided"
-
-# The futures a finishing position decides, judged once the regular season's last week is played.
-STANDINGS_MARKETS = ("first_place", "make_playoffs", "last_place")
 
 
 class SettlementError(Exception):
@@ -200,11 +199,11 @@ def _incomplete_season(league_id, last_week, num_teams):
 
 
 def outcomes_for_week(week, scores):
-    """The week's pending bets and, in the regular season's last week, every pending standings future too."""
+    """The week's pending bets and, in the regular season's last week, every pending bet with a futures leg too."""
     standings = final_standings(week)
     listed = Bet.week == week
     if standings is not None:
-        listed = or_(listed, Bet.bet_type.in_(STANDINGS_MARKETS))
+        listed = or_(listed, Bet.legs.any(BetLeg.week.is_(None)))
 
     bets = db.session.query(Bet).filter(Bet.status == "pending", listed).order_by(Bet.id).all()
     return [outcome_for(bet, scores, standings) for bet in bets]
@@ -214,7 +213,7 @@ def outcome_for(bet, scores, standings=None):
     if not bet.legs:
         return BetOutcome(bet, UNDECIDED, "placed before market keys: settle by hand")
     if len(bet.legs) > 1:
-        return _parlay(bet, scores)
+        return _parlay(bet, scores, standings)
 
     [leg] = bet.legs
     return BetOutcome(bet, *_judge_leg(leg, scores, standings))
@@ -241,17 +240,19 @@ def _judge_leg(leg, scores, standings=None):
     return _standings_future(market, leg, standings)
 
 
-def _parlay(bet, scores):
-    judged = [(leg, *_judge_leg(leg, scores)) for leg in bet.legs]
+def _parlay(bet, scores, standings):
+    judged = [(leg, *_judge_leg(leg, scores, standings)) for leg in bet.legs]
+    lost = [reason for _, outcome, reason in judged if outcome == LOST]
+    if lost:
+        # The bet is over, so a leg still waiting is lost with it.
+        statuses = {leg.id: LOST if outcome == UNDECIDED else outcome for leg, outcome, _ in judged}
+        return BetOutcome(bet, LOST, "lost: " + "; ".join(lost), leg_statuses=statuses)
+
     decided = sum(1 for _, outcome, _ in judged if outcome != UNDECIDED)
     if decided < len(judged):
         return BetOutcome(bet, UNDECIDED, f"{decided} of {len(judged)} legs decided")
 
     statuses = {leg.id: outcome for leg, outcome, _ in judged}
-    lost = [reason for _, outcome, reason in judged if outcome == LOST]
-    if lost:
-        return BetOutcome(bet, LOST, "lost: " + "; ".join(lost), leg_statuses=statuses)
-
     standing = [leg for leg, outcome, _ in judged if outcome == WON]
     return _parlay_without_losses(bet, standing, statuses)
 
@@ -345,10 +346,9 @@ def _standings_future(market, leg, standings):
     roster_id = market.teams[0] if market.teams else int(leg.selection)
     rank = standings.rank(roster_id)
     settings = standings.settings
-    if market.name == "first_place":
-        won = rank == 1
-    elif market.name == "make_playoffs":
-        won = rank <= settings.playoff_teams
+    if market.name == "make_playoffs":
+        made_it = rank <= settings.playoff_teams
+        won = made_it if leg.selection == "yes" else not made_it
     else:
         won = rank == settings.num_teams
 

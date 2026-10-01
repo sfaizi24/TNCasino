@@ -10,7 +10,7 @@ from app.database import db
 from app.markets import parse_key, potential_win
 from app.models import Bet, BetLeg
 from pipeline import markets as win_rules
-from tests.conftest import RUN_ID, SEEDED_TOTALS, WINDOW_CLOSES_AT
+from tests.conftest import RUN_ID, SEEDED_CHAMPIONS, SEEDED_POSITIONS, SEEDED_TOTALS, WINDOW_CLOSES_AT
 
 # The run before the seeded one: a bet priced there is offered at the seeded run's matrix.
 OLDER_RUN = "2026w10-20261108T140000"
@@ -176,6 +176,13 @@ def test_last_place_and_the_champion_are_offered_at_their_latest_quote(user, nam
     assert offer_for(bet) == Offer(bet.id, 152.0, 160.0, 0.4, RUN_ID)
 
 
+def test_a_no_on_the_playoffs_is_offered_at_its_latest_quote(user):
+    # Placed in week 9 at +300; the seeded week 10 run quotes Alice A missing the playoffs at 20%.
+    bet = _bet(user, "2026-make_playoffs-1", "no", price=300, run_id="2026w09-20261103T140000", week=9)
+
+    assert offer_for(bet) == Offer(bet.id, 76.0, 80.0, 0.2, RUN_ID)
+
+
 def test_no_futures_offer_while_the_standings_are_behind(user):
     db.session.execute(
         text("UPDATE simulation_runs SET standings_through_week = 8 WHERE run_id = :run_id"), {"run_id": RUN_ID}
@@ -197,7 +204,7 @@ def test_a_playoffs_only_rerun_keeps_the_futures_offer(user):
 
 
 def test_no_futures_offer_once_the_latest_run_drops_the_selection(user):
-    bet = _bet(user, "2026-first_place", "3", run_id="2026w09-20261103T140000", week=9)
+    bet = _bet(user, "2026-champion", "3", run_id="2026w09-20261103T140000", week=9)
 
     assert _refusal(bet) == CANNOT_PRICE
 
@@ -379,3 +386,54 @@ def test_offers_for_leaves_out_the_bets_without_an_offer(user):
     offers = offers_for([priced, legacy, unchanged])
 
     assert offers == {priced.id: offer_for(priced)}
+
+
+# A futures parlay placed at the seeded run, Alice A and Bob B both to make the playoffs, 8 of its 20 seasons.
+NEWER_FUTURES_RUN = "2026w10-20261110T150000"
+BOTH_IN = (("2026-make_playoffs-1", "yes", None, -400), ("2026-make_playoffs-2", "yes", None, -150))
+
+
+def _add_newer_futures_run(positions, champions):
+    """Publish a newer playoffs run: its standings matrix, and every make-playoffs row re-quoted at it."""
+    db.session.execute(
+        text("""
+        INSERT INTO simulation_standings (run_id, season, week, created_at, n_sims, playoff_teams, roster_ids, standings)
+        VALUES (:run_id, 2026, 10, '2026-11-10T15:00:00+00:00', :n_sims, 2, '1,2,3,4', :standings)
+    """),
+        {
+            "run_id": NEWER_FUTURES_RUN,
+            "n_sims": len(positions),
+            "standings": win_rules.encode_standings(positions, champions),
+        },
+    )
+    db.session.execute(text("UPDATE betting_odds_make_playoffs SET run_id = :run_id"), {"run_id": NEWER_FUTURES_RUN})
+    db.session.commit()
+
+
+def test_a_futures_parlay_is_offered_at_the_joint_chance_of_its_legs_in_the_newer_futures_run(user):
+    # $100 at +150 pays $250. The newer run lifts Bob B into the playoffs, and champion, in four of the seeded
+    # seasons where only Alice A made them, so both make them in 12 of 20.
+    bet = _parlay(user, _legs(*BOTH_IN), price=150, probability=0.4)
+    lifted = [8, 10, 12, 13]
+    positions, champions = SEEDED_POSITIONS.copy(), SEEDED_CHAMPIONS.copy()
+    positions[lifted] = [[1, 2, 4, 3], [2, 1, 4, 3], [1, 2, 4, 3], [2, 1, 4, 3]]
+    champions[lifted] = 1
+    _add_newer_futures_run(positions, champions)
+
+    offer = offer_for(bet)
+
+    assert offer == Offer(bet.id, 142.5, 150.0, 0.6, NEWER_FUTURES_RUN)
+
+
+def test_no_offer_for_a_futures_parlay_while_its_run_is_the_latest(user):
+    bet = _parlay(user, _legs(*BOTH_IN), price=150, probability=0.4)
+
+    assert _refusal(bet) == UNCHANGED
+
+
+def test_no_offer_for_a_futures_parlay_whose_newer_run_has_no_stored_standings(user):
+    bet = _parlay(user, _legs(*BOTH_IN), price=150, probability=0.4)
+    db.session.execute(text("UPDATE betting_odds_make_playoffs SET run_id = :run_id"), {"run_id": NEWER_FUTURES_RUN})
+    db.session.commit()
+
+    assert _refusal(bet) == CANNOT_PRICE

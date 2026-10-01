@@ -4,9 +4,16 @@ from sqlalchemy import text
 
 from app.database import db
 from app.markets import odds_from_probability, parse_key
-from app.matrices import MissingMatrix, joint_probability, leg_outcome, score_matrix
+from app.matrices import (
+    MissingMatrix,
+    futures_outcome,
+    joint_probability,
+    leg_outcome,
+    score_matrix,
+    standings_matrix,
+)
 from pipeline import markets as win_rules
-from tests.conftest import RUN_ID, SEEDED_TOTALS
+from tests.conftest import RUN_ID, SEEDED_CHAMPIONS, SEEDED_POSITIONS, SEEDED_TOTALS
 
 
 def test_the_seeded_run_decodes_to_its_matrix(seeded_analytics):
@@ -87,6 +94,59 @@ def test_the_joint_chance_counts_the_sims_every_leg_wins(seeded_analytics):
     # Roster 1 wins in 11 sims and is over 110.5 in 9; it does both in the 7 sims where it tops 110.5 and roster 2.
     assert joint_probability([wins, over]) == pytest.approx(7 / 20)
     assert joint_probability([wins]) == pytest.approx(11 / 20)
+
+
+def test_the_seeded_standings_agree_with_the_seeded_futures_quotes():
+    alice, bob = SEEDED_POSITIONS[:, 0], SEEDED_POSITIONS[:, 1]
+    champions_place = SEEDED_POSITIONS[np.arange(20), SEEDED_CHAMPIONS]
+
+    assert all(sorted(places) == [1, 2, 3, 4] for places in SEEDED_POSITIONS)
+    assert set(champions_place) == {1, 2}
+    assert (int((alice <= 2).sum()), int((bob <= 2).sum())) == (16, 12)
+    assert (int((alice == 4).sum()), int((bob == 4).sum())) == (4, 6)
+    assert (int((SEEDED_CHAMPIONS == 0).sum()), int((SEEDED_CHAMPIONS == 1).sum())) == (6, 3)
+    assert int(((alice <= 2) & (bob <= 2)).sum()) == 8
+    assert int(((alice <= 2) & (bob > 2)).sum()) == 8
+
+
+def test_the_seeded_run_decodes_to_its_standings(seeded_analytics):
+    standings = standings_matrix(RUN_ID)
+
+    assert (standings.columns, standings.playoff_teams) == ({1: 0, 2: 1, 3: 2, 4: 3}, 2)
+    np.testing.assert_array_equal(standings.positions, SEEDED_POSITIONS)
+    np.testing.assert_array_equal(standings.champions, SEEDED_CHAMPIONS)
+    assert standings_matrix(RUN_ID) is standings
+
+
+def test_a_run_without_stored_standings_is_missing(seeded_analytics):
+    with pytest.raises(MissingMatrix):
+        standings_matrix("never-stored")
+
+
+@pytest.mark.parametrize(
+    ("market", "selection", "wins"),
+    [
+        ("2026-make_playoffs-1", "yes", 16),
+        ("2026-make_playoffs-1", "no", 4),
+        ("2026-make_playoffs-2", "yes", 12),
+        ("2026-make_playoffs-2", "no", 8),
+        ("2026-make_playoffs-3", "yes", 7),
+        ("2026-last_place", "1", 4),
+        ("2026-last_place", "2", 6),
+        ("2026-champion", "1", 6),
+        ("2026-champion", "2", 3),
+        ("2026-champion", "4", 5),
+    ],
+)
+def test_each_futures_market_wins_the_seasons_its_rule_says(seeded_analytics, market, selection, wins):
+    outcome = futures_outcome(parse_key(market), selection, standings_matrix(RUN_ID))
+
+    assert (int(outcome.won.sum()), int(outcome.pushed.sum())) == (wins, 0)
+
+
+def test_a_futures_roster_the_run_did_not_simulate_is_a_key_error(seeded_analytics):
+    with pytest.raises(KeyError):
+        futures_outcome(parse_key("2026-champion"), "7", standings_matrix(RUN_ID))
 
 
 @pytest.mark.parametrize(
