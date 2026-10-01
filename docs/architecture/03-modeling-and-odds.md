@@ -10,7 +10,7 @@ flowchart LR
     LN --> SIM["50,000 draws per player,<br/>summed per team (simulate step)"]
     SIM --> MK["Weekly markets:<br/>ML, O/U, high/low (odds step)"]
     SIM --> CV["Chart curves:<br/>density, CDF, margin (odds step)"]
-    SIM --> ST["Season sims: first place, playoffs,<br/>last place, champion (playoffs step)"]
+    SIM --> ST["Season sims: make playoffs yes or no,<br/>last place, champion (playoffs step)"]
 ```
 
 ## 1. Player distributions
@@ -120,17 +120,26 @@ Chances are not clamped, so a selection that wins one simulation in 50,000 is pr
 
 Scores are compared exactly, in float64. A selection's chance is its share of all simulations, so a push counts against both sides: when some simulations land on a total's line, its over and under sum to less than 1. Total lines are the simulated median rounded to cents, and both sides are priced at the rounded line. The module also encodes the score matrix that publish stores for every run ([04](04-data-model.md#publishing-map)).
 
+The futures have three rules of their own, read from a run's simulated seasons rather than its scores: the finishing places, one row per simulated season and one column per roster (1 is first), and each season's champion as a column index. None of them pushes.
+
+| Rule | Wins |
+|---|---|
+| `make_playoffs(positions, team, playoff_teams, side)` | `yes`: the team finishes within the top `playoff_teams`; `no`: it finishes outside them |
+| `last_place(positions, team)` | the team finishes last |
+| `champion(champions, team)` | the team wins the bracket's final |
+
+The playoffs step prices the futures through these rules ([§6](#6-playoff-odds)), and the app prices a futures parlay through them on the same seasons ([06](06-betting-lifecycle.md#parlays)). The module encodes the seasons too (`encode_standings`).
+
 | Market | Table | Derived from |
 |---|---|---|
 | **Moneyline** | `betting_odds_matchup_ml` | P(team1 > team2) across paired simulations; ties tracked separately |
 | **Team over/under** | `betting_odds_team_ou` | Line = the team's simulated **median** rounded to cents, so over/under are ≈50/50 and paid at `EVEN` |
 | **Matchup over/under** | `betting_odds_matchup_ou` | Line = median of the combined score, rounded to cents. Published, not yet offered. |
 | **Highest / lowest scorer** | `betting_odds_highest_scorer`, `_lowest_scorer` | Share of simulations in which each team has the max/min score (ties credit every tied team) |
-| **First place** | `betting_odds_first_place` | The `playoffs` step: P(finishing 1st in the simulated final standings) |
-| **Make playoffs** | `betting_odds_make_playoffs` | The `playoffs` step: P(finishing in the top `playoff_teams`). Offered in the app as the `make_playoffs` market |
+| **Make playoffs** | `betting_odds_make_playoffs` | The `playoffs` step: YES = P(finishing in the top `playoff_teams`), NO = 1 − YES, each with its own fair odds, for every team; a side at exactly 0 or 1 has NULL odds. Offered in the app as the `make_playoffs` market |
 | **Last place**, **Champion** | `betting_odds_last_place`, `betting_odds_champion` | The `playoffs` step: P(last in the standings) and P(winning the bracket) |
 
-The futures come from simulated seasons: every remaining regular-season week added to the standings to date, ranked by wins, then ties, then points for, and the top teams played through the bracket ([§6](#6-playoff-odds)). Only rows with 0.01 ≤ p ≤ 0.99 are stored.
+The futures come from simulated seasons: every remaining regular-season week added to the standings to date, ranked by wins, then ties, then points for, and the top teams played through the bracket ([§6](#6-playoff-odds)). Last place and the champion store only rows with 0.01 ≤ p ≤ 0.99; make playoffs stores a row for every team.
 
 ## Model fitting and calibration
 
@@ -201,7 +210,7 @@ The pairwise margin table lets the analytics page compare any two teams, not jus
 
 ## 6. Playoff odds
 
-The `playoffs` step (`pipeline/steps/playoffs.py`) simulates every week left in the regular season and the playoff weeks after it, 20,000 seasons per run, and prices four futures from them.
+The `playoffs` step (`pipeline/steps/playoffs.py`) simulates every week left in the regular season and the playoff weeks after it, 20,000 seasons per run, prices three futures from them through the win rules in `pipeline/markets.py` ([§4](#4-markets)), and stores the run's simulated seasons.
 
 1. **Current week.** The first 20,000 draws of the simulate step's latest run for the week, paired by `league.db.matchups`.
 2. **Each later week** (`week + 1` to `playoff_week_start − 1`, then one week per playoff round from `playoff_week_start`):
@@ -214,13 +223,15 @@ The `playoffs` step (`pipeline/steps/playoffs.py`) simulates every week left in 
 
 | Market | Table | Probability |
 |---|---|---|
-| **First place** | `betting_odds_first_place` | Share of seasons a team finishes 1st (the #1 seed) |
-| **Make playoffs** | `betting_odds_make_playoffs` | Share of seasons it finishes in the top `playoff_teams` (league setting; 8 in 2026) |
+| **Make playoffs** | `betting_odds_make_playoffs` | YES (`probability`, `american_odds`): share of seasons a team finishes in the top `playoff_teams` (league setting; 8 in 2026). NO (`no_probability`, `no_american_odds`): 1 − YES, at its own fair odds. A row for every team |
 | **Last place** | `betting_odds_last_place` | Share of seasons it finishes `num_teams`th |
 | **Champion** | `betting_odds_champion` | Share of seasons it wins the bracket's final |
 | — | `standings_probability_matrix` | Every team at every finishing position, including 0% |
+| | `simulation_standings` | The run's simulated seasons, one row per simulation run |
 
-The step fails unless first place, last place and the champion each sum to 1 and make playoffs to `playoff_teams`, each within 1e-6. The four betting tables keep only 0.01 ≤ p ≤ 0.99, as before: a team sure of a finish, or with no chance of it, is not offered. The matrix keeps every number; it is published too, though the web app does not read it yet. All five tables carry `season` and the `run_id` of the simulation the step read, not the pipeline run's, and a rerun replaces the week's rows whichever run wrote them, so a week has one set of futures and a rerun of the step alone leaves its run id as it was.
+The step fails unless make playoffs' YES side sums to `playoff_teams` and last place and the champion each to 1, each within 1e-6. The last-place and champion tables keep only a team whose chance is within 0.01 ≤ p ≤ 0.99, as before: a team sure of a finish, or with no chance of it, is not offered. Make playoffs has no band: every team gets a row, so every team gets a card. A side whose chance is exactly 0 or 1, a team that misses or makes the playoffs in every simulated season, keeps its probability with NULL odds (`american_odds` and `no_american_odds` are nullable in that table), as the weekly markets mark a selection not offered ([§4](#4-markets)); the card shows "No price" there and the app refuses a bet on it. The matrix keeps every number, a team's chance of first place included; it is published too, though the web app does not read it yet. The four tables carry `season` and the `run_id` of the simulation the step read, not the pipeline run's, and a rerun replaces the week's rows whichever run wrote them, so a week has one set of futures and a rerun of the step alone leaves its run id as it was.
+
+**Simulated seasons.** The step also stores the seasons it priced in `odds.db.simulation_standings`, the futures counterpart of the score matrix: one row per simulation run, under that run's `run_id`, holding every simulated season's finishing places and its champion. `encode_standings(positions, champions)` in `pipeline/markets.py` packs them as uint8, n_sims × (n_teams + 1), each season's place for every roster (1 is first) in `roster_ids` order and then its champion's column, zlib-compressed: 20,000 × 13 bytes is 260 KB before compression. A rerun of the step for the same simulation run replaces the row. Publish appends it to production beside the score matrices ([04](04-data-model.md#publishing-map)), and the app prices a futures parlay on it, season by season ([06](06-betting-lifecycle.md#parlays)).
 
 Limits: weeks are independent draws from today's rosters, so trades, waiver moves and injuries after today are not modeled. The step refuses, naming the setting, a league with divisions (division winners would change who makes the playoffs), a `playoff_seed_type` other than 0 (reseeding), a `playoff_round_type` other than 0 (two-week rounds), and a `playoff_teams` that is not a power of two (a bracket with byes). From `playoff_week_start` on the step writes nothing and warns that the playoffs have started, so no futures, the champion included, are priced during the playoffs.
 
