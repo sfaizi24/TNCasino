@@ -23,6 +23,7 @@
     <button class="tnc-tab is-on" data-tab="league">League</button>
     <button class="tnc-tab" data-tab="matchups">Matchups</button>
     <button class="tnc-tab" data-tab="teams">Teams</button>
+    <button class="tnc-tab" data-tab="players">Players</button>
     <button class="tnc-tab" data-tab="model">Model</button>
     <button class="tnc-tab" data-tab="money">Money</button>
 </div>
@@ -102,6 +103,37 @@
 
     <h2 class="section-title">Team Roster & Projections</h2>
     <div id="players-table-container"></div>
+</section>
+
+<section class="tab-panel" data-panel="players" style="display: none;">
+    <div class="pp-empty" id="players-empty" hidden>No projections yet.</div>
+    <div id="player-report" hidden>
+        <div class="league-card">
+            <div class="league-card-head">
+                <h2 class="league-card-title" id="player-report-title">Top Projections</h2>
+                <div class="race-toggle" id="position-toggle" role="group" aria-label="Position shown">
+                    <button type="button" class="race-toggle-btn is-on" data-position="QB" aria-pressed="true">QB</button>
+                    <button type="button" class="race-toggle-btn" data-position="RB" aria-pressed="false">RB</button>
+                    <button type="button" class="race-toggle-btn" data-position="WR" aria-pressed="false">WR</button>
+                    <button type="button" class="race-toggle-btn" data-position="TE" aria-pressed="false">TE</button>
+                </div>
+            </div>
+            <div class="league-card-caption">Projected points, and the model's 80% range.</div>
+            <div id="player-top"></div>
+        </div>
+
+        <div class="league-card">
+            <h2 class="league-card-title">Sources Split</h2>
+            <div class="league-card-caption">Starters the projection sites disagree on most, lowest to highest site.</div>
+            <div id="player-split"></div>
+        </div>
+
+        <div class="league-card">
+            <h2 class="league-card-title">Sources Agree</h2>
+            <div class="league-card-caption">Starters the sites see the same way.</div>
+            <div id="player-agree"></div>
+        </div>
+    </div>
 </section>
 
 <section class="tab-panel" data-panel="model" style="display: none;">

@@ -3,9 +3,9 @@ import time
 import numpy as np
 import pandas as pd
 import pytest
-from scipy.special import ndtr
+from scipy.special import ndtr, ndtri
 
-from pipeline.model.sampling import lognormal_params, simulate_teams
+from pipeline.model.sampling import lognormal_params, player_quantiles, simulate_teams
 from pipeline.sources.teams import CANONICAL_TEAMS
 
 V1_PARAMS = {"dud": None, "floor": {"by_position": {}}, "correlation": None}
@@ -233,3 +233,25 @@ def test_a_full_league_simulates_50k_times_in_under_five_seconds():
     assert elapsed < 5
     assert draws.shape == (50_000, 12)
     assert roster_ids == list(range(1, 13))
+
+
+def test_player_quantiles_without_duds_are_the_lognormals():
+    players = starters((1, "p1", "RB", "DET", 15.0, 6.0))
+    mu_ln, sigma_ln = lognormal_params(15.0, 6.0)
+
+    p10, p90 = player_quantiles(players, V1_PARAMS, [0.1, 0.9])[0]
+
+    assert p10 == pytest.approx(np.exp(mu_ln + sigma_ln * ndtri(0.1)), rel=5e-3)
+    assert p90 == pytest.approx(np.exp(mu_ln + sigma_ln * ndtri(0.9)), rel=5e-3)
+
+
+def test_player_quantiles_with_duds_match_the_simulated_draws():
+    players = starters((1, "p1", "WR", "DET", 12.0, 7.0), (2, "p2", "QB", "BUF", 22.0, 8.0))
+    params = V1_PARAMS | {"dud": dud_table(0.2)}
+
+    quantiles = player_quantiles(players, params, [0.1, 0.5, 0.9])
+    draws, _ = simulate_teams(players, params, n_sims=200_000, seed=7)
+
+    for column in range(2):
+        expected = np.quantile(draws[:, column], [0.1, 0.5, 0.9])
+        assert quantiles[column] == pytest.approx(expected, abs=0.15)

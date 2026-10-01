@@ -850,7 +850,7 @@ function renderSeasonRace(series) {
 }
 
 function showRaceSeries(button) {
-    document.querySelectorAll('.race-toggle-btn').forEach(btn => {
+    document.querySelectorAll('#race-toggle .race-toggle-btn').forEach(btn => {
         const on = btn === button;
         btn.classList.toggle('is-on', on);
         btn.setAttribute('aria-pressed', String(on));
@@ -993,9 +993,65 @@ async function loadMoney() {
     }
 }
 
+let playerReport = null;
+
+function renderPlayerRows(players, meta) {
+    if (!players.length) return '<div class="pp-empty">None.</div>';
+    return players.map(player => `
+        <div class="miss-row">
+            <div class="miss-who">
+                <span class="miss-name">${escapeHtml(player.player)}</span>
+                <span class="miss-meta">${escapeHtml(meta(player))} · ${escapeHtml(player.owner ?? 'Free agent')}</span>
+            </div>
+            <div class="miss-points tnc-tab-num">${player.low.toFixed(1)}–${player.high.toFixed(1)}</div>
+            <div class="miss-diff tnc-tab-num">${player.projected.toFixed(1)}</div>
+        </div>
+    `).join('');
+}
+
+function showPosition(button) {
+    document.querySelectorAll('#position-toggle .race-toggle-btn').forEach(btn => {
+        const on = btn === button;
+        btn.classList.toggle('is-on', on);
+        btn.setAttribute('aria-pressed', String(on));
+    });
+    const players = playerReport.top[button.dataset.position];
+    document.getElementById('player-top').innerHTML = renderPlayerRows(players, player => player.team ?? 'FA');
+}
+
+function renderPlayerReport(report) {
+    const hasReport = report.week != null;
+    document.getElementById('players-empty').hidden = hasReport;
+    document.getElementById('player-report').hidden = !hasReport;
+    if (!hasReport) return;
+
+    playerReport = report;
+    document.getElementById('player-report-title').textContent = `Week ${report.week}`;
+    showPosition(document.querySelector('#position-toggle .race-toggle-btn.is-on'));
+    document.getElementById('player-split').innerHTML = renderPlayerRows(report.split, player => player.position);
+    document.getElementById('player-agree').innerHTML = renderPlayerRows(report.agree, player => player.position);
+}
+
+async function loadPlayerReport() {
+    try {
+        const response = await fetchWithTimeout('/api/player_report', {}, 10000);
+        if (!response.ok) {
+            showError('Could not load the player report. Please refresh the page.');
+            return false;
+        }
+        renderPlayerReport(await response.json());
+        return true;
+    } catch (error) {
+        console.error('Error loading player report:', error);
+        showError('Could not load the player report. Please refresh the page.');
+        return false;
+    }
+}
+
 let leagueRendered = false;
 let moneyRendered = false;
 let modelRendered = false;
+let playersRendered = false;
 let matchupsRendered = false;
 let teamsRendered = false;
 
@@ -1015,6 +1071,9 @@ async function activateTab(tab) {
     }
     if (tab === 'teams' && !teamsRendered) {
         teamsRendered = await renderSingleTeam();
+    }
+    if (tab === 'players' && !playersRendered) {
+        playersRendered = await loadPlayerReport();
     }
     if (tab === 'model' && !modelRendered) {
         modelRendered = await loadModelReport();
@@ -1036,6 +1095,10 @@ function bindEvents() {
     document.getElementById('race-toggle').addEventListener('click', e => {
         const button = e.target.closest('.race-toggle-btn');
         if (button) showRaceSeries(button);
+    });
+    document.getElementById('position-toggle').addEventListener('click', e => {
+        const button = e.target.closest('.race-toggle-btn');
+        if (button) showPosition(button);
     });
 
     document.getElementById('team-select').addEventListener('change', renderMatchup);

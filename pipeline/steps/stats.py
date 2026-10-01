@@ -3,15 +3,20 @@
 mu is the weighted mean of the sources' points, each corrected by its source's bias at the player's
 position, spread is the sample standard deviation across sources, and sigma comes from the model's
 sigma formula; weights, biases and the formula come from the model parameters for
-settings.model_version. Name, position and team come from Sleeper's nfl_players.
+settings.model_version. p10 and p90 are the player's points at the 10th and 90th percentiles of the
+distribution the simulate step draws from, and source_low and source_high are the lowest and highest
+projections as the sources published them. Name, position and team come from Sleeper's nfl_players.
 """
 
 import itertools
 import sqlite3
 
 import numpy as np
+import pandas as pd
 
+from pipeline.db import ensure_columns
 from pipeline.model.params import load_params
+from pipeline.model.sampling import player_quantiles
 from pipeline.model.sigma import sigma
 from pipeline.runner import StepContext, StepResult, timestamp, utc_now
 
@@ -33,6 +38,10 @@ CREATE TABLE IF NOT EXISTS player_week_stats (
   var REAL NOT NULL,
   n_sources INTEGER NOT NULL,
   spread REAL,
+  p10 REAL,
+  p90 REAL,
+  source_low REAL,
+  source_high REAL,
   model_version TEXT NOT NULL,
   computed_at TEXT NOT NULL,
   PRIMARY KEY (season, week, sleeper_player_id)
@@ -41,10 +50,12 @@ CREATE TABLE IF NOT EXISTS player_week_stats (
 
 INSERT_STATS = """
 INSERT INTO player_week_stats (season, week, sleeper_player_id, player_name, position, team, mu, sigma, var,
-                               n_sources, spread, model_version, computed_at)
+                               n_sources, spread, p10, p90, source_low, source_high, model_version, computed_at)
 VALUES (:season, :week, :sleeper_player_id, :player_name, :position, :team, :mu, :sigma, :var,
-        :n_sources, :spread, :model_version, :computed_at)
+        :n_sources, :spread, :p10, :p90, :source_low, :source_high, :model_version, :computed_at)
 """
+# Columns added after the table first shipped; an older projections.db gains them before the week is replaced.
+ADDED_COLUMNS = {"p10": "REAL", "p90": "REAL", "source_low": "REAL", "source_high": "REAL"}
 
 # Highest first is the order notebook 05 summed in, so the 2025 means reproduce to the last bit.
 MATCHED_PROJECTIONS = """
@@ -66,6 +77,7 @@ def run(ctx: StepContext) -> StepResult:
 
     conn = ctx.db("projections")
     conn.executescript(PLAYER_WEEK_STATS_DDL)
+    ensure_columns(conn, "player_week_stats", ADDED_COLUMNS)
     rows = conn.execute(MATCHED_PROJECTIONS, (season, week)).fetchall()
     if not rows:
         raise RuntimeError(f"no matched projections for season {season} week {week}; run the match step first")
@@ -76,6 +88,7 @@ def run(ctx: StepContext) -> StepResult:
         player_stats = compute_player_stats(list(group), players[player_id], params)
         player_stats.update(season=season, week=week, model_version=params["version"], computed_at=computed_at)
         stats.append(player_stats)
+    add_percentiles(stats, params)
     with conn:
         conn.execute("DELETE FROM player_week_stats WHERE season = ? AND week = ?", (season, week))
         conn.executemany(INSERT_STATS, stats)
@@ -87,6 +100,7 @@ def run(ctx: StepContext) -> StepResult:
 def compute_player_stats(rows: list[sqlite3.Row], player: sqlite3.Row, params: dict) -> dict:
     points = []
     weights = []
+    published = [row["projected_points"] for row in rows]
     for row in rows:
         source = params["sources"].get(row["source_website"], DEFAULT_SOURCE)
         points.append(row["projected_points"] - source["bias"].get(player["position"], 0.0))
@@ -104,7 +118,16 @@ def compute_player_stats(rows: list[sqlite3.Row], player: sqlite3.Row, params: d
         "var": player_sigma**2,
         "n_sources": len(points),
         "spread": spread,
+        "source_low": min(published),
+        "source_high": max(published),
     }
+
+
+def add_percentiles(stats: list[dict], params: dict) -> None:
+    players = pd.DataFrame(stats, columns=["position", "mu", "sigma"])
+    for player, (p10, p90) in zip(stats, player_quantiles(players, params, [0.1, 0.9]), strict=True):
+        player["p10"] = float(p10)
+        player["p90"] = float(p90)
 
 
 def summarize(stats: list[dict]) -> dict:

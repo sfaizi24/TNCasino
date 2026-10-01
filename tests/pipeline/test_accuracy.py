@@ -140,6 +140,10 @@ def add_consensus(conn, player_id: str, position: str, mu: float) -> None:
         "var": 9.0,
         "n_sources": 2,
         "spread": 1.0,
+        "p10": None,
+        "p90": None,
+        "source_low": None,
+        "source_high": None,
         "model_version": "v1",
         "computed_at": "2026-11-10T12:00:00",
     }

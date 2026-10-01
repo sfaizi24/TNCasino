@@ -41,6 +41,7 @@ TABLES = [
     ("odds", "team_distribution_curves", "team_distribution_curves"),
     ("odds", "team_matchup_margin_curves", "team_matchup_margin_curves"),
     ("projections", "team_lineups", "team_lineups"),
+    ("projections", "player_week_stats", "player_week_stats"),
     ("league", "leagues", "sleeper_leagues"),
     ("league", "rosters", "sleeper_rosters"),
     ("league", "users", "sleeper_users"),

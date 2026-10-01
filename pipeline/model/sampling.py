@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 from scipy.special import ndtr, ndtri
 
+QUANTILE_GRID = 2000
+
 
 def lognormal_params(mu: float, sigma: float) -> tuple[float, float]:
     """Log-space (mu_ln, sigma_ln) of the lognormal whose mean is mu and standard deviation is sigma."""
@@ -95,6 +97,16 @@ def player_points(normals: np.ndarray, starters: pd.DataFrame, params: dict) -> 
         lognormal = floor[mixed] + np.exp(mu_ln[mixed] + sigma_ln[mixed] * ndtri((u - p) / (1 - p)))
         points[:, mixed] = np.where(u < p, u / p * threshold * mu[mixed], lognormal)
     return points
+
+
+def player_quantiles(players: pd.DataFrame, params: dict, probabilities: list[float]) -> np.ndarray:
+    """Each player's points at these probabilities, shape (n_players, len(probabilities)). An even grid of
+    normals stands in for random draws, so the answer is the same every run; the grid is pushed through
+    player_points rather than read off at one normal, because a dud mixture's points do not rise with the
+    normal."""
+    grid = ndtri((np.arange(QUANTILE_GRID) + 0.5) / QUANTILE_GRID)
+    normals = np.repeat(grid[:, np.newaxis], len(players), axis=1)
+    return np.quantile(player_points(normals, players, params), probabilities, axis=0).T
 
 
 def player_floors(players: pd.DataFrame, floor: dict) -> np.ndarray:

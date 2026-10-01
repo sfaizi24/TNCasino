@@ -160,6 +160,7 @@ ANALYTICS_TABLES = [
     "sleeper_users",
     "sleeper_matchups",
     "projections_rosters",
+    "player_week_stats",
     "simulation_runs",
     "simulation_totals",
     "simulation_standings",
@@ -401,6 +402,15 @@ def create_analytics_tables(session):
             first_name TEXT, last_name TEXT, position TEXT, nfl_team TEXT,
             week INTEGER, season TEXT, mu REAL, var REAL,
             starting_status INTEGER, timestamp TEXT
+        )
+    """)
+    )
+    session.execute(
+        text("""
+        CREATE TABLE player_week_stats (
+            season INTEGER, week INTEGER, sleeper_player_id TEXT, player_name TEXT, position TEXT, team TEXT,
+            mu REAL, sigma REAL, var REAL, n_sources INTEGER, spread REAL, p10 REAL, p90 REAL,
+            source_low REAL, source_high REAL, model_version TEXT, computed_at TEXT
         )
     """)
     )

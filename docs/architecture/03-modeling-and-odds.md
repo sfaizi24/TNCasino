@@ -21,7 +21,7 @@ The `stats` step (`pipeline/steps/stats.py`) turns the matched projections into 
 - **s** = sample standard deviation of those bias-corrected projections (`ddof=1`); `0` with one source.
 - **σ** = the version's formula below.
 
-Each `player_week_stats` row records the `model_version` that produced it.
+Each `player_week_stats` row records the `model_version` that produced it, and the player's 10th and 90th percentiles under it, `p10` and `p90`. A dud mixture's points do not rise with the underlying normal, so the percentiles are not read off at one normal: an even grid of 2,000 normals is pushed through the sampler's `player_points` and the quantiles taken from that (`player_quantiles` in `pipeline/model/sampling.py`), the same answer every run.
 
 | | v1: the 2025 pipeline's formulas, frozen | v2.1: fitted on 2025 weeks 10–16 |
 |---|---|---|

@@ -33,6 +33,7 @@ app/routes/
   odds.py            Odds + analytics JSON API
   analytics.py       Season outlook and model report for the analytics page: playoff picture, season race, last week graded
   money.py           Where the money sits on each market, in totals only
+  players.py         The week's player report: top projections by position, the starters the sources split and agree on
   betting.py         /betting, /leaderboard, parlay quotes, bet placement/removal/cash-out
   admin.py           /admin + admin JSON API
 frontend/templates/  Jinja2 (base.html + one per page)
@@ -89,6 +90,7 @@ sequenceDiagram
 | `/api/playoff_picture` | GET | — | `standings_probability_matrix` (latest week), `sleeper_leagues` | |
 | `/api/season_race` | GET | — | `standings_probability_matrix`, `betting_odds_champion` (every week this season), `sleeper_leagues` | |
 | `/api/model_report` | GET | — | `team_accuracy`, `projections_rosters`, `sleeper_matchups` (last graded week and this season) | |
+| `/api/player_report` | GET | — | `player_week_stats`, `projections_rosters` (the betting week; `{"week": null}` until the stats step's table is published) | |
 | `/api/money` | GET | — | `bets`, `bet_legs`, `weekly_stats` (totals only, no bettor named), `sleeper_rosters`, `sleeper_users` | |
 | `/api/teams` | GET | login | `sleeper_rosters`, `sleeper_users` | |
 | `/api/team_distribution` | GET | login | `team_distribution_curves`, `team_matchup_margin_curves`, `betting_odds_matchup_ml` | |
@@ -116,6 +118,8 @@ Most odds endpoints catch every exception, print or log it, and return `[]` with
 Every odds/analytics endpoint except the three futures endpoints uses `get_current_week()` (the highest unsettled betting period), so creating a period in `/admin` is what moves the site to a new week. `/api/make_playoffs`, `/api/last_place` and `/api/champion` list the latest futures run instead, each row `owner`, `win_prob`, `odds`, `market`, `run_id`, `team_id` and `week`, the highest published `week` of the season, because that run may not have reached the current week. A `/api/make_playoffs` row's `odds` and `win_prob` are the YES side, and it adds the NO side as `no_odds` and `no_win_prob`, from the table's `no_american_odds` and `no_probability`; until a publish from the B12 pipeline adds those columns, the endpoint returns `[]`; until that publish also creates `simulation_standings`, a make-playoffs bet and any futures parlay are refused with the database's error. The odds listings read only the latest published season. Each row carries its `market` key and `run_id`, which a bet sends back, and the roster ids behind it (`team1_id`/`team2_id` or `team_id`); prices pass through as the table has them, null included.
 
 `/api/league_overview` ranks the league by `standings_before(week, league_id)` from `app/settlement.py`, the records of the games before the current week by wins, then points for, then roster id, the same table the standings futures settle on, and sends the league's published `playoff_teams` from `sleeper_leagues` as `playoff_cutoff`, where the analytics page draws the playoff line.
+
+`/api/player_report` feeds the analytics page's Players tab for the betting week: the five best projections at QB, RB, WR and TE with the model's `p10` to `p90` and the owner (none for a free agent), and the five starters the sources disagree on most and least, ranked by `spread / mu` among starters projected for at least 8 points by at least three sources, each shown with its lowest and highest source.
 
 `/api/spreads` has no table of its own. It lists the current week's matchups from `betting_odds_matchup_ml`, named as `/api/matchups` names them, and prices them from the score matrix of the week's latest run, the run `windows.latest_run_id` names ([06](06-betting-lifecycle.md#markets)). Each row is `market` (`2026-w04-spread-1v4`), `run_id`, `team1_id`, `team1_name`, `team2_id`, `team2_name`, `line`, team1's main line, and `lines`: the main line −10 to +10 in half points, 41 of them unless ±40 cuts the range, each `{"line", "team1_odds", "team1_prob", "team2_odds", "team2_prob"}`. An entry's `line` is team1's; team2 takes its negative. The chances are shares of the sims (0.45, not 45), and the odds are null where a side covers in every sim or in none. Like the other listings it returns `[]` on any error, a run without a stored matrix included.
 

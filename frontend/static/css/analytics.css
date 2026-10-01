@@ -326,6 +326,7 @@
 
     @media (max-width: 720px) {
         .league-card { padding: 14px 8px 14px; }
+        #analytics-tabs .tnc-tab { padding: 8px 6px; }
     }
 
     .roster-divider {

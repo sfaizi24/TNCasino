@@ -15,7 +15,7 @@ flowchart LR
     end
     subgraph PG["Production PostgreSQL"]
         APPT[App tables<br/>users, bets, bet_legs,<br/>weekly_stats, betting_periods,<br/>parlay_refusals]
-        ANT[Analytics tables<br/>24 published tables]
+        ANT[Analytics tables<br/>25 published tables]
         TOT[simulation_totals,<br/>simulation_standings<br/>append-only]
     end
     L -- "5 tables (4 renamed)" --> ANT
@@ -50,7 +50,7 @@ Written by the `scrape`, `clean`, `match`, `stats` and `lineups` steps, each rep
 |---|---|---|
 | `projections` | id*, unique on (source, season, week, first, last, position) | Scraped projections, cleaned in place by `clean`: `team`, `projected_points`, `external_id` |
 | `projections_with_sleeper` | id*, unique like `projections` | `projections` + `sleeper_player_id` and `match_method` (`external_id`, `def_team`, `hardcoded`, `exact_team`, `exact`, `last_initial`, or NULL; the 2025 rows keep the older `dst_team_match`, `hardcoded` and `automatic`) |
-| `player_week_stats` | (season*, week*, sleeper_player_id*) | `mu`, `sigma`, `var`, `n_sources`, the sources' `spread`, `model_version`, and the player's NFL `team`. For 2025 the migration recovered `spread` from the stored sigma and back-filled `team` from `nfl_players`. |
+| `player_week_stats` | (season*, week*, sleeper_player_id*) | `mu`, `sigma`, `var`, `n_sources`, the sources' `spread`, `model_version`, and the player's NFL `team`; the model's 10th and 90th percentiles `p10` and `p90`, and the lowest and highest source as published, `source_low` and `source_high` (NULL on rows written before 2026 week 4). The playoffs step writes future weeks here for the length of its run. For 2025 the migration recovered `spread` from the stored sigma and back-filled `team` from `nfl_players`. |
 | `team_lineups` | (season*, week*, roster_id*, slot*) | Chosen starters: `owner`, `slot` (`QB`, `RB1`, `RB2`, `WR1`, `WR2`, `TE`, `FLEX`, `K`, `DEF`), `sleeper_player_id`, `player_name`, `nfl_team`, `mu`, `sigma`, `is_replacement`, `is_locked` (1 for an owner's actual starter pinned because his NFL game is final) and `locked_points` (his real league points, NULL unless locked; a locked row has `mu` at those points and `sigma` 0). For 2025 the migration back-filled `sleeper_player_id` from the week's one `player_week_stats` row with the same name and position, and `nfl_team` from `nfl_players`; the 56 `Waiver Pickup` rows have no player and stay NULL. |
 | `team_projections_summary` | (season*, week*, roster_id*) | `total_mu`, `combined_sigma`, `total_var`, `waiver_pickups` |
 
@@ -195,7 +195,7 @@ The analytics tables have **no foreign keys to the app tables or each other**. T
 
 ## Publishing map
 
-The `publish` step (`pipeline/steps/publish.py`, run as `python -m pipeline run --week N --steps publish`) replaces 24 tables, the `TABLES` list, with the current season's rows and, of each table with a `run_id`, each week's latest run (newest `created_at`, then highest `run_id`). Sleeper's `leagues`, `rosters`, `users` and `matchups` take a `sleeper_` prefix, because `users` is the app's account table.
+The `publish` step (`pipeline/steps/publish.py`, run as `python -m pipeline run --week N --steps publish`) replaces 25 tables, the `TABLES` list, with the current season's rows and, of each table with a `run_id`, each week's latest run (newest `created_at`, then highest `run_id`). Sleeper's `leagues`, `rosters`, `users` and `matchups` take a `sleeper_` prefix, because `users` is the app's account table.
 
 | SQLite source | Postgres table |
 |---|---|

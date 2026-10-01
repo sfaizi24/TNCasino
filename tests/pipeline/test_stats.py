@@ -109,6 +109,8 @@ def test_source_weights_and_biases_come_from_the_models_parameters(settings, mon
         "version": "test",
         "sources": {"espn.com": {"weight": 3.0, "bias": {"QB": 2.0, "WR": -5.0}}},
         "sigma": {"formula": "linear", "by_position": {"QB": {"a": 2.0, "b": 0.5}}},
+        "dud": None,
+        "floor": {"by_position": {}},
     }
     requested = []
 
@@ -177,3 +179,25 @@ def test_a_week_without_matched_projections_fails(settings):
 
     with pytest.raises(RuntimeError, match="run the match step first"):
         run_stats(settings)
+
+
+def test_each_player_gets_his_10th_and_90th_percentiles(settings):
+    add_matches(settings, [("sleeper.com", "7547", 16.0, "WR"), ("espn.com", "7547", 20.0, "WR")])
+
+    run_stats(settings)
+
+    row = stored_stats(settings)["7547"]
+    assert 0 < row["p10"] < row["mu"] < row["p90"]
+
+
+def test_source_low_and_high_are_the_projections_as_published(settings, monkeypatch):
+    params = stats.load_params("v1") | {"sources": {"espn.com": {"weight": 1.0, "bias": {"WR": 3.0}}}}
+    monkeypatch.setattr(stats, "load_params", lambda version: params)
+    add_matches(
+        settings, [("sleeper.com", "7547", 16.0, "WR"), ("espn.com", "7547", 24.0, "WR"), ("x.com", "7547", 19.0, "WR")]
+    )
+
+    run_stats(settings)
+
+    row = stored_stats(settings)["7547"]
+    assert (row["source_low"], row["source_high"]) == (16.0, 24.0)
