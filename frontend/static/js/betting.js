@@ -338,9 +338,8 @@ function renderPickButton(card, side, content, extraClass = '') {
     if (card.placed.some(bet => bet.selection === side.selection)) classes.push('is-placed');
 
     const totalAttrs = card.kind === 'ou' ? ` data-line="${card.row.line.toFixed(2)}" data-run-id="${card.row.run_id}"` : '';
-    const disabled = card.placed.length ? ' disabled' : '';
     return `
-        <button class="${classes.join(' ')}" data-action="pick" data-selection="${side.selection}"${totalAttrs}${disabled}>
+        <button class="${classes.join(' ')}" data-action="pick" data-selection="${side.selection}"${totalAttrs}>
             ${content}
         </button>
     `;
@@ -472,6 +471,19 @@ function renderPicks(card) {
     return renderFuturePicks(card);
 }
 
+// A card holds one single, so once it has a bet its picks can only join a parlay.
+function renderPickActions(card) {
+    if (!card.pick) return '';
+    if (card.placed.length) {
+        return `
+            <div class="tnc-mc-stake">
+                <div class="tnc-mc-stake-row">${renderParlayButton(card.key)}</div>
+            </div>
+        `;
+    }
+    return renderStakeSection(card.key, pickedOdds(card.key));
+}
+
 function renderCard(kind, row, idx) {
     const card = buildCard(kind, row, idx);
     const hasBet = card.placed.length > 0;
@@ -482,7 +494,7 @@ function renderCard(kind, row, idx) {
         <div class="${classes.join(' ')}" data-key="${card.key}" data-market="${row.market}">
             ${renderPlacedStrip(card.placed)}
             ${renderPicks(card)}
-            ${card.pick && !hasBet ? renderStakeSection(card.key, pickedOdds(card.key)) : ''}
+            ${renderPickActions(card)}
             ${renderLineupToggle(card)}
         </div>
     `;

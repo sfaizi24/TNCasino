@@ -586,9 +586,7 @@
     opacity: 0.55;
 }
 
-.tnc-mc-odd.is-placed[disabled] {
-    opacity: 1;
-    cursor: default;
+.tnc-mc-odd.is-placed:not(.is-on) {
     background: color-mix(in oklab, var(--tnc-win) 20%, var(--tnc-surface));
     border-color: var(--tnc-win);
     color: var(--tnc-fg);
@@ -766,6 +764,10 @@
 
 .tnc-mc-parlay:hover:not(:disabled) {
     background: var(--tnc-blue-tint);
+}
+
+.tnc-mc-parlay:only-child {
+    flex: 1;
 }
 
 .tnc-mc-parlay:disabled {
