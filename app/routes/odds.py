@@ -292,7 +292,7 @@ def get_lineup(owner):
 
         rows = query_analytics(
             """
-            SELECT slot, player_name, position, mu
+            SELECT slot, player_name, position, mu, is_locked, locked_points
             FROM team_lineups
             WHERE owner = :owner AND week = :week
                 AND slot IN ('QB', 'RB1', 'RB2', 'WR1', 'WR2', 'TE', 'FLEX', 'K', 'DEF')
@@ -321,6 +321,7 @@ def get_lineup(owner):
                     "player_name": row["player_name"],
                     "position": row["position"],
                     "projected_points": round(row["mu"], 1),
+                    **_lock_fields(row),
                 }
             )
 
@@ -331,6 +332,13 @@ def get_lineup(owner):
 
         traceback.print_exc()
         return jsonify([])
+
+
+def _lock_fields(row):
+    """Whether a lineup row's game is final, and the real points it is fixed at if so."""
+    if not row["is_locked"]:
+        return {"is_locked": False, "locked_points": None}
+    return {"is_locked": True, "locked_points": float(row["locked_points"])}
 
 
 @odds_bp.route("/api/teams")
@@ -598,11 +606,15 @@ def get_team_players():
 
         player_rows = query_analytics(
             """
-            SELECT sleeper_player_id, first_name, last_name, position, mu, var, starting_status
-            FROM projections_rosters
-            WHERE roster_id = :roster_id AND week = :week
+            SELECT p.first_name, p.last_name, p.position, p.mu, p.var, p.starting_status,
+                   l.is_locked, l.locked_points
+            FROM projections_rosters p
+            LEFT JOIN team_lineups l
+                ON l.season = p.season AND l.week = p.week AND l.roster_id = p.roster_id
+                    AND l.sleeper_player_id = p.sleeper_player_id
+            WHERE p.roster_id = :roster_id AND p.week = :week
             ORDER BY
-                CASE position
+                CASE p.position
                     WHEN 'QB' THEN 1
                     WHEN 'RB' THEN 2
                     WHEN 'WR' THEN 3
@@ -611,7 +623,7 @@ def get_team_players():
                     WHEN 'DEF' THEN 6
                     ELSE 7
                 END,
-                mu DESC
+                p.mu DESC
             """,
             {"roster_id": roster_id, "week": week},
         )
@@ -619,7 +631,7 @@ def get_team_players():
         if not player_rows:
             lineup_rows = query_analytics(
                 """
-                SELECT player_name, position, mu, var
+                SELECT player_name, position, mu, var, is_locked, locked_points
                 FROM team_lineups
                 WHERE roster_id = :roster_id AND week = :week
                     AND slot IN ('QB', 'RB1', 'RB2', 'WR1', 'WR2', 'TE', 'FLEX', 'K', 'DEF')
@@ -651,6 +663,7 @@ def get_team_players():
                         "position": row["position"],
                         "mu": float(row["mu"]) if row["mu"] is not None else None,
                         "var": float(row["var"]) if row["var"] is not None else None,
+                        **_lock_fields(row),
                     }
                 )
 
@@ -666,6 +679,7 @@ def get_team_players():
                 "position": row["position"],
                 "mu": float(row["mu"]) if row["mu"] is not None else None,
                 "var": float(row["var"]) if row["var"] is not None else None,
+                **_lock_fields(row),
             }
 
             if row["starting_status"] and str(row["starting_status"]).strip():

@@ -3,9 +3,9 @@
 A week is scored once the accuracy step has graded it, which it does only after every game of the week is final.
 Each player distribution stored in player_week_stats is judged against the points the player scored, over every
 eligible player-week and again over the starters alone, the players in the week's team_lineups. Each team's
-[p10, p90] and moneyline are judged by the accuracy step's grades in team_accuracy, taken from the week's latest odds
-run. The metrics are recorded at the current week, so calibration_metrics shows how the season-to-date numbers moved
-from week to week.
+[p10, p90] and moneyline are judged by the accuracy step's grades in team_accuracy, taken from the week's latest run
+without locked players. The metrics are recorded at the current week, so calibration_metrics shows how the
+season-to-date numbers moved from week to week.
 """
 
 import sqlite3

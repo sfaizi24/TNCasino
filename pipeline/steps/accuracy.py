@@ -2,7 +2,9 @@
 
 Every source, and the consensus the model used, is scored by position on the players the consensus projected for at
 least MIN_CONSENSUS_POINTS. Each team's projected total is scored against its result, its simulated 10th to 90th
-percentile range and its moneyline; a team without a curve or a moneyline keeps those columns empty.
+percentile range and its moneyline, all from the week's latest run without locked players: a rerun after the week's
+first games fixes those players at their real points, which would flatter the model. A team without a curve or a
+moneyline keeps those columns empty.
 """
 
 import sqlite3
@@ -104,26 +106,26 @@ FROM matchups
 WHERE league_id = :league_id AND week = :week
 """
 
-LATEST_CURVES = """
-SELECT owner, p10, p90
-FROM team_distribution_curves
-WHERE season = :season AND week = :week AND run_id = (
-  SELECT run_id FROM team_distribution_curves
-  WHERE season = :season AND week = :week
-  ORDER BY created_at DESC, run_id DESC
-  LIMIT 1
-)
+GRADED_RUN = """
+SELECT run_id
+FROM simulation_runs
+WHERE season = :season AND week = :week AND n_locked = 0
+ORDER BY created_at DESC, run_id DESC
+LIMIT 1
 """
 
-LATEST_MONEYLINES = """
+WEEK_RUNS = "SELECT COUNT(*) FROM simulation_runs WHERE season = :season AND week = :week"
+
+RUN_CURVES = """
+SELECT owner, mean, p10, p90
+FROM team_distribution_curves
+WHERE run_id = :run_id
+"""
+
+RUN_MONEYLINES = """
 SELECT team1_id, team1_win_prob, team2_id, team2_win_prob
 FROM betting_odds_matchup_ml
-WHERE season = :season AND week = :week AND run_id = (
-  SELECT run_id FROM betting_odds_matchup_ml
-  WHERE season = :season AND week = :week
-  ORDER BY created_at DESC, run_id DESC
-  LIMIT 1
-)
+WHERE run_id = :run_id
 """
 
 
@@ -202,7 +204,7 @@ def correlation(projected: pd.Series, actual: pd.Series) -> float | None:
 
 def team_rows(ctx: StepContext, params: dict) -> tuple[list[dict], list[str]]:
     """Each team's projected total against its score, its simulated 10th to 90th percentile range and its moneyline,
-    from the latest odds run for the week."""
+    from the graded run for the week."""
     week = params["week"]
     projections_conn = ctx.db("projections")
     teams = read_if_present(projections_conn, "team_projections_summary", TEAM_PROJECTIONS, params)
@@ -215,9 +217,13 @@ def team_rows(ctx: StepContext, params: dict) -> tuple[list[dict], list[str]]:
     points = {score["roster_id"]: score["points"] for score in scores}
     results = game_results(scores)
     odds_conn = ctx.db("odds")
-    curves = read_if_present(odds_conn, "team_distribution_curves", LATEST_CURVES, params)
+    run_id, run_warnings = graded_run(odds_conn, params)
+    graded = {"run_id": run_id}
+    curves = read_if_present(odds_conn, "team_distribution_curves", RUN_CURVES, graded)
     ranges = {curve["owner"]: (curve["p10"], curve["p90"]) for curve in curves}
-    moneylines = read_if_present(odds_conn, "betting_odds_matchup_ml", LATEST_MONEYLINES, params)
+    # Projected from the graded run: the summary is overwritten by every run, and a rerun's counts real points.
+    means = {curve["owner"]: curve["mean"] for curve in curves}
+    moneylines = read_if_present(odds_conn, "betting_odds_matchup_ml", RUN_MONEYLINES, graded)
     win_probabilities = moneyline_probabilities(moneylines)
 
     rows = []
@@ -228,7 +234,7 @@ def team_rows(ctx: StepContext, params: dict) -> tuple[list[dict], list[str]]:
             {
                 "roster_id": team["roster_id"],
                 "owner": team["owner"],
-                "projected": team["projected"],
+                "projected": means.get(team["owner"], team["projected"]),
                 "actual": actual,
                 "p10": p10,
                 "p90": p90,
@@ -237,15 +243,33 @@ def team_rows(ctx: StepContext, params: dict) -> tuple[list[dict], list[str]]:
                 "won": results.get(team["roster_id"]),
             }
         )
-    return rows, missing_odds_warnings(rows, week)
+    return rows, run_warnings or missing_odds_warnings(rows, week)
+
+
+def graded_run(conn: sqlite3.Connection, params: dict) -> tuple[str | None, list[str]]:
+    """The week's latest run without locked players, or None, with a warning when every run of the week has some."""
+    if not table_exists(conn, "simulation_runs"):
+        return None, []
+    row = conn.execute(GRADED_RUN, params).fetchone()
+    if row is not None:
+        return row["run_id"], []
+    (n_runs,) = conn.execute(WEEK_RUNS, params).fetchone()
+    if n_runs:
+        week = params["week"]
+        return None, [f"week {week} has no run without locked players; team ranges and moneylines not scored"]
+    return None, []
 
 
 def read_if_present(conn: sqlite3.Connection, table: str, query: str, params: dict) -> list[sqlite3.Row]:
     """The query's rows, or none when the step that creates the table has not run in this data dir."""
-    exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
-    if exists is None:
+    if not table_exists(conn, table):
         return []
     return conn.execute(query, params).fetchall()
+
+
+def table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+    return exists is not None
 
 
 def game_results(scores: list[sqlite3.Row]) -> dict[int, int]:

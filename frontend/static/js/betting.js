@@ -276,6 +276,10 @@ function splitPlayerName(name) {
     return `${name.slice(0, i)}<br>${name.slice(i + 1)}`;
 }
 
+function lockMarker(player) {
+    return player.is_locked ? ' <span class="tnc-lp-lock" title="Final: game over, points locked">final</span>' : '';
+}
+
 function renderLineupCol(players) {
     if (!players || !players.length) {
         return '<div class="tnc-lp-col"><div class="tnc-lp-empty">No lineup</div></div>';
@@ -284,7 +288,7 @@ function renderLineupCol(players) {
         <div class="tnc-lp-col">
             ${players.map(p => `
                 <div class="tnc-lp-row">
-                    <span class="tnc-lp-name">${splitPlayerName(p.player_name)}</span>
+                    <span class="tnc-lp-name">${splitPlayerName(p.player_name)}${lockMarker(p)}</span>
                     <span class="tnc-lp-pos">${p.position}</span>
                     <span class="tnc-lp-pts tnc-tab-num">${(p.projected_points || 0).toFixed(1)}</span>
                 </div>

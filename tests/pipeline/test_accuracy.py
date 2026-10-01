@@ -4,7 +4,7 @@ import pytest
 from pipeline.db import connect
 from pipeline.runner import StepContext, StepResult
 from pipeline.settings import Settings
-from pipeline.steps import accuracy, league, lineups, match, odds, stats
+from pipeline.steps import accuracy, league, lineups, match, odds, simulate, stats
 
 SEASON = 2026
 WEEK = 11
@@ -25,13 +25,17 @@ SOURCE_POINTS = {
 }
 # roster_id: (projected total, Sleeper's matchup number, points scored); roster 5 had no opponent that week
 TEAMS = {1: (115.0, 1, 120.0), 2: (105.0, 1, 100.0), 3: (100.0, 2, 110.0), 4: (112.0, 2, 110.0), 5: (90.0, None, 95.0)}
-# The latest odds run's 10th and 90th percentiles by owner, and its moneylines; owner4 has no curve, roster 5 no line.
+# The latest unlocked run's 10th and 90th percentiles by owner, and its moneylines; owner4 has no curve, roster 5 no
+# line. Its curve means are the projected totals above.
 RANGES = {"owner1": (95.0, 135.0), "owner2": (105.0, 140.0), "owner3": (80.0, 120.0), "owner5": (70.0, 110.0)}
 MONEYLINES = [(1, 0.6, 2, 0.4), (3, 0.45, 4, 0.55)]
 # The week's NFL games as (home, away), all final.
 GAMES = [("KC", "DEN"), ("BUF", "MIA")]
 EARLIER_RUN = ("2026w10-20261109T140000", "2026-11-09T14:00:00")
 LATEST_RUN = ("2026w10-20261110T140000", "2026-11-10T14:00:00")
+# A rerun after Thursday's game, with three players fixed at their real points.
+LOCKED_RUN = ("2026w10-20261113T140000", "2026-11-13T14:00:00")
+NO_UNLOCKED_RUN = "week 10 has no run without locked players; team ranges and moneylines not scored"
 MEASURES = ["n", "mae", "bias", "corr"]
 
 
@@ -42,7 +46,8 @@ def settings(tmp_path):
 
 @pytest.fixture(autouse=True)
 def played_week(settings):
-    """Week 10 as the pipeline leaves it: final games, stat lines, scores, projections, lineups and two odds runs."""
+    """Week 10 as the pipeline leaves it: final games, stat lines, scores, projections, lineups and two unlocked
+    runs."""
     write_league(settings)
     write_projections(settings)
     write_odds(settings)
@@ -144,26 +149,55 @@ def add_consensus(conn, player_id: str, position: str, mu: float) -> None:
 def write_odds(settings: Settings) -> None:
     """The latest run as RANGES and MONEYLINES describe it, after an earlier run that priced every team differently."""
     conn = connect(settings, "odds")
-    conn.executescript(odds.ODDS_DDL)
+    conn.executescript(odds.ODDS_DDL + simulate.SIMULATION_RUNS_DDL)
+    add_run(conn, EARLIER_RUN, n_locked=0)
     for owner in ["owner1", "owner4"]:
-        add_curve(conn, EARLIER_RUN, owner, 50.0, 60.0)
+        add_curve(conn, EARLIER_RUN, owner, 55.0, 50.0, 60.0)
     add_moneyline(conn, EARLIER_RUN, (1, 0.9, 2, 0.1))
     add_moneyline(conn, EARLIER_RUN, (5, 0.5, 4, 0.5))
+    add_run(conn, LATEST_RUN, n_locked=0)
     for owner, (p10, p90) in RANGES.items():
-        add_curve(conn, LATEST_RUN, owner, p10, p90)
+        roster_id = int(owner.removeprefix("owner"))
+        add_curve(conn, LATEST_RUN, owner, TEAMS[roster_id][0], p10, p90)
     for line in MONEYLINES:
         add_moneyline(conn, LATEST_RUN, line)
     conn.commit()
     conn.close()
 
 
-def add_curve(conn, odds_run: tuple[str, str], owner: str, p10: float, p90: float) -> None:
+def add_run(conn, odds_run: tuple[str, str], n_locked: int) -> None:
+    run_id, created_at = odds_run
+    conn.execute(
+        "INSERT INTO simulation_runs (run_id, season, week, seed, n_sims, model_version, n_teams, draws_path, "
+        "created_at, n_locked) VALUES (?, ?, ?, 1738, 1000, 'v2.3', 5, 'draws.parquet', ?, ?)",
+        (run_id, SEASON, EVALUATED, created_at, n_locked),
+    )
+
+
+def add_curve(conn, odds_run: tuple[str, str], owner: str, mean: float, p10: float, p90: float) -> None:
     run_id, created_at = odds_run
     conn.execute(
         "INSERT INTO team_distribution_curves (run_id, week, season, owner, x_values, density_values, cdf_values, "
         "mean, p10, p50, p90, n_sims, created_at) VALUES (?, ?, ?, ?, '[]', '[]', '[]', ?, ?, ?, ?, 1000, ?)",
-        (run_id, EVALUATED, SEASON, owner, (p10 + p90) / 2, p10, (p10 + p90) / 2, p90, created_at),
+        (run_id, EVALUATED, SEASON, owner, mean, p10, mean, p90, created_at),
     )
+
+
+def add_locked_rerun(settings: Settings) -> None:
+    """Friday's rerun: newer than every unlocked run, priced differently, with a summary it overwrote to count the
+    Thursday players' real points."""
+    conn = connect(settings, "odds")
+    add_run(conn, LOCKED_RUN, n_locked=3)
+    for roster_id in TEAMS:
+        add_curve(conn, LOCKED_RUN, f"owner{roster_id}", 150.0, 140.0, 160.0)
+    add_moneyline(conn, LOCKED_RUN, (1, 0.99, 2, 0.01))
+    add_moneyline(conn, LOCKED_RUN, (3, 0.99, 4, 0.01))
+    conn.commit()
+    conn.close()
+    conn = connect(settings, "projections")
+    conn.execute("UPDATE team_projections_summary SET total_mu = total_mu + 20")
+    conn.commit()
+    conn.close()
 
 
 def add_moneyline(conn, odds_run: tuple[str, str], line: tuple[int, float, int, float]) -> None:
@@ -245,12 +279,17 @@ def test_a_player_a_source_lists_twice_is_scored_once_on_the_mean(settings):
     )
 
 
-def test_teams_are_scored_against_the_latest_odds_run(settings):
+TEAM_COLUMNS = ["owner", "projected", "actual", "p10", "p90", "covered", "win_prob", "won"]
+
+
+def team_grades(settings: Settings) -> dict[int, list]:
+    return {roster_id: [team[column] for column in TEAM_COLUMNS] for roster_id, team in team_accuracy(settings).items()}
+
+
+def test_teams_are_scored_against_the_latest_unlocked_run(settings):
     result = run_accuracy(settings)
 
-    columns = ["owner", "projected", "actual", "p10", "p90", "covered", "win_prob", "won"]
-    teams = {roster_id: [team[column] for column in columns] for roster_id, team in team_accuracy(settings).items()}
-    assert teams == {
+    assert team_grades(settings) == {
         1: ["owner1", 115.0, 120.0, 95.0, 135.0, 1, 0.6, 1],
         2: ["owner2", 105.0, 100.0, 105.0, 140.0, 0, 0.4, 0],
         3: ["owner3", 100.0, 110.0, 80.0, 120.0, 1, 0.45, None],
@@ -261,6 +300,38 @@ def test_teams_are_scored_against_the_latest_odds_run(settings):
         "1 of 5 teams have no score distribution for week 10; coverage left empty",
         "1 of 5 teams have no moneyline for week 10; win probability left empty",
     ]
+
+
+def test_a_newer_run_with_locked_players_is_not_graded(settings):
+    add_locked_rerun(settings)
+
+    run_accuracy(settings)
+
+    # Projected is the unlocked run's curve mean; owner4, without a curve in that run, keeps the overwritten summary's.
+    assert team_grades(settings) == {
+        1: ["owner1", 115.0, 120.0, 95.0, 135.0, 1, 0.6, 1],
+        2: ["owner2", 105.0, 100.0, 105.0, 140.0, 0, 0.4, 0],
+        3: ["owner3", 100.0, 110.0, 80.0, 120.0, 1, 0.45, None],
+        4: ["owner4", 132.0, 110.0, None, None, None, 0.55, None],
+        5: ["owner5", 90.0, 95.0, 70.0, 110.0, 1, None, None],
+    }
+
+
+def test_a_week_with_only_locked_runs_scores_players_but_no_team_ranges_or_moneylines(settings):
+    add_locked_rerun(settings)
+    conn = connect(settings, "odds")
+    conn.execute("UPDATE simulation_runs SET n_locked = 2 WHERE n_locked = 0")
+    conn.commit()
+    conn.close()
+
+    result = run_accuracy(settings)
+
+    assert result.warnings == [NO_UNLOCKED_RUN]
+    assert player_accuracy(settings)[("consensus", "ALL")]["n"] == 5
+    teams = list(team_accuracy(settings).values())
+    ranges_and_lines = [(team["p10"], team["p90"], team["covered"], team["win_prob"]) for team in teams]
+    assert ranges_and_lines == [(None, None, None, None)] * 5
+    assert [team["won"] for team in teams] == [1, 0, None, None, None]
 
 
 def test_summary_reports_the_consensus_and_the_teams(settings):
@@ -301,7 +372,10 @@ def test_the_best_source_at_a_position_projected_at_least_twenty_players_there(s
     assert result.summary["best_source_by_position"] == {"TE": "sleeper.com", "ALL": "sleeper.com"}
 
 
-def test_without_a_summary_a_team_is_projected_the_sum_of_its_lineup(settings):
+def test_without_a_run_or_a_summary_a_team_is_projected_the_sum_of_its_lineup(settings):
+    conn = connect(settings, "odds")
+    conn.execute("DROP TABLE simulation_runs")
+    conn.close()
     conn = connect(settings, "projections")
     conn.execute("DELETE FROM team_projections_summary")
     for roster_id, (projected, _, _) in TEAMS.items():

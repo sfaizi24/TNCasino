@@ -9,6 +9,7 @@ from pipeline.steps import league, lineups
 
 LEAGUE_ID = "300"
 ROSTER_POSITIONS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF", "BN", "BN"]
+SLOTS = ["QB", "RB1", "RB2", "WR1", "WR2", "TE", "FLEX", "K", "DEF"]
 LEAGUE_SETTINGS = {"playoff_teams": 2, "playoff_week_start": 15, "waiver_type": 2, "waiver_budget": 100, "num_teams": 3}
 
 PLAYER_WEEK_STATS = """
@@ -43,6 +44,7 @@ ROSTER_PLAYERS = [
     ("qb2", "QB", 10.0),
 ]
 DEFENSES = {1: "SEA", 2: "MIN", 3: "DAL"}
+WEEK_4_GAMES = ["KC", "NYG", "PHI", "SEA", "MIN", "DAL", "NYJ"]
 FREE_AGENTS = [
     ("fa_qb", "QB", 12.0),
     ("fa_rb", "RB", 9.0),
@@ -78,7 +80,7 @@ def projections_db(settings):
 @pytest.fixture(autouse=True)
 def synthetic_league(league_db, projections_db):
     """Three rosters of healthy KC players, plus NYG free agents. Roster 1 has 40 FAAB left; rosters 2 and 3 have 80,
-    with roster 3 ahead in waiver order."""
+    with roster 3 ahead in waiver order. Every owner starts the lineup the model picks, and no game has kicked off."""
     league_db.execute(
         "INSERT INTO leagues (league_id, name, season, roster_positions, settings) VALUES (?, 'Test', '2026', ?, ?)",
         (LEAGUE_ID, json.dumps(ROSTER_POSITIONS), json.dumps(LEAGUE_SETTINGS)),
@@ -112,6 +114,16 @@ def synthetic_league(league_db, projections_db):
     league_db.executemany(
         "INSERT INTO nfl_schedules (season, week, team, is_home, is_bye, updated_at) VALUES (2026, ?, ?, 0, 1, '')",
         [(4, "BUF"), (5, "KC")],
+    )
+    for team in WEEK_4_GAMES:
+        set_game(league_db, team, "STATUS_SCHEDULED")
+    league_db.executemany(
+        "INSERT INTO matchups (matchup_id, league_id, week, roster_id, starters, players_points) "
+        "VALUES (?, ?, 4, ?, ?, '{}')",
+        [
+            (f"{LEAGUE_ID}_4_{roster_id}", LEAGUE_ID, roster_id, json.dumps(owner_starters(roster_id)))
+            for roster_id in DEFENSES
+        ],
     )
     league_db.commit()
     projections_db.commit()
@@ -155,6 +167,35 @@ def set_player(league_db, player_id, **columns):
     for column, value in columns.items():
         league_db.execute(f"UPDATE nfl_players SET {column} = ? WHERE player_id = ?", (value, player_id))
     league_db.commit()
+
+
+def owner_starters(roster_id, **changes):
+    """The roster's starters in slot order, as Sleeper stores them, with the named slots changed."""
+    player_ids = [f"{roster_id}{suffix}" for suffix in ("qb", "rb1", "rb2", "wr1", "wr2", "te", "rb3", "k")]
+    starters = dict(zip(SLOTS, [*player_ids, DEFENSES[roster_id]], strict=True))
+    return list((starters | changes).values())
+
+
+def set_game(league_db, team, status):
+    league_db.execute(
+        "INSERT OR REPLACE INTO nfl_schedules (season, week, team, is_home, is_bye, status, updated_at) "
+        "VALUES (2026, 4, ?, 0, 0, ?, '')",
+        (team, status),
+    )
+    league_db.commit()
+
+
+def set_owner_lineup(league_db, roster_id, points, **changes):
+    league_db.execute(
+        "UPDATE matchups SET starters = ?, players_points = ? WHERE week = 4 AND roster_id = ?",
+        (json.dumps(owner_starters(roster_id, **changes)), json.dumps(points), roster_id),
+    )
+    league_db.commit()
+
+
+def move_to_phi(league_db, *player_ids):
+    for player_id in player_ids:
+        set_player(league_db, player_id, team="PHI")
 
 
 def run_lineups(settings):
@@ -392,3 +433,168 @@ def test_missing_projections_stop_the_step(settings, projections_db):
 
     with pytest.raises(LookupError, match="run the stats step first"):
         run_lineups(settings)
+
+
+def week_rows(conn, table):
+    rows = conn.execute(f"SELECT * FROM {table} WHERE week = 4")
+    return [{column: row[column] for column in row.keys() if column != "timestamp"} for row in rows]
+
+
+def test_without_a_final_game_the_owners_lineups_change_nothing(settings, league_db, projections_db):
+    set_owner_lineup(league_db, 1, {"1qb2": 30.0}, QB="1qb2")
+    set_game(league_db, "KC", None)
+
+    result = run_lineups(settings)
+    with_owner_lineups = [week_rows(projections_db, "team_lineups"), week_rows(league_db, "projections_rosters")]
+    league_db.execute("DELETE FROM matchups")
+    league_db.commit()
+    run_lineups(settings)
+
+    assert [
+        week_rows(projections_db, "team_lineups"),
+        week_rows(league_db, "projections_rosters"),
+    ] == with_owner_lineups
+    assert {(row["is_locked"], row["locked_points"]) for row in with_owner_lineups[0]} == {(0, None)}
+    assert "played" not in {row["roster_status"] for row in with_owner_lineups[1]}
+    assert starters(projections_db, 1)["QB"] == "1qb"
+    assert team_totals(projections_db)[1] == (106.0, 36.0, 0)
+    assert result.summary["n_locked"] == 0
+
+
+def test_the_owners_starters_in_a_final_game_are_pinned_at_their_points(settings, league_db, projections_db):
+    move_to_phi(league_db, "1qb2", "1wr1", "1rb3")
+    set_game(league_db, "PHI", "STATUS_FINAL")
+    set_owner_lineup(league_db, 1, {"1qb2": 25.5, "1wr1": 3.0, "1rb3": 11.2, "1rb1": 9.9}, QB="1qb2")
+
+    result = run_lineups(settings)
+
+    team_lineup = lineup(projections_db, 1)
+    locked = {slot: row for slot, row in team_lineup.items() if row["is_locked"]}
+    assert {slot: (row["sleeper_player_id"], row["mu"], row["locked_points"]) for slot, row in locked.items()} == {
+        "QB": ("1qb2", 25.5, 25.5),
+        "WR1": ("1wr1", 3.0, 3.0),
+        "FLEX": ("1rb3", 11.2, 11.2),
+    }
+    qb = team_lineup["QB"]
+    assert (qb["sigma"], qb["var"], qb["is_replacement"], qb["n_sources"]) == (0.0, 0.0, 0, 3)
+    assert (qb["player_name"], qb["position"], qb["nfl_team"]) == ("Player 1qb2", "QB", "PHI")
+    rb1 = team_lineup["RB1"]
+    assert (rb1["sleeper_player_id"], rb1["mu"], rb1["is_locked"], rb1["locked_points"]) == ("1rb1", 14.0, 0, None)
+    assert team_totals(projections_db)[1] == pytest.approx((102.7, 24.0, 0))
+    assert team_totals(projections_db)[2] == (106.0, 36.0, 0)
+    assert result.summary["n_locked"] == 3
+    assert result.summary["teams"][0]["total_mu"] == 102.7
+    players = roster_players(league_db, 1)
+    assert {player_id: players[player_id]["roster_status"] for player_id in ("1qb", "1qb2", "1wr1", "1rb3")} == {
+        "1qb": "bench",
+        "1qb2": "starter",
+        "1wr1": "starter",
+        "1rb3": "starter",
+    }
+    assert players["1qb2"]["starting_status"] == 1
+
+
+def test_a_benched_player_in_a_final_game_has_played_and_cannot_start(settings, league_db, projections_db):
+    move_to_phi(league_db, "1qb")
+    set_game(league_db, "PHI", "STATUS_FINAL")
+    set_owner_lineup(league_db, 1, {"1qb": 31.0}, QB="1qb2")
+
+    result = run_lineups(settings)
+
+    qb = lineup(projections_db, 1)["QB"]
+    assert (qb["sleeper_player_id"], qb["mu"], qb["is_locked"]) == ("1qb2", 10.0, 0)
+    played = roster_players(league_db, 1)["1qb"]
+    assert (played["roster_status"], played["starting_status"]) == ("played", 0)
+    assert result.summary["n_locked"] == 0
+
+
+def test_a_pinned_starter_no_source_projects_is_named_from_nfl_players(settings, league_db, projections_db):
+    move_to_phi(league_db, "1wr1")
+    set_game(league_db, "PHI", "STATUS_FINAL")
+    set_owner_lineup(league_db, 1, {"1wr1": 17.4})
+    projections_db.execute("DELETE FROM player_week_stats WHERE sleeper_player_id = '1wr1'")
+    projections_db.commit()
+
+    run_lineups(settings)
+
+    wr1 = lineup(projections_db, 1)["WR1"]
+    assert (wr1["sleeper_player_id"], wr1["player_name"], wr1["position"]) == ("1wr1", "First Last 1wr1", "WR")
+    assert (wr1["mu"], wr1["n_sources"], wr1["is_locked"]) == (17.4, 0, 1)
+
+
+def test_a_pinned_starter_without_points_scores_zero(settings, league_db, projections_db):
+    move_to_phi(league_db, "1te")
+    set_game(league_db, "PHI", "STATUS_FINAL")
+    set_owner_lineup(league_db, 1, {})
+
+    run_lineups(settings)
+
+    te = lineup(projections_db, 1)["TE"]
+    assert (te["sleeper_player_id"], te["mu"], te["locked_points"], te["is_locked"]) == ("1te", 0.0, 0.0, 1)
+    assert team_totals(projections_db)[1] == (96.0, 32.0, 0)
+
+
+def test_a_defense_is_pinned_by_its_team_code(settings, league_db, projections_db):
+    set_game(league_db, "MIN", "STATUS_FINAL")
+    set_owner_lineup(league_db, 2, {"MIN": 14.0})
+
+    result = run_lineups(settings)
+
+    defense = lineup(projections_db, 2)["DEF"]
+    assert (defense["sleeper_player_id"], defense["nfl_team"], defense["position"]) == ("MIN", "MIN", "DEF")
+    assert (defense["mu"], defense["sigma"], defense["is_locked"]) == (14.0, 0.0, 1)
+    assert team_totals(projections_db)[2] == (114.0, 32.0, 0)
+    assert result.summary["n_locked"] == 1
+
+
+def test_an_empty_owner_slot_is_filled_by_the_model(settings, league_db, projections_db):
+    move_to_phi(league_db, "1qb2")
+    set_game(league_db, "PHI", "STATUS_FINAL")
+    set_owner_lineup(league_db, 1, {"1qb2": 12.0}, QB="1qb2", WR1="0")
+
+    result = run_lineups(settings)
+
+    wr1 = lineup(projections_db, 1)["WR1"]
+    assert (wr1["sleeper_player_id"], wr1["mu"], wr1["is_locked"]) == ("1wr1", 15.0, 0)
+    assert result.summary["n_locked"] == 1
+
+
+@pytest.mark.parametrize("status", ["STATUS_IN_PROGRESS", "STATUS_HALFTIME", None])
+def test_a_game_not_yet_final_pins_nothing(settings, league_db, projections_db, status):
+    move_to_phi(league_db, "1qb2")
+    set_game(league_db, "PHI", status)
+    set_owner_lineup(league_db, 1, {"1qb2": 12.0}, QB="1qb2")
+
+    result = run_lineups(settings)
+
+    qb = lineup(projections_db, 1)["QB"]
+    assert (qb["sleeper_player_id"], qb["is_locked"]) == ("1qb", 0)
+    assert roster_players(league_db, 1)["1qb2"]["roster_status"] == "bench"
+    assert result.summary["n_locked"] == 0
+
+
+def test_free_agents_in_a_final_game_stay_out_of_the_pool(settings, league_db, projections_db):
+    set_player(league_db, "1wr1", injury_status="Out")
+    move_to_phi(league_db, "fa_wr_a")
+    set_game(league_db, "PHI", "STATUS_FINAL")
+
+    result = run_lineups(settings)
+
+    pickup = lineup(projections_db, 1)["WR2"]
+    assert (pickup["sleeper_player_id"], pickup["mu"], pickup["is_replacement"]) == ("fa_wr_b", 11.0, 1)
+    assert result.summary["pool_sizes"]["WR"] == 2
+
+
+def test_an_older_team_lineups_table_gains_the_lock_columns(settings, projections_db):
+    old_shape = "\n".join(line for line in lineups.LINEUP_TABLES.splitlines() if "locked" not in line)
+    projections_db.executescript(old_shape)
+    projections_db.execute(
+        "INSERT INTO team_lineups (season, week, roster_id, team_name, owner, record, slot, position, mu, sigma, var, "
+        "n_sources, timestamp) VALUES (2026, 3, 1, 'Team 1', 'alice', '2-0', 'QB', 'QB', 18.0, 2.0, 4.0, 3, '')"
+    )
+    projections_db.commit()
+
+    run_lineups(settings)
+
+    rows = projections_db.execute("SELECT week, is_locked, locked_points FROM team_lineups WHERE roster_id = 1")
+    assert sorted(tuple(row) for row in rows) == [(3, 0, None)] + [(4, 0, None)] * 9

@@ -290,6 +290,49 @@ def test_get_lineup(client, seeded_analytics, betting_period):
     assert data[0]["projected_points"] == 22.5
 
 
+def test_lineup_marks_a_locked_starter_with_its_final_points(client, seeded_analytics, betting_period):
+    data = client.get("/api/lineup/Alice A").get_json()
+    lock_by_player = {d["player_name"]: (d["is_locked"], d["locked_points"]) for d in data}
+
+    assert lock_by_player == {
+        "Patrick Mahomes": (False, None),
+        "Derrick Henry": (False, None),
+        "Tyreek Hill": (True, 14.2),
+    }
+    assert data[2]["projected_points"] == 14.2
+
+
+def test_team_players_marks_a_locked_starter_from_the_lineup(
+    logged_in_client, seeded_analytics, betting_period, db_session
+):
+    db_session.session.execute(
+        text("""
+        INSERT INTO projections_rosters
+            (roster_id, sleeper_player_id, first_name, last_name, position, season, week, mu, var, starting_status)
+        VALUES (1, '3321', 'Tyreek', 'Hill', 'WR', '2025', 10, 14.2, 0.0, 1)
+    """)
+    )
+    db_session.session.commit()
+
+    data = logged_in_client.get("/api/team_players?team=alice").get_json()
+    lock_by_player = {
+        d["player_last_name"]: (d["is_locked"], d["locked_points"]) for d in data["starters"] + data["bench"]
+    }
+
+    assert lock_by_player == {"Mahomes": (False, None), "Hill": (True, 14.2), "Player": (False, None)}
+
+
+def test_team_players_fallback_marks_a_locked_starter(logged_in_client, seeded_analytics, betting_period, db_session):
+    db_session.session.execute(
+        text("UPDATE team_lineups SET is_locked = 1, locked_points = 31.4, mu = 31.4 WHERE player_name = 'Josh Allen'")
+    )
+    db_session.session.commit()
+
+    starter = logged_in_client.get("/api/team_players?team=bob").get_json()["starters"][0]
+
+    assert (starter["is_locked"], starter["locked_points"], starter["mu"]) == (True, 31.4, 31.4)
+
+
 def test_get_teams(logged_in_client, seeded_analytics, betting_period):
     resp = logged_in_client.get("/api/teams")
     data = resp.get_json()

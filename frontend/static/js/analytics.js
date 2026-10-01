@@ -544,11 +544,15 @@ function splitPlayerName(name) {
     return i === -1 ? safe : `${safe.slice(0, i)}<br>${safe.slice(i + 1)}`;
 }
 
+function lockMarker(player) {
+    return player.is_locked ? ' <span class="tnc-lp-lock" title="Final: game over, points locked">final</span>' : '';
+}
+
 function renderLineupCol(lineup) {
     if (!lineup?.length) return '<div class="tnc-lp-col"><div class="tnc-lp-empty">No lineup</div></div>';
     const rows = lineup.map(p => `
         <div class="tnc-lp-row">
-            <span class="tnc-lp-name">${splitPlayerName(p.player_name)}</span>
+            <span class="tnc-lp-name">${splitPlayerName(p.player_name)}${lockMarker(p)}</span>
             <span class="tnc-lp-pos">${escapeHtml(p.position)}</span>
             <span class="tnc-lp-pts tnc-tab-num">${(p.projected_points || 0).toFixed(1)}</span>
         </div>

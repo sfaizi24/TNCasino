@@ -75,6 +75,7 @@ It runs every step but publish, in order: league, scrape, clean, match, stats, a
 - **Each source's block** in the scrape step: its check table, then its review tables, the top 15 players at QB, RB, WR and at TE, K, DEF with team and points. After the last source comes a table of every source with its status, rows and seconds. These print long before the run ends; read them while the later steps run.
 - **The run summary table** at the end: each step `ok`, `warn` or `failed`, its duration and its first warning or error, then `Run <run_id>: <status>`.
 - **The simulate step's line** `betting window closes at <time>`: Thursday's kickoff, in UTC.
+- **On a rerun, the simulate step's line** `N starters locked at their real points`: the owners' starters from games already final. Wednesday's run locks none.
 
 Expected warnings, which need no action:
 - `accuracy: no projections for week N-1` and `calibrate: no week graded by the accuracy step yet` in the first week the pipeline runs a season (week 4 in 2026). Both steps grade the previous week.
@@ -158,7 +159,7 @@ python -m pipeline run --week N --steps league,lineups,simulate,odds,validate
 
 Publish keeps the latest run of each table, so the weekly odds move to Friday's run while the futures tables keep Wednesday's. Then the dry run and the publish, as on Wednesday. The new run's window closes at the week's next kickoff, usually Sunday's first.
 
-**Caveat to tell the owner**: the code on `main` does not pin players whose games have been played to their real points. That is B5, which is not merged and has no start date. A Friday rerun simulates Thursday's players again as if their game were unplayed. The rerun is still what the schedule calls for, for the injury news.
+The league step brings Thursday's final status and the owners' starters with their points; the lineups step pins those starters at their real points and keeps their bench mates out of the lineup, and the simulate step fixes them in every simulation and logs `N starters locked at their real points`. `simulation_runs.n_locked` and the dashboard's simulate summary show the count. If a game is still in progress the run does not stop but warns `<away> at <home> is in progress ...; its players are simulated as unplayed`: wait for the final and rerun.
 
 ## Saturday
 
@@ -168,7 +169,9 @@ For late inactives, the full default run again, then verdicts and publish:
 python -m pipeline run --week N
 ```
 
-It rescrapes every source, including one you rejected on Wednesday. Reject it again if it is still wrong, and give a new verdict to any source whose status or top players changed. A verdict replaces the one before. Then the dry run and the publish, finished before Sunday's first kickoff. The B5 caveat holds here too: Thursday's players are simulated as unplayed.
+It rescrapes every source, including one you rejected on Wednesday. Reject it again if it is still wrong, and give a new verdict to any source whose status or top players changed. A verdict replaces the one before. Then the dry run and the publish, finished before Sunday's first kickoff.
+
+The same locks apply: Thursday's game is final, so its starters are pinned at their real points as on Friday. Sources may drop Thursday's players by Saturday, which is fine: a pinned starter needs no projection.
 
 ## After the week
 
@@ -191,4 +194,3 @@ After each run, report:
 - The run id published (the run that ran simulate) and when its window closes.
 - Every warning, and whether it is an expected one.
 - The playoffs step's runtime, or that it was left out.
-- On Friday and Saturday, the B5 caveat.
