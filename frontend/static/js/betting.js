@@ -480,7 +480,7 @@ function sideForBet(bet) {
     return null;
 }
 
-// A chip names the pick and leaves the market to its group, except in Futures, whose group holds four.
+// A chip names the pick and leaves the market to its group, except in Futures, whose group holds four and so adds a word for each.
 function chipLabel(bet) {
     if (bet.bet_type === 'parlay') return `${bet.legs.length}-leg parlay`;
     const match = sideForBet(bet);
@@ -489,10 +489,10 @@ function chipLabel(bet) {
     if (kind === 'ml') return side.label;
     if (kind === 'sp') return `${side.label} ${fmtLine(bet.legs[0].line)}`;
     if (kind === 'ou') return `${row.owner} ${side.label[0]} ${bet.line.toFixed(2)}`;
-    if (kind === 'fp') return `${row.owner} to finish first`;
-    if (kind === 'mp') return `${row.owner} to make playoffs`;
-    if (kind === 'lp') return `${row.owner} to finish last`;
-    if (kind === 'ch') return `${row.owner} to win the championship`;
+    if (kind === 'fp') return `${row.owner} · 1st`;
+    if (kind === 'mp') return `${row.owner} · Playoffs`;
+    if (kind === 'lp') return `${row.owner} · Last`;
+    if (kind === 'ch') return `${row.owner} · Champion`;
     return row.owner;
 }
 
@@ -524,11 +524,12 @@ function renderActiveBets() {
         container.innerHTML = '';
         return;
     }
+    // The Futures view holds one group, already named by the view's title, so its chips take the label's width.
     container.innerHTML = `
         <div class="tnc-active">
             ${groups.map(group => `
                 <div class="tnc-active-group">
-                    <span class="tnc-active-label">${group.label}</span>
+                    ${onFutures ? '' : `<span class="tnc-active-label">${group.label}</span>`}
                     <div class="tnc-active-chips">
                         ${group.bets.map(renderActiveChip).join('')}
                     </div>
