@@ -86,8 +86,9 @@ sequenceDiagram
 | `/api/lineup/<owner>` | GET | — | `team_lineups` | |
 | `/api/league_overview` | GET | — | `sleeper_matchups`, `sleeper_rosters`, `sleeper_users`, `sleeper_leagues`, `team_distribution_curves`, `betting_odds_matchup_ml` | |
 | `/api/position_strength` | GET | — | `team_lineups`, `sleeper_matchups`, `sleeper_rosters`, `sleeper_users` | |
-| `/api/playoff_picture` | GET | � | `standings_probability_matrix` (latest week), `sleeper_leagues` | |
-| `/api/season_race` | GET | � | `standings_probability_matrix`, `betting_odds_champion` (every week this season), `sleeper_leagues` | |
+| `/api/playoff_picture` | GET | — | `standings_probability_matrix` (latest week), `sleeper_leagues` | |
+| `/api/season_race` | GET | — | `standings_probability_matrix`, `betting_odds_champion` (every week this season), `sleeper_leagues` | |
+| `/api/model_report` | GET | — | `team_accuracy`, `projections_rosters`, `sleeper_matchups` (last graded week and this season) | |
 | `/api/teams` | GET | login | `sleeper_rosters`, `sleeper_users` | |
 | `/api/team_distribution` | GET | login | `team_distribution_curves`, `team_matchup_margin_curves`, `betting_odds_matchup_ml` | |
 | `/api/team_players` | GET | login | `projections_rosters` (falls back to `team_lineups`) | |

@@ -72,3 +72,57 @@ def test_season_race_gives_no_title_chance_to_a_team_the_market_left_out(
     bob = client.get("/api/season_race").get_json()["teams"][1]
 
     assert bob["title"] == [0.0]
+
+
+@pytest.fixture
+def graded_weeks(seeded_analytics, db_session):
+    """Weeks 8 and 9 graded, and week 9's starters with their projections and points."""
+    session = db_session.session
+    session.execute(
+        text("""
+        INSERT INTO team_accuracy (season, week, roster_id, owner, projected, actual, covered, win_prob, won)
+        VALUES (2026, 8, 1, 'Alice A', 110, 100, 1, 0.7, 0), (2026, 8, 2, 'Bob B', 100, 105, 1, 0.3, 1),
+               (2026, 9, 1, 'Alice A', 110, 120, 1, 0.6, 1), (2026, 9, 2, 'Bob B', 100, 60, 0, 0.4, 0)
+    """)
+    )
+    session.execute(
+        text("""
+        INSERT INTO sleeper_matchups (league_id, week, roster_id, matchup_id_number, starters, players_points)
+        VALUES ('league1', 9, 1, 1, '["p1", "p2"]', '{"p1": 30.0, "p2": 5.0, "p9": 40.0}'),
+               ('league1', 9, 2, 1, '["p3"]', '{"p3": 12.0}')
+    """)
+    )
+    session.execute(
+        text("""
+        INSERT INTO projections_rosters (roster_id, sleeper_player_id, first_name, last_name, position, week, season, mu)
+        VALUES (1, 'p1', 'Boom', 'Back', 'RB', 9, '2026', 15.0), (1, 'p2', 'Bust', 'Wide', 'WR', 9, '2026', 14.0),
+               (1, 'p9', 'Bench', 'Guy', 'WR', 9, '2026', 10.0), (2, 'p3', 'Spot', 'On', 'TE', 9, '2026', 12.0)
+    """)
+    )
+    session.commit()
+
+
+def test_model_report_grades_last_week_and_the_season(client, graded_weeks, betting_period):
+    data = client.get("/api/model_report").get_json()
+
+    assert data["week"] == 9
+    assert data["moneyline"] == {"week": {"won": 1, "lost": 0}, "season": {"won": 1, "lost": 1}}
+    assert data["coverage"] == {"week": {"inside": 1, "teams": 2}, "season": {"inside": 3, "teams": 4}}
+
+
+def test_model_report_lists_the_starters_who_missed_their_projection(client, graded_weeks, betting_period):
+    data = client.get("/api/model_report").get_json()
+
+    assert data["booms"] == [
+        {"player": "Boom Back", "position": "RB", "owner": "Alice A", "projected": 15.0, "actual": 30.0}
+    ]
+    assert [bust["player"] for bust in data["busts"]] == ["Bust Wide"]
+
+
+def test_model_report_is_empty_before_the_first_graded_week(client, seeded_analytics, betting_period, db_session):
+    assert client.get("/api/model_report").get_json() == {"week": None}
+
+    db_session.session.execute(text("DROP TABLE team_accuracy"))
+    db_session.session.commit()
+
+    assert client.get("/api/model_report").get_json() == {"week": None}

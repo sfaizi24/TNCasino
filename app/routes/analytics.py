@@ -1,8 +1,11 @@
+import json
 from collections import defaultdict
 
 from flask import Blueprint, jsonify
+from sqlalchemy import inspect
 
 from .. import settlement
+from ..database import db
 from .helpers import display_name_for, get_current_week, get_league_id_for_week, query_analytics
 
 analytics_bp = Blueprint("analytics", __name__)
@@ -105,3 +108,92 @@ def season_race():
     ]
     teams.sort(key=lambda team: team["title"][-1], reverse=True)
     return jsonify({"weeks": weeks, "teams": teams})
+
+
+def _graded_teams():
+    """Every team week the accuracy step has graded this season; none before the first graded week."""
+    if not inspect(db.engine).has_table("team_accuracy"):
+        return []
+    return query_analytics(
+        """
+        SELECT season, week, roster_id, owner, covered, win_prob, won
+        FROM team_accuracy
+        WHERE season = (SELECT MAX(season) FROM team_accuracy)
+        """
+    )
+
+
+def _moneyline_record(rows):
+    """How the model's favorite fared in each matchup, counted once from the favorite's side."""
+    favorites = [
+        row for row in rows if row["win_prob"] is not None and row["win_prob"] > 0.5 and row["won"] is not None
+    ]
+    won = sum(1 for row in favorites if row["won"])
+    return {"won": won, "lost": len(favorites) - won}
+
+
+def _coverage(rows):
+    graded = [row for row in rows if row["covered"] is not None]
+    return {"inside": sum(1 for row in graded if row["covered"]), "teams": len(graded)}
+
+
+def _player_misses(season, week, owners):
+    """Each started player's actual points against the model's projection, from the owners' Sleeper lineups."""
+    projected = {
+        row["sleeper_player_id"]: row
+        for row in query_analytics(
+            """
+            SELECT sleeper_player_id, first_name, last_name, position, mu
+            FROM projections_rosters
+            WHERE CAST(season AS INTEGER) = :season AND week = :week AND mu > 0
+            """,
+            {"season": season, "week": week},
+        )
+    }
+    matchups = query_analytics(
+        "SELECT roster_id, starters, players_points FROM sleeper_matchups WHERE league_id = :league_id AND week = :week",
+        {"league_id": get_league_id_for_week(week), "week": week},
+    )
+
+    misses = []
+    for matchup in matchups:
+        points = json.loads(matchup["players_points"] or "{}")
+        for player_id in json.loads(matchup["starters"] or "[]"):
+            player = projected.get(player_id)
+            if player is None or player_id not in points:
+                continue
+            misses.append(
+                {
+                    "player": f"{player['first_name']} {player['last_name']}",
+                    "position": player["position"],
+                    "owner": display_name_for(owners.get(matchup["roster_id"])),
+                    "projected": round(player["mu"], 1),
+                    "actual": round(points[player_id], 1),
+                }
+            )
+    misses.sort(key=lambda miss: miss["actual"] - miss["projected"])
+    return misses
+
+
+@analytics_bp.route("/api/model_report")
+def model_report():
+    """How last week's projections held up: the moneyline favorites, the 80% ranges, and the biggest misses."""
+    rows = _graded_teams()
+    if not rows:
+        return jsonify({"week": None})
+
+    season = rows[0]["season"]
+    week = max(row["week"] for row in rows)
+    last_week = [row for row in rows if row["week"] == week]
+    owners = {row["roster_id"]: row["owner"] for row in last_week}
+    misses = _player_misses(season, week, owners)
+
+    return jsonify(
+        {
+            "week": week,
+            "moneyline": {"week": _moneyline_record(last_week), "season": _moneyline_record(rows)},
+            "coverage": {"week": _coverage(last_week), "season": _coverage(rows)},
+            "booms": [miss for miss in reversed(misses[-5:]) if miss["actual"] > miss["projected"]],
+            "busts": [miss for miss in misses[:5] if miss["actual"] < miss["projected"]],
+        }
+    )

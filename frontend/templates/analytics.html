@@ -23,6 +23,7 @@
     <button class="tnc-tab is-on" data-tab="league">League</button>
     <button class="tnc-tab" data-tab="matchups">Matchups</button>
     <button class="tnc-tab" data-tab="teams">Teams</button>
+    <button class="tnc-tab" data-tab="model">Model</button>
 </div>
 
 <div id="teams-error" style="display: none; margin-top: 12px; padding: 12px; background: rgba(220, 38, 38, 0.1); border: 1px solid rgba(220, 38, 38, 0.3); border-radius: 8px; color: #ef4444; font-size: 13px;"></div>
@@ -107,6 +108,39 @@
 
     <h2 class="section-title">Team Roster & Projections</h2>
     <div id="players-table-container"></div>
+</section>
+
+<section class="tab-panel" data-panel="model" style="display: none;">
+    <div class="pp-empty" id="model-empty" hidden>First report after week {{ current_week }}.</div>
+    <div id="model-report" hidden>
+        <div class="league-card">
+            <h2 class="league-card-title" id="model-report-title">Last Week</h2>
+            <div class="model-stats">
+                <div class="model-stat">
+                    <div class="model-stat-label">Favorites</div>
+                    <div class="model-stat-value tnc-tab-num" id="model-moneyline"></div>
+                    <div class="model-stat-note tnc-tab-num" id="model-moneyline-season"></div>
+                </div>
+                <div class="model-stat">
+                    <div class="model-stat-label">Inside 80% range</div>
+                    <div class="model-stat-value tnc-tab-num" id="model-coverage"></div>
+                    <div class="model-stat-note tnc-tab-num" id="model-coverage-season"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="league-card">
+            <h2 class="league-card-title">Booms</h2>
+            <div class="league-card-caption">Starters who beat their projection by the most.</div>
+            <div id="model-booms"></div>
+        </div>
+
+        <div class="league-card">
+            <h2 class="league-card-title">Busts</h2>
+            <div class="league-card-caption">Starters who fell furthest short.</div>
+            <div id="model-busts"></div>
+        </div>
+    </div>
 </section>
 {% endblock %}
 

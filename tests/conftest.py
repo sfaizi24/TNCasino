@@ -164,6 +164,7 @@ ANALYTICS_TABLES = [
     "simulation_totals",
     "simulation_standings",
     "standings_probability_matrix",
+    "team_accuracy",
 ]
 
 # The pipeline run that published every seeded odds row, and the window it opened.
@@ -382,6 +383,14 @@ def create_analytics_tables(session):
             matchup_id_number INTEGER, starters TEXT, players TEXT,
             points REAL, custom_points REAL, players_points TEXT,
             created_at TIMESTAMP, updated_at TIMESTAMP
+        )
+    """)
+    )
+    session.execute(
+        text("""
+        CREATE TABLE team_accuracy (
+            season INTEGER, week INTEGER, roster_id INTEGER, owner TEXT, projected REAL, actual REAL,
+            p10 REAL, p90 REAL, covered INTEGER, win_prob REAL, won INTEGER, computed_at TEXT
         )
     """)
     )

@@ -951,7 +951,61 @@ async function loadLeagueView() {
     }
 }
 
+const record = ({ won, lost }) => `${won}–${lost}`;
+const share = ({ inside, teams }) => (teams ? `${Math.round((inside / teams) * 100)}%` : '—');
+
+function renderMisses(misses) {
+    if (!misses.length) return '<div class="pp-empty">None.</div>';
+    return misses.map(miss => {
+        const diff = miss.actual - miss.projected;
+        const sign = diff > 0 ? '+' : '−';
+        return `
+            <div class="miss-row">
+                <div class="miss-who">
+                    <span class="miss-name">${escapeHtml(miss.player)}</span>
+                    <span class="miss-meta">${escapeHtml(miss.position)} · ${escapeHtml(miss.owner ?? '')}</span>
+                </div>
+                <div class="miss-points tnc-tab-num">${miss.projected.toFixed(1)} → ${miss.actual.toFixed(1)}</div>
+                <div class="miss-diff tnc-tab-num ${diff > 0 ? 'is-up' : 'is-down'}">${sign}${Math.abs(diff).toFixed(1)}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderModelReport(report) {
+    const hasReport = report.week != null;
+    document.getElementById('model-empty').hidden = hasReport;
+    document.getElementById('model-report').hidden = !hasReport;
+    if (!hasReport) return;
+
+    const { moneyline, coverage } = report;
+    document.getElementById('model-report-title').textContent = `Week ${report.week}`;
+    document.getElementById('model-moneyline').textContent = record(moneyline.week);
+    document.getElementById('model-moneyline-season').textContent = `Season ${record(moneyline.season)}`;
+    document.getElementById('model-coverage').textContent = `${coverage.week.inside} of ${coverage.week.teams}`;
+    document.getElementById('model-coverage-season').textContent = `Season ${share(coverage.season)}`;
+    document.getElementById('model-booms').innerHTML = renderMisses(report.booms);
+    document.getElementById('model-busts').innerHTML = renderMisses(report.busts);
+}
+
+async function loadModelReport() {
+    try {
+        const response = await fetchWithTimeout('/api/model_report', {}, 10000);
+        if (!response.ok) {
+            showError('Could not load the model report. Please refresh the page.');
+            return false;
+        }
+        renderModelReport(await response.json());
+        return true;
+    } catch (error) {
+        console.error('Error loading model report:', error);
+        showError('Could not load the model report. Please refresh the page.');
+        return false;
+    }
+}
+
 let leagueRendered = false;
+let modelRendered = false;
 let matchupsRendered = false;
 let teamsRendered = false;
 
@@ -971,6 +1025,9 @@ async function activateTab(tab) {
     }
     if (tab === 'teams' && !teamsRendered) {
         teamsRendered = await renderSingleTeam();
+    }
+    if (tab === 'model' && !modelRendered) {
+        modelRendered = await loadModelReport();
     }
 }
 
