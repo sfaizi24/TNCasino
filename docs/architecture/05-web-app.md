@@ -31,7 +31,8 @@ app/routes/
   pages.py           /, /login, /about, /analytics, static + chart images
   account.py         /account, profile update
   odds.py            Odds + analytics JSON API
-  analytics.py       Season outlook for the analytics page: playoff picture, season race
+  analytics.py       Season outlook and model report for the analytics page: playoff picture, season race, last week graded
+  money.py           Where the money sits on each market, in totals only
   betting.py         /betting, /leaderboard, parlay quotes, bet placement/removal/cash-out
   admin.py           /admin + admin JSON API
 frontend/templates/  Jinja2 (base.html + one per page)
@@ -89,6 +90,7 @@ sequenceDiagram
 | `/api/playoff_picture` | GET | — | `standings_probability_matrix` (latest week), `sleeper_leagues` | |
 | `/api/season_race` | GET | — | `standings_probability_matrix`, `betting_odds_champion` (every week this season), `sleeper_leagues` | |
 | `/api/model_report` | GET | — | `team_accuracy`, `projections_rosters`, `sleeper_matchups` (last graded week and this season) | |
+| `/api/money` | GET | — | `bets`, `bet_legs`, `weekly_stats` (totals only, no bettor named), `sleeper_rosters`, `sleeper_users` | |
 | `/api/teams` | GET | login | `sleeper_rosters`, `sleeper_users` | |
 | `/api/team_distribution` | GET | login | `team_distribution_curves`, `team_matchup_margin_curves`, `betting_odds_matchup_ml` | |
 | `/api/team_players` | GET | login | `projections_rosters` (falls back to `team_lineups`) | |

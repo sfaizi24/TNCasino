@@ -78,6 +78,7 @@ def create_app(config=None):
     from .routes.admin import admin_bp
     from .routes.analytics import analytics_bp
     from .routes.betting import betting_bp
+    from .routes.money import money_bp
     from .routes.odds import odds_bp
     from .routes.pages import pages_bp
 
@@ -85,6 +86,7 @@ def create_app(config=None):
     app.register_blueprint(account_bp)
     app.register_blueprint(odds_bp)
     app.register_blueprint(analytics_bp)
+    app.register_blueprint(money_bp)
     app.register_blueprint(betting_bp)
     app.register_blueprint(admin_bp)
 

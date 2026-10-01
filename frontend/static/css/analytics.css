@@ -273,6 +273,58 @@
     .miss-diff.is-up { color: var(--tnc-win); }
     .miss-diff.is-down { color: var(--tnc-loss-soft); }
 
+    .model-stat-value.is-up { color: var(--tnc-win); }
+    .model-stat-value.is-down { color: var(--tnc-loss-soft); }
+
+    /* Money: each market's stake split across its sides. */
+    .money-market {
+        padding: 10px 2px;
+        border-top: 1px solid var(--tnc-border-soft);
+    }
+
+    .money-market-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 6px;
+        font-size: var(--tnc-fs-13);
+        font-weight: var(--tnc-fw-semi);
+    }
+
+    .money-side {
+        display: grid;
+        grid-template-columns: 76px 1fr 52px;
+        align-items: center;
+        gap: 8px;
+        padding: 2px 0;
+        color: var(--tnc-fg-muted);
+        font-size: var(--tnc-fs-12);
+    }
+
+    .money-side-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .money-side-bar {
+        height: 8px;
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 4px;
+    }
+
+    .money-side-bar > span {
+        display: block;
+        height: 100%;
+        background: var(--tnc-blue);
+        border-radius: 4px;
+    }
+
+    .money-side-stake {
+        color: var(--tnc-fg);
+        text-align: right;
+    }
+
     @media (max-width: 720px) {
         .league-card { padding: 14px 8px 14px; }
     }

@@ -24,6 +24,7 @@
     <button class="tnc-tab" data-tab="matchups">Matchups</button>
     <button class="tnc-tab" data-tab="teams">Teams</button>
     <button class="tnc-tab" data-tab="model">Model</button>
+    <button class="tnc-tab" data-tab="money">Money</button>
 </div>
 
 <div id="teams-error" style="display: none; margin-top: 12px; padding: 12px; background: rgba(220, 38, 38, 0.1); border: 1px solid rgba(220, 38, 38, 0.3); border-radius: 8px; color: #ef4444; font-size: 13px;"></div>
@@ -140,6 +141,35 @@
             <div class="league-card-caption">Starters who fell furthest short.</div>
             <div id="model-busts"></div>
         </div>
+    </div>
+</section>
+
+<section class="tab-panel" data-panel="money" style="display: none;">
+    <div class="league-card">
+        <h2 class="league-card-title">Week {{ current_week }}</h2>
+        <div class="model-stats">
+            <div class="model-stat">
+                <div class="model-stat-label">On the favorite</div>
+                <div class="model-stat-value tnc-tab-num" id="money-favorite"></div>
+                <div class="model-stat-note">of moneyline money</div>
+            </div>
+            <div class="model-stat">
+                <div class="model-stat-label">House</div>
+                <div class="model-stat-value tnc-tab-num" id="money-house"></div>
+                <div class="model-stat-note">settled this week</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="league-card">
+        <h2 class="league-card-title">This Week</h2>
+        <div class="league-card-caption" id="money-parlays"></div>
+        <div id="money-markets"></div>
+    </div>
+
+    <div class="league-card">
+        <h2 class="league-card-title">Futures</h2>
+        <div id="money-futures"></div>
     </div>
 </section>
 {% endblock %}

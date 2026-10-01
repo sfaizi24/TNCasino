@@ -1004,7 +1004,66 @@ async function loadModelReport() {
     }
 }
 
+const dollars = (amount) => `$${Math.round(Math.abs(amount)).toLocaleString()}`;
+
+function renderMoneyMarkets(markets) {
+    if (!markets.length) return '<div class="pp-empty">No bets yet.</div>';
+    return markets.map(market => {
+        const sides = market.sides.map(side => {
+            const width = market.stake ? (side.stake / market.stake) * 100 : 0;
+            return `
+                <div class="money-side">
+                    <span class="money-side-label">${escapeHtml(side.label)}</span>
+                    <span class="money-side-bar"><span style="width: ${width}%"></span></span>
+                    <span class="money-side-stake tnc-tab-num">${dollars(side.stake)}</span>
+                </div>
+            `;
+        }).join('');
+        return `
+            <div class="money-market">
+                <div class="money-market-head">
+                    <span>${escapeHtml(market.title)}</span>
+                    <span class="tnc-tab-num">${dollars(market.stake)}</span>
+                </div>
+                ${sides}
+            </div>
+        `;
+    }).join('');
+}
+
+function renderMoney(money) {
+    const house = document.getElementById('money-house');
+    house.textContent = `${money.house_net < 0 ? '−' : money.house_net > 0 ? '+' : ''}${dollars(money.house_net)}`;
+    house.classList.toggle('is-up', money.house_net > 0);
+    house.classList.toggle('is-down', money.house_net < 0);
+    document.getElementById('money-favorite').textContent =
+        money.favorite_share == null ? '—' : `${Math.round(money.favorite_share)}%`;
+
+    const { slips, stake } = money.parlays;
+    document.getElementById('money-parlays').textContent =
+        slips ? `Plus ${dollars(stake)} on ${slips} parlay${slips === 1 ? '' : 's'}.` : 'Singles only.';
+    document.getElementById('money-markets').innerHTML = renderMoneyMarkets(money.markets);
+    document.getElementById('money-futures').innerHTML = renderMoneyMarkets(money.futures);
+}
+
+async function loadMoney() {
+    try {
+        const response = await fetchWithTimeout('/api/money', {}, 10000);
+        if (!response.ok) {
+            showError('Could not load the money. Please refresh the page.');
+            return false;
+        }
+        renderMoney(await response.json());
+        return true;
+    } catch (error) {
+        console.error('Error loading money:', error);
+        showError('Could not load the money. Please refresh the page.');
+        return false;
+    }
+}
+
 let leagueRendered = false;
+let moneyRendered = false;
 let modelRendered = false;
 let matchupsRendered = false;
 let teamsRendered = false;
@@ -1028,6 +1087,9 @@ async function activateTab(tab) {
     }
     if (tab === 'model' && !modelRendered) {
         modelRendered = await loadModelReport();
+    }
+    if (tab === 'money' && !moneyRendered) {
+        moneyRendered = await loadMoney();
     }
 }
 
