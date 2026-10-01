@@ -172,11 +172,11 @@ All settings come from `pipeline/settings.py`, which reads `.env` at the project
 | Season | `--season`, else `PIPELINE_SEASON`, else Sleeper's `/state/nfl` | — |
 | Week | `--week` (required for `run`), else Sleeper's `/state/nfl` | — |
 | League | `PIPELINE_LEAGUE_ID`, else discovery: the league of `SLEEPER_USERNAME` for the season whose `previous_league_id` chain leads back to `LEAGUE_ID` | — |
-| Model version | `PIPELINE_MODEL_VERSION` | `v2.3` |
+| Model version | `PIPELINE_MODEL_VERSION` | `v3` |
 | Data directory | `PIPELINE_DATA_DIR` | `backend/data` |
 | Simulations, seed | `Settings` fields | 50,000, 1738 |
 | Fleaflicker league | `FLEAFLICKER_LEAGUE_ID`, read by that source at fetch time | unset: the source fails, the run goes on |
 | Production database | `DATABASE_URL` (publish only) | required to publish |
 | Chart target | `PUBLISH_CHARTS_TARGET` (publish only) | `root@143.198.183.213:/var/lib/tncasino/analytics/` |
 
-`fit-model` and `migrate-legacy` read only the local databases, so they ask Sleeper for nothing and need no season, week or league. Model parameters are versioned JSON in `pipeline/model/params/`: `v1` is the frozen baseline, `v2` to `v2.3` were fitted on 2025 weeks 10 to 16, and a fitted version is gated against v1 before it becomes the default.
+`fit-model` and `migrate-legacy` read only the local databases, so they ask Sleeper for nothing and need no season, week or league. Model parameters are versioned JSON in `pipeline/model/params/`: `v1` is the frozen baseline, `v2` to `v2.3` were fitted on 2025 weeks 10 to 16, `v3` is v2.3 amended by hand with source disagreement in σ and a horizon discount for future weeks, and a fitted version is gated against v1 before it becomes the default.

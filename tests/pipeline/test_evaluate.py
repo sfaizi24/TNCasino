@@ -392,11 +392,12 @@ def test_a_simulated_week_scores_each_team_and_game_beside_what_happened():
 
 def test_starters_take_their_consensus_projection_or_keep_the_one_their_lineup_was_built_with():
     lineups = pd.DataFrame({"sleeper_player_id": ["a", "b"], "position": ["WR", "RB"], "legacy_mu": [11.0, 7.5]})
-    consensus = pd.DataFrame({"sleeper_player_id": ["a"], "mu": [12.0], "spread": [2.0]})
+    consensus = pd.DataFrame({"sleeper_player_id": ["a"], "mu": [12.0], "spread": [2.0], "n_sources": [3]})
 
     starters = recompute_starters(lineups, consensus, load_params("v1"))
 
     assert starters["mu"].tolist() == [12.0, 7.5]
     assert starters["spread"].tolist() == [2.0, 0.0]
+    assert starters["n_sources"].tolist() == [3, 1]
     # v1: sqrt((2 * spread)^2 + position sigma^2), with WR at 10 and RB at 9.
     assert starters["sigma"].tolist() == pytest.approx([np.sqrt(116.0), 9.0])

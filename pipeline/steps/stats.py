@@ -2,8 +2,8 @@
 
 mu is the weighted mean of the sources' points, each corrected by its source's bias at the player's
 position, spread is the sample standard deviation across sources, and sigma comes from the model's
-sigma formula; weights, biases and the formula come from the model parameters for
-settings.model_version. p10 and p90 are the player's points at the 10th and 90th percentiles of the
+sigma formula, given mu, the spread and how many sources it was measured on; weights, biases and the
+formula come from the model parameters for settings.model_version. p10 and p90 are the player's points at the 10th and 90th percentiles of the
 distribution the simulate step draws from, and source_low and source_high are the lowest and highest
 projections as the sources published them. Name, position and team come from Sleeper's nfl_players.
 """
@@ -107,7 +107,7 @@ def compute_player_stats(rows: list[sqlite3.Row], player: sqlite3.Row, params: d
         weights.append(source["weight"])
     mu = float(np.average(points, weights=weights))
     spread = float(np.std(points, ddof=1)) if len(points) >= 2 else 0.0
-    player_sigma = sigma(mu, player["position"], spread, params)
+    player_sigma = sigma(mu, player["position"], spread, len(points), params)
     return {
         "sleeper_player_id": player["player_id"],
         "player_name": f"{player['first_name'] or ''} {player['last_name'] or ''}".strip(),

@@ -111,7 +111,7 @@ from the environment, with no season, week or league, so nothing is asked of Sle
 fitted season's league in `league.db.leagues` (amended 2026-09-27).
 
 Fields: `season: int`, `week: int`, `league_id: str`, `seed: int` (default 1738),
-`n_sims: int` (default 50_000), `model_version: str` (default `"v2.3"` since 2026-09-30, `"v2.2"` from 2026-09-28, `"v2.1"` from 2026-09-27, `"v1"` before),
+`n_sims: int` (default 50_000), `model_version: str` (default `"v3"` since 2026-09-30, `"v2.3"` the same day, `"v2.2"` from 2026-09-28, `"v2.1"` from 2026-09-27, `"v1"` before),
 `data_dir: Path` (`backend/data`), `db_paths: dict[str, Path]` (league, projections, odds, pipeline),
 `sims_dir: Path` (`backend/data/sims`), `images_dir: Path` (`backend/data/images`),
 `sleeper_username: str`.
@@ -602,6 +602,18 @@ under a new version, with an `amended` block (`from_version`, `on`, `changed`, `
 alone reproduces 4.41, and an edit to v2.1 would leave the `player_week_stats` rows it already
 produced, with μ from the 4.41 bias, named as if they came from the new number.
 sources-2026-research.md §9 has the evidence and the week-4 check.
+
+Amended 2026-09-30 (v3). The `sigma` block gains a third formula, `hybrid`:
+σ = √(line(μ)² + (α·s̃)²) with s̃ the spread shrunk toward `typical_spread[position]` as if
+`prior_sources` more sources had reported it, and the file gains a `horizon` block
+(`discount_per_week`) that the playoffs step reads to shrink each future-week starter's μ toward
+the position mean by (1 − δ)^weeks_ahead. v3 is v2.3 with α 4, prior_sources 2, the week-4 typical
+spreads and δ 0.05, all set by hand. Why: the 2025 finding that disagreement is unpredictive was
+made on at most five sources a week, and 2026 has eight, so the model with half the sources is not
+the same model and the finding cannot be carried over or backtested; and the futures priced from
+today's rosters six to thirteen weeks out assume rosters stay healthy and unchanged. The check is
+calibrate's season-to-date coverage under v3, and a fit of α on the graded 2026 weeks.
+`fit-model` still writes the `linear` formula.
 
 Known v1 findings to fix: player sigma too wide at low mu and too narrow at high mu; source
 disagreement not predictive (so `alpha` carries little information); left tail too thin.

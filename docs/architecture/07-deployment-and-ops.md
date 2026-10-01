@@ -65,7 +65,7 @@ Publishing needs the operator's local `DATABASE_URL` to point at production Post
 | `SLEEPER_USERNAME`, `LEAGUE_ID` | pipeline settings | pipeline, unless `PIPELINE_LEAGUE_ID` is set | The season's league is the one of the user's leagues that descends from `LEAGUE_ID` |
 | `PIPELINE_SEASON` | pipeline settings | no | Defaults to Sleeper's current NFL season |
 | `PIPELINE_LEAGUE_ID` | pipeline settings | no | Skips league discovery; set it when discovery finds more than one league |
-| `PIPELINE_MODEL_VERSION` | pipeline settings | no | Parameter file in `pipeline/model/params/`; defaults to `v2.3` |
+| `PIPELINE_MODEL_VERSION` | pipeline settings | no | Parameter file in `pipeline/model/params/`; defaults to `v3` |
 | `PIPELINE_DATA_DIR` | pipeline settings | no | Defaults to `backend/data` (databases, sims, images) |
 | `PUBLISH_CHARTS_TARGET` | the `publish` step | no | `scp` destination for the charts; defaults to `root@143.198.183.213:/var/lib/tncasino/analytics/` |
 | `FLEAFLICKER_LEAGUE_ID` | pipeline (Fleaflicker source) | for that source | The owner's own Fleaflicker league; unset, the source fails and a full run goes on with the others |

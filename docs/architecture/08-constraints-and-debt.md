@@ -41,6 +41,7 @@ Problems and follow-ups found while writing these docs (2026-09-26). Check them 
 | | Item | Where |
 |---|---|---|
 | L | Simulation results depend on the order starters are drawn from one seeded RNG: the same lineups and seed reproduce the same totals, and reordering the starters changes them. | `pipeline/model/sampling.py` |
+| M | v3's disagreement term (α = 4, the typical spreads, two prior sources) and the futures' horizon discount (5% a week) are set by hand with no backtest: no past season has the 2026 sources, and the 2025 strength-persistence check showed no decay to fit a rate to. `fit-model` fits only the `linear` σ formula, so a refit would drop the term unless the fit is extended to the hybrid formula. Check calibrate's coverage under v3 as weeks are graded, and fit α on the 2026 weeks once six or more are graded (around week 10). | `pipeline/model/params/v3.json`, `pipeline/model/fit.py`, [03 §1](03-modeling-and-odds.md#1-player-distributions), [03 §6](03-modeling-and-odds.md#6-playoff-odds) |
 
 ## Web app
 

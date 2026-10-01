@@ -91,8 +91,8 @@ def player_weeks(rows: pd.DataFrame, sources: dict) -> pd.DataFrame:
 
 
 def player_sigmas(players: pd.DataFrame, params: dict) -> list[float]:
-    columns = zip(players["mu"], players["position"], players["spread"], strict=True)
-    return [sigma(mu, position, spread, params) for mu, position, spread in columns]
+    columns = zip(players["mu"], players["position"], players["spread"], players["n_sources"], strict=True)
+    return [sigma(mu, position, spread, n_sources, params) for mu, position, spread, n_sources in columns]
 
 
 def pit(players: pd.DataFrame, params: dict) -> tuple[np.ndarray, np.ndarray]:
@@ -259,9 +259,11 @@ def score_players(players: pd.DataFrame, params: dict) -> pd.DataFrame:
 def recompute_starters(lineups: pd.DataFrame, consensus: pd.DataFrame, params: dict) -> pd.DataFrame:
     """The week's starters with mu and sigma recomputed from their projections under `params`. A starter without
     projections, such as a waiver pickup, keeps the mu its lineup was built with and gets a single source's sigma."""
-    starters = lineups.merge(consensus[["sleeper_player_id", "mu", "spread"]], on="sleeper_player_id", how="left")
+    columns = ["sleeper_player_id", "mu", "spread", "n_sources"]
+    starters = lineups.merge(consensus[columns], on="sleeper_player_id", how="left")
     starters["mu"] = starters["mu"].fillna(starters["legacy_mu"])
     starters["spread"] = starters["spread"].fillna(0.0)
+    starters["n_sources"] = starters["n_sources"].fillna(1).astype(int)
     starters["sigma"] = player_sigmas(starters, params)
     return starters
 

@@ -66,7 +66,7 @@
             </li>
             <li>
                 <h3>Player distributions</h3>
-                <p>Each player gets a right-skewed distribution around their projection, with a fitted probability of a near-zero game. Teammates' scores are correlated.</p>
+                <p>Each player gets a right-skewed distribution around their projection, wider where the sources disagree, with a fitted probability of a near-zero game. Teammates' scores are correlated.</p>
                 <figure class="ab-figure">
                     <svg class="ab-curve" id="playerCurve" viewBox="0 0 320 150" role="img" aria-labelledby="curveCaption"></svg>
                     <figcaption id="curveCaption">A WR projected for 14 points under V4. Dud probability: 8%.</figcaption>
@@ -106,7 +106,7 @@
 
     <section class="ab-section">
         <h2 class="ab-h2">Model performance</h2>
-        <p>Backtested on 2025 weeks 10&ndash;16. Share of player scores inside their 80% prediction interval:</p>
+        <p>The base distributions were backtested on 2025 weeks 10&ndash;16. Share of player scores inside their 80% prediction interval:</p>
         <div class="ab-bars" role="img" aria-label="Player scores inside their 80% interval: V3 66%, V4 77%, target 80%">
             <div class="ab-bar-row">
                 <span class="ab-bar-label">V3</span>
@@ -120,7 +120,7 @@
             </div>
             <span class="ab-bar-target" aria-hidden="true">80% target</span>
         </div>
-        <p>Team scores fell inside their 80% interval 79% of the time, with a mean absolute error of 20 points. Moneyline Brier score: 0.236 (V3: 0.237).</p>
+        <p>Team scores fell inside their 80% interval 79% of the time, with a mean absolute error of 20 points. Moneyline Brier score: 0.236 (V3: 0.237). The source-disagreement term and the futures' discount of distant weeks were added in 2026 week 4 and are graded as the season plays out.</p>
     </section>
 
     <footer class="ab-credits">

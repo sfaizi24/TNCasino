@@ -5,10 +5,12 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from pipeline import markets
 from pipeline.db import connect
+from pipeline.model.params import load_params
 from pipeline.runner import StepContext, StepResult
 from pipeline.settings import Settings
 from pipeline.sources import SOURCE_NAMES
@@ -434,7 +436,10 @@ def test_the_summary_lists_each_future_week_and_the_leaders(settings):
     assert summary["future_weeks"] == [12, 13, 14]
     assert summary["playoff_weeks"] == [14]
     week_entry = {"sources": ["espn.com", "fantasysharks.com", "sleeper.com"], "n_players": 20, "empty_slots": 0}
-    assert summary["projections"] == [{"week": week} | week_entry for week in [12, 13, 14]]
+    retained = {12: 0.95, 13: 0.9025, 14: 0.8574}
+    assert summary["projections"] == [
+        {"week": week} | week_entry | {"edge_retained": retained[week]} for week in [12, 13, 14]
+    ]
     assert summary["n_sims"] == N_SIMS
     assert summary["standings_bytes"] == len(standings_rows(settings)[0]["standings"])
     make_playoffs = probabilities_by_team(settings, "betting_odds_make_playoffs")
@@ -479,6 +484,21 @@ def test_players_on_a_bye_or_ruled_out_leave_their_slots_empty(settings, league_
 
     # Week 12: roster 4 is on a bye (4 slots) and roster 2 has no quarterback (1); weeks 13 and 14 only the latter.
     assert [week["empty_slots"] for week in summary["projections"]] == [5, 1, 1]
+
+
+def test_a_later_week_keeps_part_of_each_rosters_edge(settings):
+    starters = pd.DataFrame({"position": ["QB", "QB", "RB", "RB"], "mu": [24.0, 16.0, 10.0, 10.0]})
+
+    discounted = playoffs.discount_edges(starters, playoffs.edge_retained(2, load_params("v3")))
+
+    # The quarterbacks' edges shrink by 0.95^2 toward their mean of 20; running backs already at the mean stay.
+    assert discounted["mu"].tolist() == pytest.approx([23.61, 16.39, 10.0, 10.0])
+    assert starters["mu"].tolist() == [24.0, 16.0, 10.0, 10.0]
+
+
+def test_a_model_without_a_horizon_keeps_the_whole_edge():
+    assert playoffs.edge_retained(6, load_params("v2.3")) == 1.0
+    assert playoffs.edge_retained(0, load_params("v3")) == 1.0
 
 
 def test_future_lineups_stay_in_memory(settings):

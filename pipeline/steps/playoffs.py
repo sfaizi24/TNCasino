@@ -1,7 +1,8 @@
 """Playoffs step: price the season's futures from simulated final standings and the playoff bracket they seed.
 
 The current week comes from the simulate step's draws. Each later week, the playoff weeks included, is scraped,
-matched and simulated here from the rosters as they stand; every simulated season is ranked on top of the record to
+matched and simulated here from the rosters as they stand, each roster's edge discounted by how far ahead the week
+is; every simulated season is ranked on top of the record to
 date, and its seeds play the bracket on the playoff weeks' scores. The markets are priced through pipeline.markets
 on those simulated seasons, which are stored as the run's standings matrix so the app can price futures parlays on
 them. Make playoffs is priced YES and NO for every team; last place and champion for every team at its fair odds,
@@ -264,10 +265,17 @@ def simulate_future_weeks(
         week_started = time.perf_counter()
         projected = project_week(ctx, week, sources, sleeper_players)
         starters, empty_slots = pick_starters(ctx, week, teams, players, slots)
-        scores[week] = team_scores(starters, params, n_sims, settings.seed + week, columns)
+        retained = edge_retained(week - settings.week, params)
+        scores[week] = team_scores(discount_edges(starters, retained), params, n_sims, settings.seed + week, columns)
 
         entries.append(
-            {"week": week, "sources": projected.sources, "n_players": projected.n_players, "empty_slots": empty_slots}
+            {
+                "week": week,
+                "sources": projected.sources,
+                "n_players": projected.n_players,
+                "empty_slots": empty_slots,
+                "edge_retained": round(retained, 4),
+            }
         )
         for website, failed_checks in projected.failures.items():
             dropped_weeks[(website, failed_checks)].append(str(week))
@@ -393,6 +401,23 @@ def pick_starters(
                 }
             )
     return pd.DataFrame(starters, columns=STARTER_COLUMNS), empty_slots
+
+
+def edge_retained(weeks_ahead: int, params: dict) -> float:
+    """The share of a roster's edge today that it keeps in a week this far ahead. Model versions before v3 have
+    no horizon block and keep the whole edge."""
+    horizon = params.get("horizon")
+    if horizon is None:
+        return 1.0
+    return (1 - horizon["discount_per_week"]) ** weeks_ahead
+
+
+def discount_edges(starters: pd.DataFrame, retained: float) -> pd.DataFrame:
+    """Shrink each starter's mu toward the league's mean mu at his position, keeping `retained` of the difference.
+    Injuries and roster moves accumulate between now and a later week, so the lineups as they stand overstate how
+    far apart the teams will be; sigma is left as it is."""
+    position_mean = starters.groupby("position")["mu"].transform("mean")
+    return starters.assign(mu=position_mean + retained * (starters["mu"] - position_mean))
 
 
 def team_scores(starters: pd.DataFrame, params: dict, n_sims: int, seed: int, columns: dict[int, int]) -> np.ndarray:
