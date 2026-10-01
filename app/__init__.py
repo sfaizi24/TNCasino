@@ -7,7 +7,7 @@ from flask import Flask, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_dotenv()
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 
 def create_app(config=None):
