@@ -180,18 +180,31 @@ def read_tables(
     skipped = []
     for database, source, target in TABLES:
         conn = local[database]
-        columns = {name for (name,) in conn.execute("SELECT name FROM pragma_table_info(?)", (source,))}
+        columns = dict(conn.execute("SELECT name, type FROM pragma_table_info(?)", (source,)))
         if not columns:
             skipped.append(target)
             continue
         frame = pd.read_sql(season_query(source, columns), conn, params={"season": season, "league_id": league_id})
+        if frame.empty:
+            # With no values to infer types from, the declared ones carry over to the staging table.
+            frame = frame.astype({name: pandas_dtype(declared) for name, declared in columns.items()})
         if "run_id" in columns and source not in RUN_HISTORY:
             frame = keep_latest_run(frame, local["odds"])
         tables[target] = frame
     return tables, skipped
 
 
-def season_query(table: str, columns: set[str]) -> str:
+def pandas_dtype(declared: str) -> str:
+    """The pandas dtype that to_sql writes as a column's declared SQLite type."""
+    declared = declared.upper()
+    if "INT" in declared:
+        return "Int64"
+    if declared in {"REAL", "FLOAT", "DOUBLE"}:
+        return "float64"
+    return "object"
+
+
+def season_query(table: str, columns: dict[str, str]) -> str:
     if table == "pipeline_steps":
         return "SELECT * FROM pipeline_steps WHERE run_id IN (SELECT run_id FROM pipeline_runs WHERE season = :season)"
     if "season" in columns:

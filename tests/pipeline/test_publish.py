@@ -488,6 +488,24 @@ def test_a_table_missing_locally_is_skipped_with_a_warning(settings, local, targ
     assert step["status"] == "warn"
 
 
+def test_an_empty_table_publishes_with_its_declared_column_types(settings, local, target):
+    """A week with no source reviews must not leave production a table whose week is text."""
+    create_every_table(local)
+    add_runs(local["pipeline"])
+
+    run_publish(settings, no_charts=True)
+
+    columns = {column["name"]: str(column["type"]) for column in inspect(target).get_columns("source_reviews")}
+    assert columns == {
+        "season": "BIGINT",
+        "week": "BIGINT",
+        "source": "TEXT",
+        "verdict": "TEXT",
+        "note": "TEXT",
+        "reviewed_at": "TEXT",
+    }
+
+
 def test_a_new_run_stores_its_score_matrix_by_ascending_roster_id(settings, local, target):
     add_simulation(settings, local["odds"], WEEK_4_SIMULATION, 4, "2026-09-23T03:01:00+00:00")
     add_runs(local["pipeline"])
