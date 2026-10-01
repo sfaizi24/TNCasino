@@ -1,96 +1,390 @@
-    .about-container {
-        max-width: 900px;
-        margin: 0 auto;
-        line-height: 1.6;
+.ab {
+    max-width: 680px;
+    margin: 0 auto;
+    color: var(--tnc-fg-faint);
+    font-size: var(--tnc-fs-16);
+    line-height: var(--tnc-lh-loose);
+}
+
+.ab sup {
+    font-size: 0.55em;
+}
+
+/* Hero */
+
+.ab-hero {
+    padding: 12px 0 32px;
+    border-bottom: 1px solid var(--tnc-border);
+}
+
+.ab-eyebrow {
+    margin-bottom: 10px;
+    color: var(--tnc-blue);
+    font-size: var(--tnc-fs-12);
+    font-weight: var(--tnc-fw-semi);
+    letter-spacing: var(--tnc-track-caps);
+    text-transform: uppercase;
+}
+
+.ab-title {
+    margin-bottom: 14px;
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-32);
+    font-weight: var(--tnc-fw-black);
+    letter-spacing: -0.03em;
+    line-height: var(--tnc-lh-tight);
+}
+
+.ab-lede {
+    font-size: var(--tnc-fs-18);
+    line-height: var(--tnc-lh-normal);
+}
+
+.ab-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1px;
+    margin-top: 24px;
+    background: var(--tnc-border);
+    border: 1px solid var(--tnc-border);
+    border-radius: var(--tnc-r-lg);
+    overflow: hidden;
+}
+
+.ab-stats div {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 2px;
+    padding: 14px;
+    background: var(--tnc-surface);
+}
+
+.ab-stats dt {
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-12);
+    line-height: 1.3;
+}
+
+.ab-stats dd {
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-24);
+    font-weight: var(--tnc-fw-bold);
+    line-height: 1.2;
+}
+
+/* Sections */
+
+.ab-section {
+    padding: 32px 0;
+    border-bottom: 1px solid var(--tnc-border);
+}
+
+.ab-h2 {
+    margin-bottom: 18px;
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-20);
+    font-weight: var(--tnc-fw-bold);
+    letter-spacing: -0.01em;
+}
+
+.ab-section p + p,
+.ab-section p + .ab-bars,
+.ab-bars + p {
+    margin-top: 14px;
+}
+
+/* The five steps, numbered down a rail */
+
+.ab-steps {
+    list-style: none;
+    counter-reset: step;
+}
+
+.ab-steps li {
+    position: relative;
+    padding: 0 0 26px 44px;
+    counter-increment: step;
+}
+
+.ab-steps li:last-child {
+    padding-bottom: 0;
+}
+
+.ab-steps li::before {
+    content: counter(step);
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--tnc-blue-tint);
+    border: 1px solid var(--tnc-blue);
+    border-radius: var(--tnc-r-pill);
+    color: var(--tnc-blue);
+    font-size: var(--tnc-fs-13);
+    font-weight: var(--tnc-fw-bold);
+}
+
+.ab-steps li:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 32px;
+    bottom: 4px;
+    left: 14px;
+    width: 1px;
+    background: var(--tnc-border);
+}
+
+.ab-steps h3 {
+    margin-bottom: 4px;
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-16);
+    font-weight: var(--tnc-fw-semi);
+    line-height: 28px;
+}
+
+/* The player curve */
+
+.ab-figure {
+    margin-top: 16px;
+    padding: 14px 14px 12px;
+    background: var(--tnc-surface);
+    border: 1px solid var(--tnc-border);
+    border-radius: var(--tnc-r-lg);
+}
+
+.ab-curve {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+}
+
+.ab-curve .body {
+    fill: var(--tnc-blue-tint);
+    stroke: var(--tnc-blue);
+    stroke-width: 1.5;
+}
+
+.ab-curve .dud {
+    fill: var(--tnc-pending-tint);
+    stroke: var(--tnc-pending);
+    stroke-width: 1.5;
+}
+
+.ab-curve .axis {
+    stroke: var(--tnc-border);
+}
+
+.ab-curve .projection {
+    stroke: var(--tnc-fg-muted);
+    stroke-dasharray: 3 3;
+}
+
+.ab-curve text {
+    fill: var(--tnc-fg-muted);
+    font-family: var(--tnc-font-sans);
+    font-size: 10px;
+}
+
+.ab-curve .label {
+    fill: var(--tnc-fg);
+    font-weight: var(--tnc-fw-semi);
+}
+
+.ab-figure figcaption {
+    margin-top: 8px;
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-13);
+    line-height: var(--tnc-lh-normal);
+}
+
+/* Count to price */
+
+.ab-converter {
+    padding: 18px 16px;
+    background: var(--tnc-surface);
+    border: 1px solid var(--tnc-border);
+    border-radius: var(--tnc-r-lg);
+}
+
+.ab-converter-label {
+    display: block;
+    color: var(--tnc-fg-faint);
+    font-size: var(--tnc-fs-14);
+}
+
+.ab-converter-label strong {
+    color: var(--tnc-fg);
+}
+
+.ab-slider {
+    width: 100%;
+    height: 32px;
+    margin: 6px 0 10px;
+    accent-color: var(--tnc-blue);
+    cursor: pointer;
+}
+
+.ab-converter-out {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+
+.ab-converter-out div {
+    display: flex;
+    flex-direction: column-reverse;
+}
+
+.ab-converter-out dt {
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-12);
+}
+
+.ab-converter-out dd {
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-20);
+    font-weight: var(--tnc-fw-bold);
+}
+
+#winsOdds {
+    color: var(--tnc-blue);
+}
+
+.ab-note {
+    margin-top: 12px;
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-14);
+}
+
+/* Markets */
+
+.ab-markets {
+    display: grid;
+    gap: 16px;
+}
+
+.ab-markets dt {
+    color: var(--tnc-fg);
+    font-weight: var(--tnc-fw-semi);
+}
+
+.ab-markets dd {
+    font-size: var(--tnc-fs-14);
+    line-height: var(--tnc-lh-normal);
+}
+
+/* House rules */
+
+.ab-rules {
+    list-style: none;
+    display: grid;
+    gap: 12px;
+}
+
+.ab-rules li {
+    padding-left: 14px;
+    border-left: 2px solid var(--tnc-border);
+}
+
+.ab-rules strong {
+    color: var(--tnc-fg);
+    font-weight: var(--tnc-fw-semi);
+}
+
+/* Scorecard */
+
+.ab-bars {
+    position: relative;
+    display: grid;
+    gap: 10px;
+    padding: 16px 0 24px;
+}
+
+.ab-bar-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 10px;
+    align-items: center;
+}
+
+.ab-bar-label {
+    color: var(--tnc-fg-faint);
+    font-size: var(--tnc-fs-13);
+}
+
+.ab-bar {
+    grid-row: 2;
+    height: 10px;
+    background: var(--tnc-surface-2);
+    border-radius: var(--tnc-r-pill);
+    overflow: hidden;
+}
+
+.ab-bar-fill {
+    display: block;
+    height: 100%;
+    background: var(--tnc-blue);
+    border-radius: var(--tnc-r-pill);
+}
+
+.ab-bar-fill.is-old {
+    background: var(--tnc-fg-muted);
+}
+
+.ab-bar-value {
+    grid-row: 2;
+    min-width: 36px;
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-13);
+    font-weight: var(--tnc-fw-semi);
+    text-align: right;
+}
+
+/* The bars' track ends 46px short of the box (the value column and its gap), so 80% of the track sits here. */
+.ab-bar-target {
+    position: absolute;
+    top: 8px;
+    bottom: 0;
+    left: calc((100% - 46px) * 0.8);
+    padding-top: 0;
+    border-left: 1px dashed var(--tnc-win);
+    color: var(--tnc-win);
+    font-size: var(--tnc-fs-11);
+    line-height: 1;
+    display: flex;
+    align-items: flex-end;
+    padding-left: 4px;
+    white-space: nowrap;
+}
+
+/* Credits */
+
+.ab-credits {
+    padding: 24px 0 8px;
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-13);
+}
+
+.ab-credits a {
+    color: var(--tnc-blue);
+}
+
+@media (min-width: 768px) {
+    .ab-title {
+        font-size: var(--tnc-fs-48);
     }
 
-    .about-header {
-        margin-bottom: 24px;
+    .ab-stats {
+        grid-template-columns: repeat(4, 1fr);
     }
 
-    .about-header h1 {
-        font-size: 1.6em;
-        margin-bottom: 8px;
-        color: var(--tnc-fg);
+    .ab-markets {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px 28px;
     }
-
-    .about-header p {
-        font-size: 0.95em;
-        color: #a8b3c1;
-    }
-
-    .section {
-        background: var(--tnc-surface);
-        border: 1px solid var(--tnc-border);
-        border-radius: 8px;
-        padding: 20px 16px;
-        margin-bottom: 20px;
-    }
-
-    .section h2 {
-        font-size: 1.3em;
-        margin-bottom: 14px;
-        color: var(--tnc-blue);
-        border-bottom: 2px solid var(--tnc-border);
-        padding-bottom: 8px;
-    }
-
-    .section h3 {
-        font-size: 1.1em;
-        margin: 16px 0 10px 0;
-        color: var(--tnc-fg);
-    }
-
-    .section p {
-        color: #a8b3c1;
-        margin-bottom: 12px;
-        font-size: 0.95em;
-    }
-
-    .section ul {
-        margin: 12px 0 12px 20px;
-        color: #a8b3c1;
-    }
-
-    .section li {
-        margin-bottom: 10px;
-        font-size: 0.95em;
-    }
-
-    .highlight {
-        color: var(--tnc-fg);
-        font-weight: 500;
-    }
-
-    .visual-example {
-        margin: 20px 0;
-        width: 100%;
-    }
-
-    .visual-example img {
-        width: 100%;
-        height: auto;
-        display: block;
-    }
-
-    .visual-example p {
-        text-align: center;
-        font-size: 0.85em;
-        color: #a8b3c1;
-        font-style: italic;
-        margin-top: 8px;
-    }
-
-    .lock-notice {
-        background: rgba(20, 147, 255, 0.1);
-        border-left: 4px solid var(--tnc-blue);
-        padding: 16px;
-        margin-top: 20px;
-        border-radius: 4px;
-    }
-
-    .lock-notice p {
-        color: var(--tnc-fg);
-        margin: 0;
-        font-size: 0.95em;
-    }
+}

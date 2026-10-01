@@ -1,54 +1,119 @@
 {% extends "base.html" %}
 
-{% block title %}About{% endblock %}
+{% block title %}About - TNCasino{% endblock %}
 
 {% block page_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/about.css') }}">
 {% endblock %}
 
 {% block content %}
-<div class="about-container">
-    <div class="about-header">
-        <h1>What is TNC Casino?</h1>
-        <p>TLDR: Odds are calculated by running 50,000 simulations of each team's lineup and seeing how often each team wins.</p>
-    </div>
-    
-    <div class="section">
-        <h2>Getting Projections and Lineup Data</h2>
-        
-        <h3>Step 1: Scraping Projections</h3>
-        <p>I pull player projections from five different sources which I will not name because my wife is not yet bar-certified. I then combine them with the league data I get from Sleeper.</p>
-        
-        <p>Data provided courtesy of RotoBaller.</p>
-        
-        <p>I then calculate "expected lineups" for each team, factoring in injuries, bye weeks, and start/sit decisions. This process isn't perfect especially because all of the backend data you see on this site is ran and updated whenever I feel like.</p>
-        
-        <h3>Step 2: Building in Variance</h3>
-        <p>Of course I'm not gonna just average the projections and call it a day. I use 2 inputs to determine a players point-scoring distribution:</p>
-        
-        <ul>
-            <li><span class="highlight">Projection disagreement:</span> The variance between projections from different sources. A wide spread between projections increases our variance estimate.</li>
-            <li><span class="highlight">Historical positional variance:</span> A super quick historical analysis gave me some sigma values to bake in for each position.</li>
-        </ul>
-        
-    </div>
-    
-    <div class="section">
-        <h2>Monte Carlo Simulations</h2>
-        
-        <p>Once we have the values for each player, we can use Monte Carlo simulations to run 50,000 simus of each team's lineup and see how many points they score.</p>
-        
-        <p>Simulations are done with a log-normal distribution so there is a heavy right-skew</p>
-        
-        <div class="visual-example">
-            <img src="/analytics-images/dist_Team_sfaizi24_week_14.png" alt="Example distribution showing 50,000 simulated outcomes">
+<article class="ab">
+    <header class="ab-hero">
+        <p class="ab-eyebrow">How The Model<sup>&trade;</sup> V4 works</p>
+        <h1 class="ab-title">Every line on this site is a count.</h1>
+        <p class="ab-lede">Each week I play every matchup in the league 50,000 times. If a team wins 32,000 of them, it's a 64% favorite and its moneyline is &minus;178. No bookie, no house edge, just counting.</p>
+        <dl class="ab-stats">
+            <div><dt>Simulated weeks per run</dt><dd class="tnc-tab-num">50,000</dd></div>
+            <div><dt>Projection sources</dt><dd class="tnc-tab-num">8</dd></div>
+            <div><dt>Simulated seasons for futures</dt><dd class="tnc-tab-num">20,000</dd></div>
+            <div><dt>House edge</dt><dd class="tnc-tab-num">0%</dd></div>
+        </dl>
+    </header>
+
+    <section class="ab-section">
+        <h2 class="ab-h2">How a week gets priced</h2>
+        <ol class="ab-steps">
+            <li>
+                <h3>Collect the projections</h3>
+                <p>Eight sources, pulled midweek and again after Thursday's game. Each one is checked against Sleeper before it counts: the wrong week, scrambled positions or numbers way off everyone else's, and that source sits the week out. I won't name them all because my wife is not yet bar-certified.</p>
+            </li>
+            <li>
+                <h3>Correct for each source's lean</h3>
+                <p>Every source leans somewhere. One projects quarterbacks too high, another lowballs running backs. Graded against last season's real scores, each source is corrected for its lean at every position and weighted by how close it usually lands.</p>
+            </li>
+            <li>
+                <h3>Give every player a range</h3>
+                <p>A projection is a guess, so each player gets a distribution instead of a number. It leans right, because boom weeks run bigger than bust weeks, and it carries a real chance of a dud: the receiver hurt on the first drive, the backup who never sees the field. Teammates move together, so when a quarterback goes off, his receivers usually do too.</p>
+                <figure class="ab-figure">
+                    <svg class="ab-curve" id="playerCurve" viewBox="0 0 320 150" role="img" aria-labelledby="curveCaption"></svg>
+                    <figcaption id="curveCaption">A receiver projected for 14 points. The shelf at zero is his dud chance, about 8%. The long tail on the right is the 30-point week.</figcaption>
+                </figure>
+            </li>
+            <li>
+                <h3>Set the lineups</h3>
+                <p>Each team starts its best healthy lineup. Byes, injuries and IR are skipped, and an empty slot is filled from waivers in FAAB order, the way a real owner would before kickoff.</p>
+            </li>
+            <li>
+                <h3>Play the week 50,000 times</h3>
+                <p>Every starter's score is drawn, each team's scores are added up, and every market is judged in every one of the 50,000 versions of the week. The odds are how often each thing happened.</p>
+            </li>
+        </ol>
+    </section>
+
+    <section class="ab-section">
+        <h2 class="ab-h2">From a count to a price</h2>
+        <div class="ab-converter">
+            <label class="ab-converter-label" for="winsSlider">
+                Wins in <strong class="tnc-tab-num" id="winsCount">32,000</strong> of 50,000 sims
+            </label>
+            <input class="ab-slider" id="winsSlider" type="range" min="500" max="49500" step="500" value="32000">
+            <dl class="ab-converter-out">
+                <div><dt>Chance</dt><dd class="tnc-tab-num" id="winsChance">64%</dd></div>
+                <div><dt>Odds</dt><dd class="tnc-tab-num" id="winsOdds">&minus;178</dd></div>
+                <div><dt>$100 returns</dt><dd class="tnc-tab-num" id="winsReturn">$156.18</dd></div>
+            </dl>
         </div>
-        
-        <p>These 50,000 simulations turn into the odds you see on the betting board. If Arman was the highest scorer in 6,800 of the simulations, then he has a 13.6% of being the highest scorer, which converts to betting odds of +637</p>
-    </div>
-    
-    <div class="lock-notice">
-        <p><strong>The Lock:</strong> You can place, modify, or cancel bets anytime before The Lock, which happens right after Thursday Night Football kicks off. Once locked, all bets stay in place and settle after Monday Night Football ends.</p>
-    </div>
-</div>
+        <p class="ab-note">The price is the fair one. A book would shade it to keep a cut; this one doesn't, so a 1-in-50,000 longshot is priced like one.</p>
+    </section>
+
+    <section class="ab-section">
+        <h2 class="ab-h2">What you can bet</h2>
+        <dl class="ab-markets">
+            <div><dt>Moneyline</dt><dd>Who wins the matchup.</dd></div>
+            <div><dt>Spreads</dt><dd>Any line from &minus;50 to +50, each priced at that line.</dd></div>
+            <div><dt>Over/Under</dt><dd>A team's total, set at its median so both sides are even money.</dd></div>
+            <div><dt>Highest &amp; Lowest Scorer</dt><dd>The week's top and bottom team.</dd></div>
+            <div><dt>Parlays</dt><dd>Two to four picks, priced on the sims where every one of them hits, so picks that go together aren't priced as if they don't.</dd></div>
+            <div><dt>Futures</dt><dd>First place, making the playoffs, last place and the title, from 20,000 simulated rest-of-seasons.</dd></div>
+        </dl>
+    </section>
+
+    <section class="ab-section">
+        <h2 class="ab-h2">House rules</h2>
+        <ul class="ab-rules">
+            <li><strong>When.</strong> New odds go up midweek and again after Thursday's game. Betting pauses at each kickoff until the next update and locks for the week at Sunday's first kickoff.</li>
+            <li><strong>Changing your mind.</strong> Until the odds update, cancel any bet for a full refund. After they update, cash out for 95% of what it's worth at the new odds.</li>
+            <li><strong>Settling.</strong> Bets settle from Sleeper's final scores after Monday night. Landing exactly on a line is a push, and the stake comes back.</li>
+            <li><strong>Stakes.</strong> The money is fake and everyone starts with $1,000. The prizes are real: $20 for the week's top net profit, $100 for the season's.</li>
+        </ul>
+    </section>
+
+    <section class="ab-section">
+        <h2 class="ab-h2">Is it any good?</h2>
+        <p>Before switching to V4 I tested it on 2025's weeks 10&ndash;16, predicting each week from the others. A player's 80% range should catch 80% of real scores.</p>
+        <div class="ab-bars" role="img" aria-label="Share of player scores inside their 80% range: last season's model 66%, The Model V4 77%, target 80%">
+            <div class="ab-bar-row">
+                <span class="ab-bar-label">Last season's model</span>
+                <span class="ab-bar"><span class="ab-bar-fill is-old" style="width: 66%"></span></span>
+                <span class="ab-bar-value tnc-tab-num">66%</span>
+            </div>
+            <div class="ab-bar-row">
+                <span class="ab-bar-label">The Model<sup>&trade;</sup> V4</span>
+                <span class="ab-bar"><span class="ab-bar-fill" style="width: 77%"></span></span>
+                <span class="ab-bar-value tnc-tab-num">77%</span>
+            </div>
+            <span class="ab-bar-target" aria-hidden="true">80% target</span>
+        </div>
+        <p>Team totals land inside their 10th&ndash;90th percentile range 79% of the time, and the average miss on a team's score is about 20 points. Fantasy football is noisy, which is the whole reason there's something to bet on. The moneylines came out a little sharper than last season's, but not yet by enough to brag about.</p>
+    </section>
+
+    <footer class="ab-credits">
+        <p>Data provided courtesy of RotoBaller.</p>
+        <p>Built by Samer. The code is <a href="https://github.com/sfaizi24/TNCasino">on GitHub</a>.</p>
+    </footer>
+</article>
+{% endblock %}
+
+{% block page_js %}
+<script src="{{ url_for('static', filename='js/about.js') }}"></script>
 {% endblock %}
