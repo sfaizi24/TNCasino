@@ -176,30 +176,55 @@ def test_get_lowest_scorer(client, seeded_analytics, betting_period):
     assert data[0]["run_id"] == RUN_ID
 
 
-def test_get_first_place(client, seeded_analytics, betting_period):
-    resp = client.get("/api/first_place")
-    data = resp.get_json()
-
-    assert len(data) == 2
-    assert data[0]["owner"] == "Alice A"
-    assert data[0]["odds"] == "-120"
-    assert data[0]["team_id"] == 1
-    assert data[0]["market"] == "2026-first_place"
-    assert data[0]["run_id"] == RUN_ID
-    assert data[0]["week"] == 10
+def test_first_place_is_no_longer_offered(client, seeded_analytics, betting_period):
+    assert client.get("/api/first_place").status_code == 404
 
 
-def test_get_make_playoffs(client, seeded_analytics, betting_period):
-    resp = client.get("/api/make_playoffs")
-    data = resp.get_json()
+def test_make_playoffs_lists_yes_and_no(client, seeded_analytics, betting_period):
+    data = client.get("/api/make_playoffs").get_json()
 
-    assert len(data) == 2
-    assert data[0]["win_prob"] == 80.0
-    assert data[0]["odds"] == "-400"
-    assert data[0]["team_id"] == 1
-    assert data[0]["market"] == "2026-make_playoffs-1"
-    assert data[0]["run_id"] == RUN_ID
-    assert data[0]["week"] == 10
+    assert data == [
+        {
+            "owner": "Alice A",
+            "win_prob": 80.0,
+            "odds": "-400",
+            "no_win_prob": 20.0,
+            "no_odds": "+400",
+            "market": "2026-make_playoffs-1",
+            "run_id": RUN_ID,
+            "team_id": 1,
+            "week": 10,
+        },
+        {
+            "owner": "Bob B",
+            "win_prob": 60.0,
+            "odds": "-150",
+            "no_win_prob": 40.0,
+            "no_odds": "+150",
+            "market": "2026-make_playoffs-2",
+            "run_id": RUN_ID,
+            "team_id": 2,
+            "week": 10,
+        },
+    ]
+
+
+def test_a_make_playoffs_side_the_sims_cannot_price_is_listed_with_a_null_price(
+    client, seeded_analytics, betting_period, db_session
+):
+    db_session.session.execute(
+        text(
+            "INSERT INTO betting_odds_make_playoffs (run_id, week, season, team_id, owner, probability, american_odds,"
+            " no_probability, no_american_odds)"
+            f" VALUES ('{RUN_ID}', 10, 2026, 3, 'Carol C', 0.0, NULL, 1.0, '-99900')"
+        )
+    )
+    db_session.session.commit()
+
+    carol = client.get("/api/make_playoffs").get_json()[-1]
+
+    assert (carol["owner"], carol["win_prob"], carol["odds"]) == ("Carol C", 0.0, None)
+    assert (carol["no_win_prob"], carol["no_odds"]) == (100.0, "-99900")
 
 
 @pytest.mark.parametrize(
@@ -209,7 +234,7 @@ def test_get_make_playoffs(client, seeded_analytics, betting_period):
         ("/api/champion", "Alice A", "+233", 30.0, 1, "2026-champion"),
     ],
 )
-def test_last_place_and_champion_list_like_first_place(
+def test_last_place_and_champion_list_one_side_per_team(
     client, seeded_analytics, betting_period, url, owner, odds, win_prob, team_id, market
 ):
     data = client.get(url).get_json()
@@ -227,19 +252,20 @@ def test_last_place_and_champion_list_like_first_place(
 
 
 @pytest.mark.parametrize(
-    ("table", "url"),
+    ("table", "url", "no_columns", "no_values"),
     [
-        ("betting_odds_first_place", "/api/first_place"),
-        ("betting_odds_make_playoffs", "/api/make_playoffs"),
-        ("betting_odds_last_place", "/api/last_place"),
-        ("betting_odds_champion", "/api/champion"),
+        ("betting_odds_make_playoffs", "/api/make_playoffs", ", no_probability, no_american_odds", ", 0.45, '+122'"),
+        ("betting_odds_last_place", "/api/last_place", "", ""),
+        ("betting_odds_champion", "/api/champion", "", ""),
     ],
 )
-def test_futures_list_only_the_highest_published_week(client, seeded_analytics, betting_period, db_session, table, url):
+def test_futures_list_only_the_highest_published_week(
+    client, seeded_analytics, betting_period, db_session, table, url, no_columns, no_values
+):
     db_session.session.execute(
         text(
-            f"INSERT INTO {table} (run_id, week, season, team_id, owner, probability, american_odds) "
-            "VALUES ('2026w12-20261124T140000', 12, 2026, 1, 'Alice A', 0.55, '-122')"
+            f"INSERT INTO {table} (run_id, week, season, team_id, owner, probability, american_odds{no_columns}) "
+            f"VALUES ('2026w12-20261124T140000', 12, 2026, 1, 'Alice A', 0.55, '-122'{no_values})"
         )
     )
     db_session.session.commit()
@@ -266,6 +292,7 @@ def test_a_row_from_an_older_season_is_not_listed(client, seeded_analytics, bett
         ("betting_odds_team_ou", "over_odds", "/api/team_performance", "over_odds"),
         ("betting_odds_lowest_scorer", "odds", "/api/lowest_scorer", "odds"),
         ("betting_odds_make_playoffs", "american_odds", "/api/make_playoffs", "odds"),
+        ("betting_odds_make_playoffs", "no_american_odds", "/api/make_playoffs", "no_odds"),
     ],
 )
 def test_a_side_without_a_price_is_listed_with_a_null_price(

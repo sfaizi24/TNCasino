@@ -2,8 +2,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app import ledger
 from app.database import db
-from app.models import Bet, BetLeg, BettingPeriod
+from app.models import Bet, BetLeg, BettingPeriod, WeeklyStats
 
 
 def test_admin_page_requires_admin(logged_in_client, user):
@@ -70,6 +71,105 @@ def test_pending_bets_keep_every_pending_futures_bet_whatever_its_week(admin_cli
     bets = admin_client.get("/api/admin/pending_bets").get_json()
 
     assert [bet["description"] for bet in bets] == ["Week 10: 2026-champion", "Week 12: 2026-w12-moneyline-1v2"]
+
+
+def _parlay_on(user, week, markets):
+    """A two-leg parlay at +300 on the markets given as (key, leg week)."""
+    return Bet(
+        user_id=user.id,
+        bet_type="parlay",
+        description=" + ".join(market for market, _ in markets),
+        amount=10.0,
+        odds="+300",
+        potential_win=30.0,
+        week=week,
+        legs=[
+            BetLeg(season=2026, week=leg_week, market=market, selection="yes", price=-150, probability=0.6)
+            for market, leg_week in markets
+        ],
+    )
+
+
+WEEKLY_PARLAY = [("2026-w10-moneyline-1v2", 10), ("2026-w10-team_total-1", 10)]
+FUTURES_PARLAY = [("2026-make_playoffs-1", None), ("2026-make_playoffs-2", None)]
+
+
+def test_pending_bets_say_which_bets_settle_by_hand(admin_client, admin_user, betting_period, db_session):
+    legacy = Bet(
+        user_id=admin_user.id,
+        bet_type="moneyline",
+        description="Legacy",
+        amount=10.0,
+        odds="+100",
+        potential_win=10.0,
+        week=10,
+    )
+    db_session.session.add_all(
+        [
+            _bet_on(admin_user, "moneyline", "2026-w10-moneyline-1v2", 10, 10),
+            _bet_on(admin_user, "champion", "2026-champion", 10, None),
+            _parlay_on(admin_user, 10, WEEKLY_PARLAY),
+            _parlay_on(admin_user, 10, FUTURES_PARLAY),
+            legacy,
+        ]
+    )
+    db_session.session.commit()
+
+    bets = admin_client.get("/api/admin/pending_bets").get_json()
+
+    assert [(bet["bet_type"], bet["by_hand"]) for bet in bets] == [
+        ("moneyline", True),
+        ("champion", True),
+        ("parlay", False),
+        ("parlay", True),
+        ("moneyline", True),
+    ]
+
+
+def _place_in_week_8(bet):
+    ledger.open_week(bet.user_id, 8)
+    ledger.place(bet)
+    db.session.commit()
+    return bet
+
+
+def _weekly(user_id, week):
+    stats = db.session.query(WeeklyStats).filter_by(user_id=user_id, week=week).one()
+    return stats.bets_placed, stats.bets_won, stats.active_bets_amount, stats.settled_pnl
+
+
+def test_a_futures_parlay_settled_by_hand_posts_its_result_to_the_settling_week(
+    admin_client, admin_user, betting_period, db_session
+):
+    parlay = _place_in_week_8(_parlay_on(admin_user, 8, FUTURES_PARLAY))
+
+    reply = admin_client.post("/api/admin/settle_bet", json={"bet_id": parlay.id, "won": True}).get_json()
+
+    assert reply == {"success": True}
+    db.session.refresh(parlay)
+    assert [parlay.status] + [leg.status for leg in parlay.legs] == ["won", "won", "won"]
+    assert _weekly(admin_user.id, 10) == (0, 1, 0.0, 30.0)
+    assert _weekly(admin_user.id, 8) == (1, 0, 0.0, 0.0)
+
+
+def test_a_lost_futures_parlay_takes_its_legs_with_it(admin_client, admin_user, betting_period, db_session):
+    parlay = _place_in_week_8(_parlay_on(admin_user, 8, FUTURES_PARLAY))
+
+    admin_client.post("/api/admin/settle_bet", json={"bet_id": parlay.id, "won": False})
+
+    db.session.refresh(parlay)
+    assert [parlay.status] + [leg.status for leg in parlay.legs] == ["lost", "lost", "lost"]
+    assert _weekly(admin_user.id, 10) == (0, 0, 0.0, -10.0)
+
+
+def test_a_weekly_parlay_is_still_not_settled_by_hand(admin_client, admin_user, betting_period, db_session):
+    parlay = _place_in_week_8(_parlay_on(admin_user, 8, WEEKLY_PARLAY))
+
+    reply = admin_client.post("/api/admin/settle_bet", json={"bet_id": parlay.id, "won": True}).get_json()
+
+    assert reply == {"success": False, "error": "Parlays settle from the Settle Week card"}
+    db.session.refresh(parlay)
+    assert [parlay.status] + [leg.status for leg in parlay.legs] == ["pending", "pending", "pending"]
 
 
 def test_set_betting_period(admin_client, admin_user, db_session):

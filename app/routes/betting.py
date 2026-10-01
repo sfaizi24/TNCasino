@@ -17,8 +17,6 @@ betting_bp = Blueprint("betting", __name__)
 MARKET_LABELS = {
     "highest_scorer": "Highest Scorer",
     "lowest_scorer": "Lowest Scorer",
-    "first_place": "First Place",
-    "make_playoffs": "Make Playoffs",
     "last_place": "Last Place",
     "champion": "Champion",
 }
@@ -320,11 +318,12 @@ def parlay_quote():
 
 
 def _quote_parlay(legs, run_id, week, window):
-    """The parlay at the window's run; a page showing another run's prices has seen every leg change."""
-    if run_id != window.run_id:
+    """A weekly parlay is priced at the window's run, so a page showing another run's prices has seen every leg
+    change. A futures parlay is priced at the futures run its page showed, which every leg's quote must carry."""
+    if not parlays.is_futures(legs) and run_id != window.run_id:
         keys = [leg.get("market") if isinstance(leg, dict) else None for leg in legs]
         raise parlays.ParlayRefusal("Odds have changed", "odds_changed", keys)
-    return parlays.quote(legs, week, window.run_id)
+    return parlays.quote(legs, week, run_id)
 
 
 def _log_refusal(legs, week, run_id, rule):
@@ -397,8 +396,9 @@ def _describe(market, selection, quote, week):
         return f"{name(team1)} vs {name(team2)}: {name(int(selection))} {quote.line:+.1f} {quote.odds}"
     if market.name == "team_total":
         return f"{name(market.teams[0])} O/U {quote.line:.2f}: {selection.capitalize()}"
-    team = market.teams[0] if market.teams else int(selection)
-    return f"{name(team)}: {MARKET_LABELS[market.name]} {quote.odds}"
+    if market.name == "make_playoffs":
+        return f"{name(market.teams[0])}: Make Playoffs {selection.capitalize()} {quote.odds}"
+    return f"{name(int(selection))}: {MARKET_LABELS[market.name]} {quote.odds}"
 
 
 def _record_bet(bet):

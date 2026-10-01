@@ -226,17 +226,20 @@ def get_lowest_scorer():
 def _futures_rows(market_name):
     """The latest futures run, which is the highest week published for the latest season."""
     table = f"betting_odds_{market_name}"
+    # Make playoffs is the one futures market with a second side, NO.
+    no_side = ", no_probability, no_american_odds" if market_name == "make_playoffs" else ""
     rows = query_analytics(
         f"""
-        SELECT season, week, team_id, run_id, owner, probability, american_odds
+        SELECT season, week, team_id, run_id, owner, probability, american_odds{no_side}
         FROM {table}
         WHERE season = (SELECT MAX(season) FROM {table})
           AND week = (SELECT MAX(week) FROM {table} WHERE season = (SELECT MAX(season) FROM {table}))
         ORDER BY probability DESC
         """
     )
-    return [
-        {
+    listed = []
+    for row in rows:
+        entry = {
             "owner": display_name_for(row["owner"]),
             "win_prob": round(row["probability"] * 100, 1),
             "odds": row["american_odds"],
@@ -245,17 +248,10 @@ def _futures_rows(market_name):
             "team_id": row["team_id"],
             "week": row["week"],
         }
-        for row in rows
-    ]
-
-
-@odds_bp.route("/api/first_place")
-def get_first_place():
-    try:
-        return jsonify(_futures_rows("first_place"))
-    except Exception:
-        logging.exception("Could not list the first-place odds")
-        return jsonify([])
+        if no_side:
+            entry.update(no_odds=row["no_american_odds"], no_win_prob=round(row["no_probability"] * 100, 1))
+        listed.append(entry)
+    return listed
 
 
 @odds_bp.route("/api/make_playoffs")
