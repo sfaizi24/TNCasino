@@ -4,8 +4,8 @@ The current week comes from the simulate step's draws. Each later week, the play
 matched and simulated here from the rosters as they stand; every simulated season is ranked on top of the record to
 date, and its seeds play the bracket on the playoff weeks' scores. The markets are priced through pipeline.markets
 on those simulated seasons, which are stored as the run's standings matrix so the app can price futures parlays on
-them. Make playoffs is priced YES and NO for every team; last place and champion only for the teams between 1% and
-99%.
+them. Make playoffs is priced YES and NO for every team; last place and champion for every team at its fair odds,
+however long the shot: only a result the sims never produce, or always produce, has no price.
 """
 
 import json
@@ -31,10 +31,6 @@ from pipeline.steps.league import insert_rows, load_league_settings
 NAME = "playoffs"
 
 N_SIMS = 20_000
-# Last place and champion are not offered this likely or this unlikely; make playoffs is offered for every team, and
-# the standings matrix keeps every probability.
-MIN_PROBABILITY = 0.01
-MAX_PROBABILITY = 0.99
 TOLERANCE = 1e-6
 TOP_N = 5
 STARTER_COLUMNS = ["roster_id", "owner", "slot", "sleeper_player_id", "position", "nfl_team", "mu", "sigma"]
@@ -474,10 +470,10 @@ def check_totals(chances: dict[str, np.ndarray], playoff_teams: int) -> None:
 
 
 def market_rows(teams: list[lineups.Team], probabilities: np.ndarray) -> list[dict]:
-    """The teams priced inside the band; the others are not offered."""
+    """Every team the sims give a chance short of certainty; a result they never or always produce has no price."""
     rows = []
     for team, probability in zip(teams, probabilities, strict=True):
-        if MIN_PROBABILITY <= probability <= MAX_PROBABILITY:
+        if 0 < probability < 1:
             rows.append(
                 {
                     "team_id": team.roster_id,

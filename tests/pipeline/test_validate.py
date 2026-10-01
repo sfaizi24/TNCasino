@@ -345,7 +345,7 @@ def test_every_futures_market_offered_is_counted(settings):
 
 
 def test_empty_futures_markets_are_fine_once_the_standings_are_written(tmp_path):
-    """Every team outside the 1-99% band leaves a market empty; the standings matrix shows the step ran."""
+    """A race every sim decides the same way leaves a market empty; the standings matrix shows the step ran."""
     settings = week_settings(tmp_path)
     build_week(settings)
     for table in validate.FUTURES_TABLES:

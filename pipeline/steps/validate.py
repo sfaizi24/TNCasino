@@ -28,8 +28,8 @@ WEEKLY_ODDS_TABLES = [
     "team_distribution_curves",
     "team_matchup_margin_curves",
 ]
-# The playoffs step's futures, which end when the playoffs start. Last place and champion are empty when every team is
-# priced outside their 1-99% band, so the standings matrix, written on every run, is what shows the step has run.
+# The playoffs step's futures, which end when the playoffs start. Last place and champion are empty when every sim
+# decides them the same way, so the standings matrix, written on every run, is what shows the step has run.
 FUTURES_TABLES = [
     "betting_odds_make_playoffs",
     "betting_odds_last_place",

@@ -366,10 +366,11 @@ for the admin to settle by hand. Cash-out prices a parlay at the joint chance of
 (PR 10, merge 022e9af). Built by a Claude Code
 cloud session from `docs/briefs/b8-parlays.md`; merged 2026-09-29 (9e43632), 980 tests.
 
-**Implementation notes (B12, 2026-10-01).** Every team gets a make-playoffs card: the 1% to 99%
-band of §2.4 no longer applies to make playoffs, only to last place and the champion, and a side
-whose chance is exactly 0 or 1 is stored with NULL odds, shown as "No price" and refused at
-placement. Futures legs are allowed now (§1.4). A futures slip is
+**Implementation notes (B12, 2026-10-01).** Every team gets a make-playoffs card, and no futures
+market has a band any more: the 1% to 99% cut of §2.4 is gone, last place and the champion are
+offered at fair odds however long the shot, and only a chance of exactly 0 or 1 goes unpriced,
+left out of the last-place and champion tables or stored with NULL odds for make playoffs, shown
+as "No price" and refused at placement. Futures legs are allowed now (§1.4). A futures slip is
 quoted and placed at the futures run its page listed, on that run's `simulation_standings` row
 (`standings_matrix`, cached four runs per worker like the score matrix), through the futures win
 rules in `pipeline/markets.py`; its refusals run in the same order with `mixed` after a leg's own,
@@ -482,8 +483,9 @@ Bets placed before the change keep their description and settle by hand as today
   remove the bet instead.
 - **The window is closed:** a game has kicked off and no locked rerun has been published, so the
   latest run does not know what happened.
-- **The chance is at the edge:** the market is gone from the latest run (the playoffs step drops
-  futures rows under 1% or over 99%, playoffs.py lines 30–31), or the bet wins in none of the sims
+- **The chance is at the edge:** the market is gone from the latest run (the playoffs step writes
+  no last-place or champion row at a chance of exactly 0 or 1; until B12 it dropped rows under 1%
+  or over 99%), or the bet wins in none of the sims
   or in all of them, so the sims cannot say what it is worth. Today's clamp would show such a
   chance as 0.1% or 99.9%; cash-out must never use a clamped number.
 - **Futures from a run whose standings miss a week:** the week-4 run counted 2 played weeks, not 3.
