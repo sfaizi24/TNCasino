@@ -1164,10 +1164,6 @@
 }
 
 /* No lineup toggle sits under a futures pick, so the card pads its own foot. */
-.tnc-fu-card {
-    padding-bottom: 10px;
-}
-
 .tnc-mc-noprice {
     display: block;
     padding: 7px 6px;

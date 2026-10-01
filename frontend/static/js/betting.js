@@ -239,13 +239,12 @@ function renderPlacedStrip(bets) {
     `;
 }
 
-// A slip holds the week's picks or futures, never both, so a card of the other kind cannot join it.
+// A slip holds the week's picks or futures, never both, so a card of the other kind offers to clear it instead.
 function renderParlayButton(key) {
     const { kind, row } = cardForKey(key);
     const slipKind = state.slip.legs[0]?.kind;
     if (slipKind && isFuture(slipKind) !== isFuture(kind)) {
-        const only = isFuture(slipKind) ? 'Futures picks only' : 'Weekly picks only';
-        return `<button class="tnc-mc-parlay" data-action="parlay" disabled>${only}</button>`;
+        return '<button class="tnc-mc-parlay" data-action="clear-parlay">Clear current parlay</button>';
     }
     if (inSlip(row.market, state.picks[key])) {
         return '<button class="tnc-mc-parlay" data-action="parlay" disabled>In parlay</button>';
@@ -324,9 +323,7 @@ function renderShowButton(open, solo) {
     return `<button class="tnc-mc-show" data-action="show">${chevronSvg()}${label}</button>`;
 }
 
-// Futures run to the end of the season, so their cards show no week's lineup.
 function renderLineupToggle(card) {
-    if (isFuture(card.kind)) return '';
     const solo = !isMatchup(card.kind);
     const lineups = card.open ? renderLineups(ownersOf(card.kind, card.row), solo) : '';
     return renderShowButton(card.open, solo) + lineups;
@@ -479,7 +476,6 @@ function renderCard(kind, row, idx) {
     const card = buildCard(kind, row, idx);
     const hasBet = card.placed.length > 0;
     const classes = ['tnc-mc'];
-    if (isFuture(kind)) classes.push('tnc-fu-card');
     if (hasBet) classes.push('has-bet');
     if (card.open) classes.push('is-open');
     return `
@@ -1249,6 +1245,7 @@ function bindEvents() {
         else if (action === 'quick') handleQuick(card, parseInt(target.dataset.amount, 10));
         else if (action === 'place') handlePlace(card);
         else if (action === 'parlay') handleAddToParlay(card);
+        else if (action === 'clear-parlay') handleSlipClear();
         else if (action === 'show') handleShow(card);
         else if (action === 'spread-line') handleSpreadStep(card, Number(target.dataset.delta));
         else if (action === 'spread-main') handleSpreadMain(card);
