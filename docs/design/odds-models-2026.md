@@ -1196,8 +1196,9 @@ first, because every later package stores or reads it.
   picks, never both, and a futures slip is quoted, cashed out and settled on those seasons, a lost
   leg settling it at once and a champion leg leaving it to the admin after the final. Driving risk:
   the futures rows and the seasons a parlay is priced on drifting apart when the playoffs step
-  reruns after a publish. Built by the cloud session from `docs/briefs/b12-futures.md`. Shipped
-  2026-10-01 (merge pending).
+  reruns after a publish. Built by the cloud session from `docs/briefs/b12-futures.md`; the
+  orchestrator lifted the 1% to 99% band on last place and the champion before the merge, per the
+  owner's rule that every team is offered at its fair odds. Merged 2026-10-01 (e5ff0a9), 1384 tests.
 
 Doc 08's line references have moved: the browser's odds are read at betting.py lines 257, 300, 341
 and 382, and the settlement balance update is at admin.py line 170.
