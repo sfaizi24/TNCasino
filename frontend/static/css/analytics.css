@@ -46,6 +46,167 @@
 
     .league-chart-wrapper--standings { height: 580px; }
     .league-chart-wrapper--position  { height: 460px; }
+    .league-chart-wrapper--race      { height: 380px; }
+
+    .league-card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 4px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--tnc-border);
+    }
+
+    .league-card-head .league-card-title {
+        margin: 0;
+        padding: 0;
+        border: 0;
+    }
+
+    .race-toggle {
+        display: flex;
+        gap: 2px;
+        padding: 2px;
+        background: var(--tnc-bg);
+        border: 1px solid var(--tnc-border);
+        border-radius: var(--tnc-r-md);
+    }
+
+    .race-toggle-btn {
+        padding: 4px 10px;
+        background: transparent;
+        border: 0;
+        border-radius: var(--tnc-r-sm);
+        color: var(--tnc-fg-muted);
+        font: inherit;
+        font-size: var(--tnc-fs-12);
+        font-weight: var(--tnc-fw-semi);
+        cursor: pointer;
+    }
+
+    .race-toggle-btn.is-on {
+        background: var(--tnc-surface);
+        color: var(--tnc-blue);
+    }
+
+    /* Playoff picture: one row per team, a bar for each final place, the playoff places in blue. */
+    .pp-head,
+    .pp-row {
+        display: grid;
+        grid-template-columns: 76px 1fr 52px;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .pp-head {
+        padding: 0 6px 4px;
+        color: var(--tnc-fg-muted);
+        font-size: var(--tnc-fs-11);
+        text-align: right;
+    }
+
+    .pp-head-places {
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .pp-row {
+        width: 100%;
+        padding: 6px;
+        background: transparent;
+        border: 0;
+        border-top: 1px solid var(--tnc-border-soft);
+        color: var(--tnc-fg);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .pp-name {
+        overflow: hidden;
+        font-size: var(--tnc-fs-13);
+        font-weight: var(--tnc-fw-semi);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .pp-bars {
+        display: flex;
+        align-items: flex-end;
+        gap: 2px;
+        height: 24px;
+    }
+
+    .pp-bar,
+    .pp-place-bar {
+        flex: 1;
+        display: flex;
+        align-items: flex-end;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 2px;
+    }
+
+    .pp-bar > span,
+    .pp-place-bar > span {
+        width: 100%;
+        background: var(--tnc-fg-muted);
+        border-radius: 2px;
+    }
+
+    .pp-bar.is-in > span,
+    .pp-place-bar.is-in > span {
+        background: var(--tnc-blue);
+    }
+
+    .pp-odds {
+        font-size: var(--tnc-fs-14);
+        font-weight: var(--tnc-fw-bold);
+        text-align: right;
+    }
+
+    .pp-detail {
+        padding: 4px 6px 12px;
+    }
+
+    .pp-detail-grid {
+        display: grid;
+        grid-auto-columns: minmax(0, 1fr);
+        grid-auto-flow: column;
+        gap: 2px;
+    }
+
+    .pp-place {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        min-width: 0;
+    }
+
+    .pp-place-pct,
+    .pp-place-n {
+        color: var(--tnc-fg-muted);
+        font-size: 10px;
+    }
+
+    .pp-place.is-in .pp-place-pct {
+        color: var(--tnc-fg);
+    }
+
+    .pp-place-bar {
+        flex: none;
+        width: 100%;
+        height: 56px;
+    }
+
+    .pp-detail-note,
+    .pp-empty {
+        margin-top: 8px;
+        color: var(--tnc-fg-muted);
+        font-size: var(--tnc-fs-12);
+    }
 
     @media (max-width: 720px) {
         .league-card { padding: 14px 8px 14px; }

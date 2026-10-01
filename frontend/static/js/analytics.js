@@ -803,17 +803,144 @@ function renderPositionStrengthChart(data) {
     });
 }
 
+const fmtChance = (pct) => (pct == null ? '—' : pct < 1 && pct > 0 ? '<1%' : `${Math.round(pct)}%`);
+
+function placeBars(places, cutoff, peak, className) {
+    return places.map((pct, i) => {
+        const height = pct > 0 ? Math.max(4, (pct / peak) * 100) : 0;
+        const side = i < cutoff ? ' is-in' : '';
+        return `<span class="${className}${side}"><span style="height: ${height}%"></span></span>`;
+    }).join('');
+}
+
+function renderPlayoffDetail(team, cutoff, peak) {
+    const columns = team.places.map((pct, i) => `
+        <div class="pp-place${i < cutoff ? ' is-in' : ''}">
+            <span class="pp-place-pct tnc-tab-num">${fmtChance(pct)}</span>
+            ${placeBars([pct], i < cutoff ? 1 : 0, peak, 'pp-place-bar')}
+            <span class="pp-place-n tnc-tab-num">${i + 1}</span>
+        </div>
+    `).join('');
+    return `
+        <div class="pp-detail-grid">${columns}</div>
+        <div class="pp-detail-note">Average finish: ${team.expected_place.toFixed(1)}</div>
+    `;
+}
+
+function renderPlayoffPicture(data) {
+    const list = document.getElementById('playoff-picture');
+    if (!data.teams.length) {
+        list.innerHTML = '<div class="pp-empty">No futures yet.</div>';
+        return;
+    }
+    const cutoff = data.playoff_cutoff ?? PLAYOFF_CUTOFF;
+    const peak = Math.max(...data.teams.flatMap(team => team.places));
+    document.getElementById('playoff-picture-caption').textContent =
+        `Chance of each final place. The top ${cutoff} make the playoffs. Tap a team for the numbers.`;
+
+    const head = `
+        <div class="pp-head">
+            <span></span>
+            <span class="pp-head-places"><span>1st</span><span>${data.teams.length}th</span></span>
+            <span>Playoffs</span>
+        </div>
+    `;
+    const rows = data.teams.map((team, i) => `
+        <div class="pp-team">
+            <button type="button" class="pp-row" data-team="${i}" aria-expanded="false">
+                <span class="pp-name">${escapeHtml(team.label)}</span>
+                <span class="pp-bars">${placeBars(team.places, cutoff, peak, 'pp-bar')}</span>
+                <span class="pp-odds tnc-tab-num">${fmtChance(team.playoffs)}</span>
+            </button>
+            <div class="pp-detail" hidden>${renderPlayoffDetail(team, cutoff, peak)}</div>
+        </div>
+    `).join('');
+    list.innerHTML = head + rows;
+}
+
+function togglePlayoffTeam(row) {
+    const open = row.getAttribute('aria-expanded') !== 'true';
+    row.setAttribute('aria-expanded', String(open));
+    row.nextElementSibling.hidden = !open;
+}
+
+const RACE_COLORS = [
+    '#1493FF', '#FF6B6B', '#3FB950', '#FCD34D', '#C084FC', '#FB923C',
+    '#22D3EE', '#F472B6', '#A3E635', '#94A3B8', '#E879F9', '#2DD4BF',
+];
+let seasonRace = null;
+let seasonRaceChart = null;
+
+function renderSeasonRace(series) {
+    if (!seasonRace?.weeks.length) return;
+    const ctx = document.getElementById('season-race-chart').getContext('2d');
+    const datasets = seasonRace.teams.map((team, i) => ({
+        label: team.label,
+        data: team[series],
+        borderColor: RACE_COLORS[i % RACE_COLORS.length],
+        backgroundColor: RACE_COLORS[i % RACE_COLORS.length],
+        borderWidth: 2,
+        pointRadius: 3,
+        tension: 0.2,
+    }));
+
+    if (seasonRaceChart) seasonRaceChart.destroy();
+    seasonRaceChart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: seasonRace.weeks.map(week => `Wk ${week}`), datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { offset: true, ticks: { color: '#8B949E' }, grid: { display: false } },
+                // Few teams hold much of a title chance, so that scale fits the leader rather than 100%.
+                y: {
+                    min: 0,
+                    max: series === 'playoffs' ? 100 : undefined,
+                    ticks: { color: '#8B949E', maxTicksLimit: 5, callback: (v) => `${v}%` },
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                },
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#FFFFFF', boxWidth: 8, boxHeight: 8, padding: 8, font: { size: 11 } },
+                },
+                tooltip: {
+                    itemSort: (a, b) => b.parsed.y - a.parsed.y,
+                    callbacks: { label: (item) => `${item.dataset.label}: ${fmtChance(item.parsed.y)}` },
+                },
+            },
+        },
+    });
+}
+
+function showRaceSeries(button) {
+    document.querySelectorAll('.race-toggle-btn').forEach(btn => {
+        const on = btn === button;
+        btn.classList.toggle('is-on', on);
+        btn.setAttribute('aria-pressed', String(on));
+    });
+    renderSeasonRace(button.dataset.series);
+}
+
 async function loadLeagueView() {
     try {
-        const [overviewRes, posRes] = await Promise.all([
+        const responses = await Promise.all([
             fetchWithTimeout('/api/league_overview', {}, 10000),
             fetchWithTimeout('/api/position_strength', {}, 10000),
+            fetchWithTimeout('/api/playoff_picture', {}, 10000),
+            fetchWithTimeout('/api/season_race', {}, 10000),
         ]);
-        if (!overviewRes.ok || !posRes.ok) {
+        if (responses.some(response => !response.ok)) {
             showError('Could not load league analytics. Please refresh the page.');
             return false;
         }
-        const [overview, posStrength] = await Promise.all([overviewRes.json(), posRes.json()]);
+        const [overview, posStrength, picture, race] = await Promise.all(responses.map(response => response.json()));
+        seasonRace = race;
+        renderPlayoffPicture(picture);
+        renderSeasonRace('playoffs');
         renderStandingsChart(overview);
         renderPositionStrengthChart(posStrength);
         return true;
@@ -851,6 +978,14 @@ function bindEvents() {
     document.getElementById('analytics-tabs').addEventListener('click', e => {
         const tab = e.target.closest('.tnc-tab');
         if (tab) activateTab(tab.dataset.tab);
+    });
+    document.getElementById('playoff-picture').addEventListener('click', e => {
+        const row = e.target.closest('.pp-row');
+        if (row) togglePlayoffTeam(row);
+    });
+    document.getElementById('race-toggle').addEventListener('click', e => {
+        const button = e.target.closest('.race-toggle-btn');
+        if (button) showRaceSeries(button);
     });
 
     document.getElementById('team-select').addEventListener('change', renderMatchup);

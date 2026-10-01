@@ -20,14 +20,34 @@
 </div>
 
 <div class="tnc-tabs" id="analytics-tabs">
-    <button class="tnc-tab is-on" data-tab="league">League-Wide</button>
+    <button class="tnc-tab is-on" data-tab="league">League</button>
     <button class="tnc-tab" data-tab="matchups">Matchups</button>
-    <button class="tnc-tab" data-tab="teams">Individual Teams</button>
+    <button class="tnc-tab" data-tab="teams">Teams</button>
 </div>
 
 <div id="teams-error" style="display: none; margin-top: 12px; padding: 12px; background: rgba(220, 38, 38, 0.1); border: 1px solid rgba(220, 38, 38, 0.3); border-radius: 8px; color: #ef4444; font-size: 13px;"></div>
 
 <section class="tab-panel" data-panel="league" data-week="{{ current_week }}">
+    <div class="league-card">
+        <h2 class="league-card-title">Playoff Picture</h2>
+        <div class="league-card-caption" id="playoff-picture-caption">Chance of each final place. Tap a team for the numbers.</div>
+        <div id="playoff-picture" class="pp-list"></div>
+    </div>
+
+    <div class="league-card">
+        <div class="league-card-head">
+            <h2 class="league-card-title">Season Race</h2>
+            <div class="race-toggle" id="race-toggle" role="group" aria-label="Chance shown">
+                <button type="button" class="race-toggle-btn is-on" data-series="playoffs" aria-pressed="true">Playoffs</button>
+                <button type="button" class="race-toggle-btn" data-series="title" aria-pressed="false">Title</button>
+            </div>
+        </div>
+        <div class="league-card-caption">Each team's chance, week by week.</div>
+        <div class="league-chart-wrapper league-chart-wrapper--race">
+            <canvas id="season-race-chart"></canvas>
+        </div>
+    </div>
+
     <div class="league-card">
         <h2 class="league-card-title">Current Standings</h2>
         <div class="league-card-caption">%&rsquo;s denote Week {{ current_week }} matchup win probability</div>
