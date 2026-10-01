@@ -29,7 +29,7 @@
 .tnc-acct-bal-amount {
     font-size: 42px;
     font-weight: var(--tnc-fw-bold);
-    color: var(--tnc-win);
+    color: var(--tnc-fg);
     font-variant-numeric: tabular-nums;
     line-height: 1.05;
 }
@@ -130,32 +130,7 @@
     margin-top: 20px;
 }
 
-.tnc-acct-weekly {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-    gap: 8px;
-}
-
-.tnc-acct-week {
-    background: var(--tnc-bg);
-    padding: 12px 8px;
-    border-radius: var(--tnc-r-md);
-    text-align: center;
-    border: 1px solid var(--tnc-border);
-}
-
-.tnc-acct-week-label {
-    color: var(--tnc-fg-muted);
-    font-size: var(--tnc-fs-11);
-    margin-bottom: 6px;
-}
-
-.tnc-acct-week-pnl {
-    font-size: var(--tnc-fs-16);
-    font-weight: var(--tnc-fw-bold);
-}
-
-.tnc-acct-week-flat {
+.tnc-acct-flat {
     color: var(--tnc-fg-muted);
 }
 
@@ -169,57 +144,84 @@
     color: var(--tnc-blue);
 }
 
-.tnc-acct-table-wrap {
-    overflow-x: auto;
+.tnc-acct-bh-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
 }
 
-.tnc-acct-bh-week + .tnc-acct-bh-week {
-    margin-top: 18px;
-}
-
-.tnc-acct-bh-week-h {
-    color: var(--tnc-fg-muted);
-    font-size: var(--tnc-fs-11);
-    font-weight: var(--tnc-fw-semi);
-    text-transform: uppercase;
-    letter-spacing: var(--tnc-track-caps);
-    margin-bottom: 6px;
-}
-
-.tnc-acct-table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-.tnc-acct-table th {
-    text-align: left;
-    padding: 8px 10px;
-    background: var(--tnc-bg);
-    color: var(--tnc-fg-muted);
-    font-size: var(--tnc-fs-11);
-    font-weight: var(--tnc-fw-semi);
-    text-transform: uppercase;
-}
-
-.tnc-acct-table td {
-    padding: 10px;
-    border-bottom: 1px solid var(--tnc-border);
+/* A native select, so a phone opens its own picker; drawn as a label with a chevron. */
+.tnc-acct-bh-select {
+    appearance: none;
+    padding: 6px 26px 6px 10px;
+    background: var(--tnc-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 9px center;
+    border: 1px solid var(--tnc-border);
+    border-radius: var(--tnc-r-sm);
     color: var(--tnc-fg);
-    font-size: var(--tnc-fs-13);
+    font-family: inherit;
+    font-size: var(--tnc-fs-16);
+    font-weight: var(--tnc-fw-semi);
+    cursor: pointer;
 }
 
-.tnc-acct-table td.tnc-pos {
-    color: var(--tnc-win);
+.tnc-acct-bh-select:focus {
+    outline: none;
+    border-color: var(--tnc-blue);
 }
 
-.tnc-acct-table td.tnc-neg {
-    color: var(--tnc-loss);
+.tnc-acct-bh-pnl {
+    font-size: var(--tnc-fs-16);
+    font-weight: var(--tnc-fw-bold);
 }
 
-.tnc-acct-table td.tnc-acct-week-flat {
-    color: var(--tnc-fg-muted);
+.tnc-acct-update[hidden],
+.tnc-acct-bh-pnl[hidden],
+.tnc-acct-bets[hidden] {
+    display: none;
 }
 
-.tnc-acct-table tr:last-child td {
+.tnc-acct-bets {
+    list-style: none;
+}
+
+.tnc-acct-bet {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--tnc-border);
+}
+
+.tnc-acct-bet:last-child {
     border-bottom: none;
+    padding-bottom: 0;
+}
+
+.tnc-acct-bet-main {
+    min-width: 0;
+}
+
+.tnc-acct-bet-name {
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-14);
+    font-weight: var(--tnc-fw-medium);
+    line-height: 1.3;
+}
+
+.tnc-acct-bet-meta {
+    margin-top: 2px;
+    color: var(--tnc-fg-muted);
+    font-size: var(--tnc-fs-12);
+    font-weight: var(--tnc-fw-regular);
+}
+
+.tnc-acct-bet-result {
+    flex-shrink: 0;
+    color: var(--tnc-fg);
+    font-size: var(--tnc-fs-14);
+    font-weight: var(--tnc-fw-semi);
+    text-align: right;
 }

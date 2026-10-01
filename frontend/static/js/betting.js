@@ -14,14 +14,14 @@ const SOURCES = {
     ch: '/api/champion',
 };
 
-// Active bets are listed in one group per tab.
+// Active bets are listed in one group per tab, and each view lists only its own: the week's or the futures.
 const ACTIVE_GROUPS = [
     { label: 'ML', types: ['moneyline'] },
     { label: 'SPREAD', types: ['spread'] },
     { label: 'O/U', types: ['team_total'] },
     { label: 'HIGH', types: ['highest_scorer'] },
     { label: 'LOW', types: ['lowest_scorer'] },
-    { label: 'FUTURES', types: ['make_playoffs', 'last_place', 'champion'] },
+    { label: 'FUTURES', types: ['make_playoffs', 'last_place', 'champion'], future: true },
     { label: 'PARLAY', types: ['parlay'] },
 ];
 
@@ -38,6 +38,7 @@ const state = {
     editingLine: null,
     rows: { ml: [], sp: [], ou: [], hi: [], lo: [], mp: [], lp: [], ch: [] },
     slip: emptySlip(),
+    openParlays: new Set(),
 };
 
 let quoteTimer = null;
@@ -503,19 +504,57 @@ function sideForBet(bet) {
     return null;
 }
 
-// A chip names the pick and leaves the market to its group, except in Futures, whose group holds three.
+// A chip names the pick and leaves the market to its group, except in Futures, whose group holds three and so adds a word for each.
+function pickLabel({ kind, row, side }, line) {
+    if (kind === 'ml') return side.label;
+    if (kind === 'sp') return `${side.label} ${fmtLine(line)}`;
+    if (kind === 'ou') return `${row.owner} ${side.label[0]} ${line.toFixed(2)}`;
+    if (kind === 'mp') return `${row.owner} · Playoffs ${side.label}`;
+    if (kind === 'lp') return `${row.owner} · Last`;
+    if (kind === 'ch') return `${row.owner} · Champion`;
+    return row.owner;
+}
+
 function chipLabel(bet) {
     if (bet.bet_type === 'parlay') return `${bet.legs.length}-leg parlay`;
     const match = sideForBet(bet);
     if (!match) return bet.description.replace(` ${bet.odds}`, '');
-    const { kind, row, side } = match;
-    if (kind === 'ml') return side.label;
-    if (kind === 'sp') return `${side.label} ${fmtLine(bet.legs[0].line)}`;
-    if (kind === 'ou') return `${row.owner} ${side.label[0]} ${bet.line.toFixed(2)}`;
-    if (kind === 'mp') return legLabel(kind, row, side);
-    if (kind === 'lp') return `${row.owner} to finish last`;
-    if (kind === 'ch') return `${row.owner} to win the championship`;
-    return row.owner;
+    return pickLabel(match, bet.line);
+}
+
+// A parlay has no group to name each leg's market, so the picks that are only an owner's name add a word.
+const LEG_WORDS = { ml: 'ML', hi: '· High', lo: '· Low' };
+
+function parlayLegLabel(leg, description) {
+    const match = sideForBet(leg);
+    if (!match) return description.replace(` ${leg.odds}`, '');
+    const word = LEG_WORDS[match.kind];
+    const label = pickLabel(match, leg.line);
+    return word ? `${label} ${word}` : label;
+}
+
+function renderParlayLegs(bet) {
+    const descriptions = bet.description.split(' + ');
+    return `
+        <div class="tnc-active-legs">
+            ${bet.legs.map((leg, i) => `
+                <span class="tnc-active-leg">
+                    <span class="tnc-active-leg-name">${parlayLegLabel(leg, descriptions[i] || '')}</span>
+                    <span class="tnc-active-chip-odds tnc-tab-num">${fmtOdds(leg.odds)}</span>
+                </span>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderChipName(bet) {
+    if (bet.bet_type !== 'parlay') return `<span class="tnc-active-chip-name">${chipLabel(bet)}</span>`;
+    const open = state.openParlays.has(bet.id);
+    return `
+        <button class="tnc-active-chip-name tnc-active-chip-toggle" data-action="parlay-legs" data-bet-id="${bet.id}" aria-expanded="${open}">
+            <span>${chipLabel(bet)}</span>${chevronSvg()}
+        </button>
+    `;
 }
 
 function renderActiveChip(bet) {
@@ -527,28 +566,32 @@ function renderActiveChip(bet) {
         : '';
     return `
         <span class="tnc-active-chip">
-            <span class="tnc-active-chip-name">${chipLabel(bet)}</span>
+            ${renderChipName(bet)}
             <span class="tnc-active-chip-odds tnc-tab-num">${fmtOdds(bet.odds)}</span>
             <span class="tnc-active-chip-stake tnc-tab-num">${fmtMoney(bet.amount)}</span>
             ${cashOut}${cancel}
         </span>
+        ${state.openParlays.has(bet.id) ? renderParlayLegs(bet) : ''}
     `;
 }
 
 function renderActiveBets() {
     const container = document.getElementById('activeBets');
+    const onFutures = isFuture(state.tab);
     const groups = ACTIVE_GROUPS
+        .filter(group => Boolean(group.future) === onFutures)
         .map(group => ({ label: group.label, bets: state.bets.filter(bet => group.types.includes(bet.bet_type)) }))
         .filter(group => group.bets.length);
     if (!groups.length) {
         container.innerHTML = '';
         return;
     }
+    // The Futures view holds one group, already named by the view's title, so its chips take the label's width.
     container.innerHTML = `
         <div class="tnc-active">
             ${groups.map(group => `
                 <div class="tnc-active-group">
-                    <span class="tnc-active-label">${group.label}</span>
+                    ${onFutures ? '' : `<span class="tnc-active-label">${group.label}</span>`}
                     <div class="tnc-active-chips">
                         ${group.bets.map(renderActiveChip).join('')}
                     </div>
@@ -1132,6 +1175,12 @@ function handleTab(bar, tab) {
     renderGrid();
 }
 
+function handleParlayLegs(betId) {
+    if (state.openParlays.has(betId)) state.openParlays.delete(betId);
+    else state.openParlays.add(betId);
+    renderActiveBets();
+}
+
 function setViewMenuOpen(open) {
     document.getElementById('viewMenu').hidden = !open;
     document.getElementById('viewToggle').setAttribute('aria-expanded', String(open));
@@ -1146,6 +1195,7 @@ function handleView(option) {
     });
     setViewMenuOpen(false);
     state.tab = document.querySelector(`.tnc-tabs[data-view="${view}"] .tnc-tab.is-on`).dataset.tab;
+    renderActiveBets();
     renderGrid();
 }
 
@@ -1183,6 +1233,10 @@ function bindEvents() {
         }
         if (action === 'cashout') {
             handleCashOut(parseInt(target.dataset.betId, 10));
+            return;
+        }
+        if (action === 'parlay-legs') {
+            handleParlayLegs(parseInt(target.dataset.betId, 10));
             return;
         }
         if (target.closest('#slip')) {

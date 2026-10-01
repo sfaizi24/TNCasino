@@ -459,7 +459,7 @@ def test_a_settled_week_keeps_a_bet_in_place(logged_in_client, user, betting_per
     assert db.session.get(Bet, bet_id).status == "pending"
 
 
-def test_the_account_page_lists_new_legacy_removed_won_and_lost_bets(
+def test_the_account_page_lists_new_legacy_won_and_lost_bets_but_not_removed_ones(
     logged_in_client, user, betting_period, seeded_analytics
 ):
     removed_id = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()["bet_id"]
@@ -495,15 +495,14 @@ def test_the_account_page_lists_new_legacy_removed_won_and_lost_bets(
 
     page = logged_in_client.get("/account").get_data(as_text=True)
 
-    assert "Alice A: Highest Scorer" in page
-    assert "Removed" in page
+    assert "Alice A: Highest Scorer" not in page
     assert "Alice A O/U 110.50: Over" in page
     assert "Ammad: #1 Seed" in page
     assert "+$100.00" in page
     assert "-$30.00" in page
 
 
-def test_the_account_pages_weekly_pnl_counts_settled_bets_not_open_stakes(
+def test_the_account_pages_week_pnl_counts_settled_bets_not_open_stakes(
     logged_in_client, user, betting_period, seeded_analytics
 ):
     won_id = logged_in_client.post("/api/place_bet", json=HIGHEST_SCORER_BET).get_json()["bet_id"]
@@ -514,7 +513,7 @@ def test_the_account_pages_weekly_pnl_counts_settled_bets_not_open_stakes(
     page = logged_in_client.get("/account").get_data(as_text=True)
 
     # The balance is up $85 on the week, but only the won bet's $185 is settled; the other stake is still open.
-    assert re.search(r"tnc-acct-week-pnl[^\"]*tnc-pos\">\s*\+\$185\.00", page)
+    assert re.search(r"tnc-acct-bh-pnl[^>]*tnc-pos[^>]*>\+\$185\.00<", page)
     assert "+$85.00" not in page
 
 
@@ -719,8 +718,8 @@ def test_the_account_page_shows_a_cash_out_with_its_signed_result(
 
     page = logged_in_client.get("/account").get_data(as_text=True)
 
-    assert re.search(r"tnc-neg\s*\">\s*Cashed out -\$25\.62", page)
-    assert re.search(r"tnc-pos\s*\">\s*Cashed out \+\$19\.70", page)
+    assert re.search(r"tnc-neg\">-\$25\.62</div>\s*<div class=\"tnc-acct-bet-meta\">Cashed out", page)
+    assert re.search(r"tnc-pos\">\+\$19\.70</div>\s*<div class=\"tnc-acct-bet-meta\">Cashed out", page)
 
 
 # Parlays, on the seeded run: roster 1 wins 11 of the 20 sims, is over 110.5 in 9, and does both in 7.
