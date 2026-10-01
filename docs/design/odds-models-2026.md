@@ -1124,7 +1124,7 @@ first, because every later package stores or reads it.
 - **B5.** Locks from final games at league points, owners' kicked-off starters pinned, refusal
   while a game is in progress, accuracy and calibrate on `n_locked = 0`, and the runbook
   corrections of §3.2. Driving risk: pinning edge cases (a pinned starter no source projects, an
-  empty slot) and sources dropping players who have played. Shipped 2026-09-30 (merge pending).
+  empty slot) and sources dropping players who have played. Shipped 2026-09-30 (merge 93da40d).
 - **B6.** Acceptance by window, the paused banner, `lock_time` as a kill switch, `remove_bet`
   limited to the latest run. Driving risk: time zones, the lazy lock, and behaviour when the laptop
   is off. Shipped 2026-09-28 (merge 31db13e), ahead of B5: until the Friday rerun exists, the
