@@ -11,7 +11,7 @@ from app import create_app, matrices, windows
 from app.database import db as _db
 from app.models import BettingPeriod, User
 from app.routes import odds
-from pipeline.markets import encode_totals
+from pipeline.markets import encode_standings, encode_totals
 
 TEST_CONFIG = {
     "TESTING": True,
@@ -149,7 +149,6 @@ ANALYTICS_TABLES = [
     "betting_odds_team_ou",
     "betting_odds_highest_scorer",
     "betting_odds_lowest_scorer",
-    "betting_odds_first_place",
     "betting_odds_make_playoffs",
     "betting_odds_last_place",
     "betting_odds_champion",
@@ -163,6 +162,7 @@ ANALYTICS_TABLES = [
     "projections_rosters",
     "simulation_runs",
     "simulation_totals",
+    "simulation_standings",
 ]
 
 # The pipeline run that published every seeded odds row, and the window it opened.
@@ -201,6 +201,40 @@ SEEDED_TOTALS = np.array(
     ]
 )
 
+# The seeded run's standings matrix: 20 simulated seasons of four rosters, two of which make the
+# playoffs. Each row is the finishing place of rosters 1, 2, 3 and 4; the champion is a column, always
+# one of that season's top two. Alice A (roster 1) makes the playoffs in 16 seasons and Bob B (roster 2)
+# in 12, both of them in the first 8; Alice alone makes them in the next 8, where Bob is last in 6, and
+# Bob alone in the last 4, where Alice is last. Alice is champion in 6 seasons, the first 5 and the
+# ninth, and Bob in 3, the sixth to eighth. So the quotes hold: Alice yes 0.80, Bob yes 0.60, Alice last
+# 0.20, Bob last 0.30, champion Alice 0.30 and Bob 0.15; both make the playoffs in 8 seasons, and Alice
+# makes them without Bob in 8, so Bob missing them always puts Alice in.
+SEEDED_POSITIONS = np.array(
+    [
+        [1, 2, 3, 4],
+        [1, 2, 4, 3],
+        [2, 1, 3, 4],
+        [1, 2, 3, 4],
+        [2, 1, 4, 3],
+        [2, 1, 3, 4],
+        [1, 2, 4, 3],
+        [2, 1, 3, 4],
+        [1, 4, 2, 3],
+        [1, 4, 3, 2],
+        [2, 4, 1, 3],
+        [2, 4, 3, 1],
+        [1, 4, 2, 3],
+        [2, 4, 1, 3],
+        [1, 3, 2, 4],
+        [2, 3, 4, 1],
+        [4, 1, 2, 3],
+        [4, 2, 1, 3],
+        [4, 1, 3, 2],
+        [4, 2, 3, 1],
+    ]
+)
+SEEDED_CHAMPIONS = np.array([0, 0, 0, 0, 0, 1, 1, 1, 0, 3, 2, 3, 2, 2, 2, 3, 2, 2, 3, 3])
+
 
 @pytest.fixture(autouse=True)
 def window_clock(monkeypatch):
@@ -211,6 +245,7 @@ def window_clock(monkeypatch):
 def fresh_matrix_cache():
     """Every test seeds its own database, so a matrix or prices cached under a run id in the last test are stale."""
     matrices.score_matrix.cache_clear()
+    matrices.standings_matrix.cache_clear()
     odds._spread_lines.cache_clear()
 
 
@@ -256,19 +291,11 @@ def create_analytics_tables(session):
     )
     session.execute(
         text("""
-        CREATE TABLE betting_odds_first_place (
-            id INTEGER PRIMARY KEY, run_id TEXT, week INTEGER, season INTEGER,
-            team_id INTEGER, team_name TEXT, owner TEXT,
-            probability REAL, american_odds TEXT, created_at TIMESTAMP
-        )
-    """)
-    )
-    session.execute(
-        text("""
         CREATE TABLE betting_odds_make_playoffs (
             id INTEGER PRIMARY KEY, run_id TEXT, week INTEGER, season INTEGER,
             team_id INTEGER, team_name TEXT, owner TEXT,
-            probability REAL, american_odds TEXT, created_at TIMESTAMP
+            probability REAL, american_odds TEXT, no_probability REAL, no_american_odds TEXT,
+            created_at TIMESTAMP
         )
     """)
     )
@@ -384,6 +411,14 @@ def create_analytics_tables(session):
         )
     """)
     )
+    session.execute(
+        text("""
+        CREATE TABLE simulation_standings (
+            run_id TEXT PRIMARY KEY, season INTEGER, week INTEGER, created_at TEXT,
+            n_sims INTEGER, playoff_teams INTEGER, roster_ids TEXT, standings BLOB
+        )
+    """)
+    )
     session.commit()
 
 
@@ -438,6 +473,17 @@ def seed_analytics(session):
     )
     session.execute(
         text("""
+        INSERT INTO simulation_standings (run_id, season, week, created_at, n_sims, playoff_teams, roster_ids, standings)
+        VALUES (:run_id, 2026, 10, :created_at, 20, 2, '1,2,3,4', :standings)
+    """),
+        {
+            "run_id": RUN_ID,
+            "created_at": RUN_CREATED_AT,
+            "standings": encode_standings(SEEDED_POSITIONS, SEEDED_CHAMPIONS),
+        },
+    )
+    session.execute(
+        text("""
         INSERT INTO betting_odds_matchup_ml
             (run_id, week, season, matchup, team1_id, team1_name, team1_win_prob, team1_ml,
              team2_id, team2_name, team2_win_prob, team2_ml, ties)
@@ -470,15 +516,10 @@ def seed_analytics(session):
     )
     session.execute(
         text("""
-        INSERT INTO betting_odds_first_place (run_id, week, season, team_id, owner, probability, american_odds)
-        VALUES (:run_id, 10, 2026, 1, 'Alice A', 0.45, '-120'), (:run_id, 10, 2026, 2, 'Bob B', 0.30, '+150')
-    """),
-        {"run_id": RUN_ID},
-    )
-    session.execute(
-        text("""
-        INSERT INTO betting_odds_make_playoffs (run_id, week, season, team_id, owner, probability, american_odds)
-        VALUES (:run_id, 10, 2026, 1, 'Alice A', 0.80, '-400'), (:run_id, 10, 2026, 2, 'Bob B', 0.60, '-150')
+        INSERT INTO betting_odds_make_playoffs
+            (run_id, week, season, team_id, owner, probability, american_odds, no_probability, no_american_odds)
+        VALUES (:run_id, 10, 2026, 1, 'Alice A', 0.80, '-400', 0.20, '+400'),
+               (:run_id, 10, 2026, 2, 'Bob B', 0.60, '-150', 0.40, '+150')
     """),
         {"run_id": RUN_ID},
     )

@@ -1,7 +1,7 @@
 """Market keys and the published prices behind them.
 
 A key names one market in the published odds tables: `2026-w04-moneyline-1v4` is week 4's game
-between rosters 1 and 4, `2026-first_place` is the season's first-place market. A bet is a key and a
+between rosters 1 and 4, `2026-champion` is the season's champion market. A bet is a key and a
 selection, and its price always comes from the row the key finds, never from the browser. A spread
 has no table: its price comes from the week's latest score matrix at the line the bettor picked.
 """
@@ -27,7 +27,6 @@ SHAPES = {
     "team_total": (True, ("team_id",)),
     "highest_scorer": (True, ()),
     "lowest_scorer": (True, ()),
-    "first_place": (False, ()),
     "make_playoffs": (False, ("team_id",)),
     "last_place": (False, ()),
     "champion": (False, ()),
@@ -81,19 +80,16 @@ QUOTE_SQL = {
         WHERE season = :season AND week = :week
           AND season = (SELECT MAX(season) FROM betting_odds_lowest_scorer)
     """,
-    "first_place": """
-        SELECT run_id, CAST(team_id AS TEXT) AS selection, american_odds AS odds, probability, NULL AS line
-        FROM betting_odds_first_place
-        WHERE season = :season
-          AND season = (SELECT MAX(season) FROM betting_odds_first_place)
-          AND week = (SELECT MAX(week) FROM betting_odds_first_place WHERE season = :season)
-    """,
     "make_playoffs": """
-        SELECT run_id, 'yes' AS selection, american_odds AS odds, probability, NULL AS line
-        FROM betting_odds_make_playoffs
-        WHERE season = :season AND team_id = :team1
-          AND season = (SELECT MAX(season) FROM betting_odds_make_playoffs)
-          AND week = (SELECT MAX(week) FROM betting_odds_make_playoffs WHERE season = :season)
+        WITH team AS (
+            SELECT * FROM betting_odds_make_playoffs
+            WHERE season = :season AND team_id = :team1
+              AND season = (SELECT MAX(season) FROM betting_odds_make_playoffs)
+              AND week = (SELECT MAX(week) FROM betting_odds_make_playoffs WHERE season = :season)
+        )
+        SELECT run_id, 'yes' AS selection, american_odds AS odds, probability, NULL AS line FROM team
+        UNION ALL
+        SELECT run_id, 'no', no_american_odds, no_probability, NULL FROM team
     """,
     "last_place": """
         SELECT run_id, CAST(team_id AS TEXT) AS selection, american_odds AS odds, probability, NULL AS line

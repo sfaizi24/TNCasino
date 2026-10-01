@@ -18,7 +18,7 @@ back exactly the stake. Teams are Sleeper roster ids 1 to 12.
 
 The numbers come from two places. Week-4 numbers come from run `2026w04-20260928T030248`, made on
 Sunday night during week 3; its standings count 2 played weeks instead of 3, so its futures
-(season-long bets such as first place) only illustrate. Backtest numbers come from 2025 weeks 10
+(season-long bets such as make playoffs) only illustrate. Backtest numbers come from 2025 weeks 10
 to 16, with v2.1 refitted each time without the week it prices: 42 games and 84 team scores, a
 small sample. Tables name the script behind them, §10 lists the scripts, and the glossary at the
 end repeats the betting and statistics terms.
@@ -239,6 +239,21 @@ The pieces exist: the playoffs step plays the current week with the first 20,000
 × 12 one-byte numbers, 240 KB) would line the two up sim for sim. What would change my mind: owners
 asking for season-long parlays once the weekly ones run.
 
+**Reversed 2026-10-01 (B12).** The owners asked for season-long parlays, the condition above: "can
+we do futures parlays? like only parlay futures with futures or current week w current week." The
+standings matrix this section sketched is now stored. The playoffs step writes each run's simulated
+seasons to `simulation_standings`, one row per simulation run: every season's finishing place for
+each roster, the 20,000 × 12 one-byte numbers above, with the season's champion beside them as a
+thirteenth column, 260 KB before compression. Publish appends it as it appends
+`simulation_totals`. A slip now holds two to four of the week's picks or two to four futures picks
+(make playoffs yes or no, last place, champion), priced at the share of the latest futures run's
+seasons in which every leg wins. The two kinds never share a slip: a mixed slip is refused
+(`mixed`), as the owners asked, so the week's sims are not lined up with the seasons after all, and
+a weekly parlay still settles within its week. The three refusal rules carry over to futures: one
+roster's YES and NO, or two teams for last place, are two legs from one market; one roster last and
+champion, or NO and champion, never win together; a roster's champion leg makes its YES add nothing.
+First place left the markets in the same package.
+
 Scorer legs are allowed, under the three rules. Runner-up: leave scorer legs out of parlays, which
 cuts refusals from 22.3% of pairs and 57.7% of triples to 2.1% and 7.3%. What would change my mind:
 if more than a fifth of the parlays owners try are refused (B8 logs refusals), drop scorer legs.
@@ -351,6 +366,25 @@ for the admin to settle by hand. Cash-out prices a parlay at the joint chance of
 (PR 10, merge 022e9af). Built by a Claude Code
 cloud session from `docs/briefs/b8-parlays.md`; merged 2026-09-29 (9e43632), 980 tests.
 
+**Implementation notes (B12, 2026-10-01).** Every team gets a make-playoffs card, and no futures
+market has a band any more: the 1% to 99% cut of §2.4 is gone, last place and the champion are
+offered at fair odds however long the shot, and only a chance of exactly 0 or 1 goes unpriced,
+left out of the last-place and champion tables or stored with NULL odds for make playoffs, shown
+as "No price" and refused at placement. Futures legs are allowed now (§1.4). A futures slip is
+quoted and placed at the futures run its page listed, on that run's `simulation_standings` row
+(`standings_matrix`, cached four runs per worker like the score matrix), through the futures win
+rules in `pipeline/markets.py`; its refusals run in the same order with `mixed` after a leg's own,
+and `mixed` is not logged to `parlay_refusals`. A futures parlay is removable while its legs' quotes
+keep its run, and offered a cash-out at the joint chance on the latest futures run's seasons once a
+newer run quotes its legs and the standings are not behind. Settlement now loses a parlay as soon as
+one leg loses, undecided legs taking `lost`; a futures parlay whose standings legs won and whose
+champion leg is left stays open until the admin settles it by hand after the final. The app reads
+`no_probability`, `no_american_odds` and `simulation_standings`, so after the merge the pipeline
+runs (the playoffs step at least) and publishes from this code before the app restarts; until then
+`/api/make_playoffs` returns an empty list, and make-playoffs bets and futures parlays are refused.
+The production table `betting_odds_first_place` is dropped by hand after the merge, since the publish
+step swaps only the tables it lists.
+
 ---
 
 ## 2. Cash-out
@@ -420,7 +454,7 @@ A new table `bet_legs` holds what was picked. A single bet has one leg, a parlay
 | `bet_id` | integer | the bet |
 | `season`, `week` | integer | `week` is null for futures |
 | `market` | text | the market key |
-| `selection` | text | a roster id, `over`, `under` or `yes` |
+| `selection` | text | a roster id, `over`, `under`, `yes` or `no` (`no` from B12) |
 | `line` | numeric(7,2) | null when the market has no line |
 | `price`, `probability` | integer, float | the leg's own single price and chance at placement |
 | `status` | text | pending, won, lost, push or void |
@@ -437,8 +471,8 @@ Market keys, lower roster id first as the odds tables order matchups:
 | Highest scorer | `2026-w04-highest_scorer` | roster | – |
 | Lowest scorer | `2026-w04-lowest_scorer` | roster | – |
 | Head to head | `2026-w04-head_to_head-3v10` | roster | – |
-| First place (today's `first_seed`) | `2026-first_place` | roster | – |
-| Make playoffs (today's `ammad_playoff`) | `2026-make_playoffs-4` | yes | – |
+| First place (today's `first_seed`; removed in B12) | `2026-first_place` | roster | – |
+| Make playoffs (today's `ammad_playoff`) | `2026-make_playoffs-4` | yes, or no from B12 | – |
 | Last place | `2026-last_place` | roster | – |
 
 Bets placed before the change keep their description and settle by hand as today.
@@ -449,8 +483,9 @@ Bets placed before the change keep their description and settle by hand as today
   remove the bet instead.
 - **The window is closed:** a game has kicked off and no locked rerun has been published, so the
   latest run does not know what happened.
-- **The chance is at the edge:** the market is gone from the latest run (the playoffs step drops
-  futures rows under 1% or over 99%, playoffs.py lines 30–31), or the bet wins in none of the sims
+- **The chance is at the edge:** the market is gone from the latest run (the playoffs step writes
+  no last-place or champion row at a chance of exactly 0 or 1; until B12 it dropped rows under 1%
+  or over 99%), or the bet wins in none of the sims
   or in all of them, so the sims cannot say what it is worth. Today's clamp would show such a
   chance as 0.1% or 99.9%; cash-out must never use a clamped number.
 - **Futures from a run whose standings miss a week:** the week-4 run counted 2 played weeks, not 3.
@@ -808,7 +843,7 @@ clamped to between 0.1% and 99.9%, so prices run up to +99900.
 |---|---|---|
 | Fair, clamped at ±99900 (today) | Any chance down to 0.1% is priced | $500 at +99900 wins $499,500; one long shot can decide the season |
 | 5% overround | An even bet becomes -110.5 and wins $90.48 per $100 | Every bet loses $4.76 per $100 on average, a 3-leg parlay $13.62; $1,000 a week for 14 weeks costs $667; the leaderboard rewards whoever bets least |
-| Fair, prices clipped at ±5000 | A long shot shows +5000 whatever its chance | Hidden mispricing: team 2 for first place (1.2%) returns $62.73 per $100; a 99% favourite at -5000 returns $100.98 |
+| Fair, prices clipped at ±5000 | A long shot shows +5000 whatever its chance | Hidden mispricing: team 2 for first place (1.2%; a market until B12) returns $62.73 per $100; a 99% favourite at -5000 returns $100.98 |
 | Fair, refused beyond ±5000 (recommended) | Chances under 1/51 (about 2%) or over 50/51 are not offered | The biggest win on $500 is $25,000; every offered price rests on at least about 980 sims |
 
 Why ±5000. A chance of 1/51 rests on about 980 of 50,000 sims, so it is uncertain by about 3% of
@@ -817,7 +852,7 @@ sims, where 1/51 is 392 sims (about 5%). The cap also fits parlays: four coin-fl
 +1500 and five at +3100, while six (+6300) would be refused.
 
 Week-4 markets it removes: team 9 to be highest scorer (1.6%, +6237), team 7 to be lowest scorer
-(1.7%, +5621), team 2 for first place (1.2%, +8030), team 9 to make the playoffs (1.5%, +6589), 7
+(1.7%, +5621), team 2 for first place (1.2%, +8030; a market until B12), team 9 to make the playoffs (1.5%, +6589), 7
 of 12 last-place picks and 29 of 144 exact seeds.
 
 **Recommendation.** Fair prices everywhere, and refuse any price beyond ±5000 instead of clamping
@@ -1134,7 +1169,8 @@ first, because every later package stores or reads it.
 - **B8.** The parlay slip, the refusal rules with a refusal log, the per-worker matrix cache,
   parlay settlement. Driving risk: the page and the cache. Shipped 2026-09-29 (merge 9e43632);
   parlay cash-out followed 2026-09-29 (merge 022e9af); the by-hand admin buttons on parlays are
-  open (doc 08).
+  open (doc 08). B12 gave them to all-futures parlays; weekly parlays still settle only from the
+  preview.
 - **B9.** Offers from the latest run for futures and weekly bets, and the week the profit posts to.
   Driving risk: futures and weekly bets reach their chances by different paths. Shipped
   2026-09-29 (merge 52aebf2); a playoffs-only rerun ends removal on that week's futures bets
@@ -1151,6 +1187,17 @@ first, because every later package stores or reads it.
   week, the champion by hand, and a futures result posted to the week it settles in; built by the
   cloud session from `docs/briefs/b10-futures.md`. Top 4 is the existing make-playoffs market.
 - **B11.** Props priced in the odds step (§4).
+- **B12.** Futures as YES or NO, no first place, and futures parlays (§1.4). First place is gone
+  from the pipeline's tables, the publish map, validation, the charts, the API and the page; make
+  playoffs is priced on both sides for every team, the NO side at 1 − YES stored beside it in
+  `betting_odds_make_playoffs`, a side at a chance of 0 or 1 left without odds; the playoffs step prices its three futures through
+  `pipeline/markets.py` and stores each run's simulated seasons in `simulation_standings`, which
+  publish appends like `simulation_totals` and validate checks; a slip holds weekly picks or futures
+  picks, never both, and a futures slip is quoted, cashed out and settled on those seasons, a lost
+  leg settling it at once and a champion leg leaving it to the admin after the final. Driving risk:
+  the futures rows and the seasons a parlay is priced on drifting apart when the playoffs step
+  reruns after a publish. Built by the cloud session from `docs/briefs/b12-futures.md`. Shipped
+  2026-10-01 (merge pending).
 
 Doc 08's line references have moved: the browser's odds are read at betting.py lines 257, 300, 341
 and 382, and the settlement balance update is at admin.py line 170.
@@ -1264,7 +1311,7 @@ Decisions for the owner, taken 2026-09-29:
 - **Clamp:** a cap on a chance before it becomes a price. The pipeline clamped to 0.1% to 99.9% until 2026-09-28, when the owner removed it (section 10, decision 2): a chance of exactly 0 or 1 now has no price and is not offered.
 - **Correlation:** from -1 to 1, how much two numbers rise and fall together; 0 is unrelated.
 - **Fair price:** a price with no house margin; at the model's chance the bettor expects the stake back.
-- **Futures:** bets settled at the end of the season, such as first place and make playoffs.
+- **Futures:** bets settled at the end of the season: make playoffs (yes or no), last place and champion.
 - **Gate:** the held-out checks a refitted model is scored on before it becomes the default
   (`pipeline/model/evaluate.py`, doc 03).
 - **Head to head:** a moneyline between any two teams, whether or not they play each other that week.

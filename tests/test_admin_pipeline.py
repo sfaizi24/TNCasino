@@ -252,7 +252,6 @@ STEP_SHAPES = {
         "future_weeks": [5, 6],
         "playoff_weeks": [15, 16, 17],
         "projections": [{"week": 5, "sources": ["sleeper.com", "espn.com"], "n_players": 505, "empty_slots": 2}],
-        "first_place": [{"owner": "TBK41", "probability": 0.254}],
         "make_playoffs": [{"owner": "TBK41", "probability": 0.84}],
         "last_place": [{"owner": "fajandfoujee", "probability": 0.231}],
         "champion": [{"owner": "TBK41", "probability": 0.17}],

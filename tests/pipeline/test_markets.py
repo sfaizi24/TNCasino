@@ -92,3 +92,53 @@ def test_decoding_gives_back_the_matrix_at_float32_precision():
     assert np.array_equal(decoded, scores.astype(np.float32).astype(np.float64))
     # Simulated draws are float32 already, so theirs come back exactly.
     assert np.array_equal(markets.decode_totals(markets.encode_totals(SCORES), 5, 3), SCORES)
+
+
+# Four simulated seasons of three teams: each row holds every team's finishing place, and the playoffs take the top 2.
+POSITIONS = np.array([[1, 2, 3], [3, 1, 2], [2, 3, 1], [1, 3, 2]])
+CHAMPIONS = np.array([1, 1, 2, 0])
+
+
+def test_make_playoffs_yes_wins_inside_the_playoff_line_and_no_outside_it():
+    assert sims(markets.make_playoffs(POSITIONS, 0, 2, "yes")) == ([0, 2, 3], [])
+    assert sims(markets.make_playoffs(POSITIONS, 0, 2, "no")) == ([1], [])
+    assert sims(markets.make_playoffs(POSITIONS, 1, 2, "no")) == ([2, 3], [])
+
+
+def test_a_side_other_than_yes_or_no_is_refused():
+    with pytest.raises(ValueError, match="side is 'yes' or 'no', not 'over'"):
+        markets.make_playoffs(POSITIONS, 0, 2, "over")
+
+
+def test_last_place_wins_in_the_seasons_the_team_finishes_bottom():
+    assert sims(markets.last_place(POSITIONS, 0)) == ([1], [])
+    assert sims(markets.last_place(POSITIONS, 1)) == ([2, 3], [])
+    assert sims(markets.last_place(POSITIONS, 2)) == ([0], [])
+
+
+def test_champion_wins_in_the_seasons_the_team_takes_the_bracket():
+    assert sims(markets.champion(CHAMPIONS, 1)) == ([0, 1], [])
+    assert markets.probability(markets.champion(CHAMPIONS, 2)) == 0.25
+
+
+def test_the_standings_encoding_is_zlib_compressed_uint8_places_then_the_champion():
+    raw = zlib.decompress(markets.encode_standings(POSITIONS, CHAMPIONS))
+
+    assert list(raw) == [1, 2, 3, 1, 3, 1, 2, 1, 2, 3, 1, 2, 1, 3, 2, 0]
+
+
+def test_decoding_gives_back_the_places_and_the_champions():
+    positions, champions = markets.decode_standings(markets.encode_standings(POSITIONS, CHAMPIONS), 4, 3)
+
+    assert positions.shape == (4, 3)
+    assert champions.shape == (4,)
+    assert np.array_equal(positions, POSITIONS)
+    assert np.array_equal(champions, CHAMPIONS)
+
+
+def test_repetitive_standings_compress_below_their_raw_size():
+    positions = np.tile(np.random.default_rng(5).permutation(12) + 1, (2000, 1))
+    champions = np.zeros(2000, dtype=np.int64)
+
+    raw_bytes = 2000 * (12 + 1)
+    assert len(markets.encode_standings(positions, champions)) < raw_bytes

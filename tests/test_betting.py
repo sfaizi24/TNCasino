@@ -28,8 +28,8 @@ SINGLE_MARKETS = [
     ("team_total", "2026-w10-team_total-1", "over", 110.5, "Alice A O/U 110.50: Over", "-120", 83.33),
     ("highest_scorer", "2026-w10-highest_scorer", "1", None, "Alice A: Highest Scorer +185", "+185", 185.0),
     ("lowest_scorer", "2026-w10-lowest_scorer", "2", None, "Bob B: Lowest Scorer +230", "+230", 230.0),
-    ("first_place", "2026-first_place", "2", None, "Bob B: First Place +150", "+150", 150.0),
-    ("make_playoffs", "2026-make_playoffs-1", "yes", None, "Alice A: Make Playoffs -400", "-400", 25.0),
+    ("make_playoffs", "2026-make_playoffs-1", "yes", None, "Alice A: Make Playoffs Yes -400", "-400", 25.0),
+    ("make_playoffs", "2026-make_playoffs-1", "no", None, "Alice A: Make Playoffs No +400", "+400", 400.0),
     ("last_place", "2026-last_place", "2", None, "Bob B: Last Place +230", "+230", 230.0),
     ("champion", "2026-champion", "1", None, "Alice A: Champion +233", "+233", 233.0),
 ]
@@ -84,7 +84,7 @@ def test_a_placed_bet_records_its_quote_and_one_leg(logged_in_client, user, bett
 
 def test_a_futures_bet_posts_to_the_current_week(logged_in_client, user, betting_period, seeded_analytics):
     logged_in_client.post(
-        "/api/place_bet", json={"market": "2026-first_place", "selection": "2", "run_id": RUN_ID, "amount": 100}
+        "/api/place_bet", json={"market": "2026-last_place", "selection": "2", "run_id": RUN_ID, "amount": 100}
     )
 
     bet = db.session.query(Bet).one()
@@ -130,6 +130,7 @@ def test_a_team_total_at_a_moved_line_is_refused(logged_in_client, user, betting
         ({"market": "2026-w10-spread-1v2", "selection": "1", "line": 3.25}, "Unknown line"),
         ({"market": "2026-w10-spread-1v2", "selection": "3", "line": -4.0}, "Unknown selection"),
         ({"market": "2026-w10-team_total-7", "selection": "over", "line": 100.0}, "Unknown market"),
+        ({"market": "2026-first_place", "selection": "2"}, "Unknown market"),
     ],
 )
 def test_a_pick_the_week_does_not_offer_is_refused(
@@ -216,7 +217,6 @@ def publish_a_rerun(run_id, totals=None):
         "team_ou",
         "highest_scorer",
         "lowest_scorer",
-        "first_place",
         "make_playoffs",
         "last_place",
         "champion",
@@ -731,13 +731,21 @@ ROSTER_1_HIGHEST = {"market": "2026-w10-highest_scorer", "selection": "1"}
 ROSTER_2_HIGHEST = {"market": "2026-w10-highest_scorer", "selection": "2"}
 ROSTER_2_LOWEST = {"market": "2026-w10-lowest_scorer", "selection": "2"}
 MAKE_PLAYOFFS = {"market": "2026-make_playoffs-1", "selection": "yes"}
+BOB_MAKES_PLAYOFFS = {"market": "2026-make_playoffs-2", "selection": "yes"}
+BOB_MISSES_PLAYOFFS = {"market": "2026-make_playoffs-2", "selection": "no"}
+ALICE_CHAMPION = {"market": "2026-champion", "selection": "1"}
 
 CANNOT_PRICE = "Not offered: the simulations cannot price this parlay"
 
 # The legs, the refusal text, its rule and the keys it names.
 PARLAY_REFUSALS = [
     ([ROSTER_1_WINS] * 5, "A parlay has 2 to 4 legs", "size", []),
-    ([ROSTER_1_OVER, MAKE_PLAYOFFS], "Futures cannot be parlayed", "leg", ["2026-make_playoffs-1"]),
+    (
+        [ROSTER_1_OVER, MAKE_PLAYOFFS],
+        "Weekly and futures picks cannot be parlayed together",
+        "mixed",
+        ["2026-make_playoffs-1"],
+    ),
     ([ROSTER_1_WINS, ROSTER_2_WINS], "Two legs from one market", "same_market", ["2026-w10-moneyline-1v2"]),
     ([ROSTER_1_WINS, ROSTER_2_HIGHEST], CANNOT_PRICE, "impossible", []),
     (
@@ -746,6 +754,14 @@ PARLAY_REFUSALS = [
         "redundant",
         ["2026-w10-highest_scorer", "2026-w10-lowest_scorer"],
     ),
+    (
+        [MAKE_PLAYOFFS, {**MAKE_PLAYOFFS, "selection": "no"}],
+        "Two legs from one market",
+        "same_market",
+        ["2026-make_playoffs-1"],
+    ),
+    ([{"market": "2026-last_place", "selection": "1"}, ALICE_CHAMPION], CANNOT_PRICE, "impossible", []),
+    ([ALICE_CHAMPION, MAKE_PLAYOFFS], "A leg adds nothing to this parlay", "redundant", ["2026-make_playoffs-1"]),
 ]
 
 
@@ -933,7 +949,7 @@ def test_moved_odds_and_missing_prices_are_not_logged(logged_in_client, user, be
     [
         (["x", "y"], [None, None]),
         ([{}, ROSTER_1_OVER], [None]),
-        ([ROSTER_1_WINS, "x", MAKE_PLAYOFFS], [None, "2026-make_playoffs-1"]),
+        ([ROSTER_1_WINS, "x", {"market": "2026-first_place", "selection": "1"}], [None, "2026-first_place"]),
     ],
 )
 @pytest.mark.parametrize("send", [quote_parlay, place_parlay])
@@ -1072,6 +1088,11 @@ def move_every_quote():
 
 
 PARLAY_BET = {"legs": [ROSTER_1_WINS, ROSTER_1_OVER], "run_id": RUN_ID, "amount": 100}
+FUTURES_PARLAY_BET = {
+    "legs": [MAKE_PLAYOFFS, BOB_MAKES_PLAYOFFS],
+    "run_id": RUN_ID,
+    "amount": 100,
+}
 
 # What can happen to the runs after a bet is placed.
 RUN_CHANGES = {
@@ -1088,7 +1109,11 @@ RUN_CHANGES = {
 
 
 @pytest.mark.parametrize("change", RUN_CHANGES.values(), ids=RUN_CHANGES.keys())
-@pytest.mark.parametrize("payload", [HIGHEST_SCORER_BET, PLAYOFFS_BET, PARLAY_BET], ids=["single", "futures", "parlay"])
+@pytest.mark.parametrize(
+    "payload",
+    [HIGHEST_SCORER_BET, PLAYOFFS_BET, PARLAY_BET, FUTURES_PARLAY_BET],
+    ids=["single", "futures", "parlay", "futures parlay"],
+)
 def test_a_bet_is_removable_or_offered_a_cash_out_never_both(
     logged_in_client, user, betting_period, seeded_analytics, payload, change
 ):
@@ -1100,6 +1125,116 @@ def test_a_bet_is_removable_or_offered_a_cash_out_never_both(
 
     assert not (listed["removable"] and listed["cash_out_offer"])
     assert removed["success"] is listed["removable"]
+
+
+# Futures parlays, on the seeded run's standings: Alice A and Bob B both make the playoffs in 8 of the 20 seasons,
+# and Bob B misses them in one of the six seasons Alice A is champion.
+@pytest.mark.parametrize(
+    ("legs", "probability", "odds", "leg_quotes"),
+    [
+        ([MAKE_PLAYOFFS, BOB_MAKES_PLAYOFFS], 0.4, "+150", [("yes", "-400", 0.8), ("yes", "-150", 0.6)]),
+        ([BOB_MISSES_PLAYOFFS, ALICE_CHAMPION], 0.05, "+1900", [("no", "+150", 0.4), ("1", "+233", 0.3)]),
+    ],
+)
+def test_a_futures_parlay_is_quoted_at_the_seasons_where_every_leg_wins(
+    logged_in_client, user, betting_period, seeded_analytics, legs, probability, odds, leg_quotes
+):
+    reply = quote_parlay(logged_in_client, legs)
+
+    assert (reply["success"], reply["run_id"], reply["probability"], reply["odds"]) == (True, RUN_ID, probability, odds)
+    assert [(leg["selection"], leg["odds"], leg["probability"], leg["line"]) for leg in reply["legs"]] == [
+        (*quote, None) for quote in leg_quotes
+    ]
+
+
+def test_a_placed_futures_parlay_posts_to_the_current_week_with_season_long_legs(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    reply = place_parlay(logged_in_client, [MAKE_PLAYOFFS, BOB_MAKES_PLAYOFFS])
+
+    assert (reply["success"], reply["new_balance"], reply["price"], reply["legs"]) == (
+        True,
+        900.0,
+        150,
+        ["2026-make_playoffs-1", "2026-make_playoffs-2"],
+    )
+    bet = db.session.get(Bet, reply["bet_id"])
+    assert (bet.bet_type, bet.week, bet.odds, bet.probability, bet.run_id, bet.potential_win) == (
+        "parlay",
+        10,
+        "+150",
+        0.4,
+        RUN_ID,
+        150.0,
+    )
+    assert bet.description == "Alice A: Make Playoffs Yes -400 + Bob B: Make Playoffs Yes -150"
+    assert [(leg.season, leg.week, leg.market, leg.selection) for leg in bet.legs] == [
+        (2026, None, "2026-make_playoffs-1", "yes"),
+        (2026, None, "2026-make_playoffs-2", "yes"),
+    ]
+    assert weekly_money(user, 10) == (1000.0, 900.0, -100.0, 100.0, 0.0, 1, 0)
+
+
+@pytest.mark.parametrize("send", [quote_parlay, place_parlay])
+def test_a_futures_parlay_is_priced_at_its_own_run_whatever_the_weeks(
+    logged_in_client, user, betting_period, seeded_analytics, send
+):
+    # The week moves on to a newer run while the futures rows, and so the slip, stay at the seeded one.
+    publish_a_run_without_odds(RERUN_ID)
+
+    reply = send(logged_in_client, [MAKE_PLAYOFFS, BOB_MAKES_PLAYOFFS])
+
+    assert reply["success"] is True
+    if send is quote_parlay:
+        assert (reply["run_id"], reply["probability"]) == (RUN_ID, 0.4)
+    else:
+        assert db.session.get(Bet, reply["bet_id"]).run_id == RUN_ID
+
+
+@pytest.mark.parametrize("send", [quote_parlay, place_parlay])
+def test_a_futures_leg_quoted_at_another_run_has_changed(
+    logged_in_client, user, betting_period, seeded_analytics, send
+):
+    move_a_quote("betting_odds_make_playoffs", "team_id = 2")
+
+    reply = send(logged_in_client, [MAKE_PLAYOFFS, BOB_MAKES_PLAYOFFS])
+
+    assert reply == {
+        "success": False,
+        "error": "Odds have changed",
+        "rule": "odds_changed",
+        "legs": ["2026-make_playoffs-2"],
+        "run_id": RUN_ID,
+    }
+    assert db.session.query(Bet).count() == 0
+
+
+def test_a_futures_parlay_is_removable_while_its_legs_quotes_keep_its_run(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    bet_id = place_parlay(logged_in_client, [MAKE_PLAYOFFS, BOB_MAKES_PLAYOFFS])["bet_id"]
+    publish_a_run_without_odds(RERUN_ID)
+
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+    reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
+
+    assert listed["removable"] is True
+    assert reply == {"success": True, "new_balance": 1000.0}
+    assert [leg.status for leg in db.session.get(Bet, bet_id).legs] == ["void", "void"]
+
+
+def test_a_futures_parlay_stays_once_a_legs_quote_has_a_newer_run(
+    logged_in_client, user, betting_period, seeded_analytics
+):
+    bet_id = place_parlay(logged_in_client, [MAKE_PLAYOFFS, BOB_MAKES_PLAYOFFS])["bet_id"]
+    move_a_quote("betting_odds_make_playoffs", "team_id = 2")
+
+    [listed] = logged_in_client.get("/api/my_bets").get_json()
+    reply = logged_in_client.delete(f"/api/remove_bet/{bet_id}").get_json()
+
+    assert listed["removable"] is False
+    assert reply == {"success": False, "error": "Odds have changed since this bet was placed"}
+    assert db.session.get(Bet, bet_id).status == "pending"
 
 
 def test_a_one_leg_list_is_a_single(logged_in_client, user, betting_period, seeded_analytics):

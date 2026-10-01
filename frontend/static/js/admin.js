@@ -158,10 +158,10 @@
 
             let html = '<table class="bets-table"><thead><tr><th>User</th><th>Description</th><th>Amount</th><th>Odds</th><th>Actions</th></tr></thead><tbody>';
             bets.forEach(bet => {
-                // A parlay settles leg by leg from the Settle Week card, so only a single settles here.
-                const settleButtons = bet.bet_type === 'parlay' ? '' : `
+                // A weekly parlay settles leg by leg from the Settle Week card; a single or a futures parlay settles here.
+                const settleButtons = bet.by_hand ? `
                         <button class="btn btn-success btn-sm" onclick="settleBet(${bet.id}, true)">Win</button>
-                        <button class="btn btn-danger btn-sm" onclick="settleBet(${bet.id}, false)">Loss</button>`;
+                        <button class="btn btn-danger btn-sm" onclick="settleBet(${bet.id}, false)">Loss</button>` : '';
                 html += `<tr>
                     <td>${bet.user_id.substring(0, 8)}...</td>
                     <td>${escapeHtml(bet.description)}</td>

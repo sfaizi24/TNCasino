@@ -1,4 +1,4 @@
-"""Futures charts for the analytics page: each team's chance of making the playoffs and of finishing first."""
+"""Futures chart for the analytics page: each team's chance of making the playoffs."""
 
 from pathlib import Path
 
@@ -14,11 +14,6 @@ from pipeline.charts import NOTEBOOK_STYLE, save
 def playoff_probability(images_dir: Path, week: int, probabilities: pd.Series, playoff_teams: int) -> str:
     title = f"Playoff Probability - Week {week}\n(Top {playoff_teams} Make Playoffs)"
     return probability_bars(images_dir, f"playoff_probability_week_{week}.png", title, probabilities)
-
-
-def first_place_race(images_dir: Path, week: int, probabilities: pd.Series) -> str:
-    title = f"First Place Race - Week {week}"
-    return probability_bars(images_dir, f"first_place_race_week_{week}.png", title, probabilities)
 
 
 def probability_bars(images_dir: Path, name: str, title: str, probabilities: pd.Series) -> str:

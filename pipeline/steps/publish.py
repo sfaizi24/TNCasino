@@ -1,8 +1,8 @@
-"""Publish step: upload the charts, store each new run's score matrix, then replace production's copy of this
-season's analytics and run records.
+"""Publish step: upload the charts, store each new run's score and standings matrices, then replace production's copy
+of this season's analytics and run records.
 
 Every replaced table is staged and row-counted before all of them are swapped in together, as scripts/publish.py
-did. The score matrices are only ever appended to.
+did. The score and standings matrices are only ever appended to.
 """
 
 import json
@@ -34,7 +34,6 @@ TABLES = [
     ("odds", "betting_odds_matchup_ou", "betting_odds_matchup_ou"),
     ("odds", "betting_odds_highest_scorer", "betting_odds_highest_scorer"),
     ("odds", "betting_odds_lowest_scorer", "betting_odds_lowest_scorer"),
-    ("odds", "betting_odds_first_place", "betting_odds_first_place"),
     ("odds", "betting_odds_make_playoffs", "betting_odds_make_playoffs"),
     ("odds", "betting_odds_last_place", "betting_odds_last_place"),
     ("odds", "betting_odds_champion", "betting_odds_champion"),
@@ -59,7 +58,7 @@ TABLES = [
 PROTECTED_TABLES = {"users", "bets", "bet_legs", "weekly_stats", "betting_periods", "parlay_refusals"}
 # Never swapped, because a swap would drop the matrices of earlier runs, and bets are re-priced at the run they
 # were placed on.
-APPEND_ONLY_TABLES = {"simulation_totals"}
+APPEND_ONLY_TABLES = {"simulation_totals", "simulation_standings"}
 # The dashboard lists every run of the season, so these keep all their runs instead of the latest per week.
 RUN_HISTORY = {"pipeline_runs", "pipeline_steps"}
 
@@ -80,6 +79,23 @@ INSERT_TOTALS = text(
     "VALUES (:run_id, :season, :week, :created_at, :n_sims, :roster_ids, :totals) "
     "ON CONFLICT (run_id) DO NOTHING"
 )
+SIMULATION_STANDINGS = Table(
+    "simulation_standings",
+    MetaData(),
+    Column("run_id", Text, primary_key=True),
+    Column("season", Integer, nullable=False),
+    Column("week", Integer, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("n_sims", Integer, nullable=False),
+    Column("playoff_teams", Integer, nullable=False),
+    Column("roster_ids", Text, nullable=False),
+    Column("standings", LargeBinary, nullable=False),
+)
+INSERT_STANDINGS = text(
+    "INSERT INTO simulation_standings (run_id, season, week, created_at, n_sims, playoff_teams, roster_ids, standings) "
+    "VALUES (:run_id, :season, :week, :created_at, :n_sims, :playoff_teams, :roster_ids, :standings) "
+    "ON CONFLICT (run_id) DO NOTHING"
+)
 
 
 class PublishError(Exception):
@@ -95,8 +111,13 @@ def run(ctx: StepContext) -> StepResult:
     tables, skipped = read_tables(local, settings.season, settings.league_id)
     # The latest run of each week, whose score matrix is stored unless production has it already.
     runs = tables.get("simulation_runs", pd.DataFrame())
+    standings = read_standings(local["odds"], settings.season)
+    if standings is None:
+        skipped.append("simulation_standings")
+        standings = []
     counts = [[name, str(len(frame))] for name, frame in tables.items()]
-    print_table(["table", "rows"], [*counts, ["simulation_totals", str(len(runs))]])
+    matrices = [["simulation_totals", str(len(runs))], ["simulation_standings", str(len(standings))]]
+    print_table(["table", "rows"], [*counts, *matrices])
     warnings = [f"{name} skipped: its local table does not exist yet" for name in skipped]
 
     dry_run = ctx.options.get("dry_run")
@@ -113,6 +134,7 @@ def run(ctx: StepContext) -> StepResult:
         "skipped": skipped,
         "charts_uploaded": charts_uploaded,
         "totals_stored": [],
+        "standings_stored": [],
         "elapsed_s": round(time.perf_counter() - started, 2),
         "target_host": url.host,
     }
@@ -126,6 +148,10 @@ def run(ctx: StepContext) -> StepResult:
         summary["totals_stored"] = stored
         warnings += totals_warnings
         ctx.log(f"new runs in simulation_totals: {', '.join(stored) or 'none'}")
+        stored, standings_warnings = store_standings(engine, settings, standings)
+        summary["standings_stored"] = stored
+        warnings += standings_warnings
+        ctx.log(f"new runs in simulation_standings: {', '.join(stored) or 'none'}")
         # The runner marks this step and its run finished only after we return, so production gets that record now.
         finished = utc_now()
         steps = finish_publish_row(tables["pipeline_steps"], ctx.run_id, summary, warnings, finished)
@@ -172,6 +198,13 @@ def season_query(table: str, columns: set[str]) -> str:
     if "league_id" in columns:
         return f"SELECT * FROM {table} WHERE league_id = :league_id"
     return f"SELECT * FROM {table}"
+
+
+def read_standings(odds: sqlite3.Connection, season: int) -> list[dict] | None:
+    """The season's standings matrices, or None while the playoffs step has not created their table."""
+    if odds.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'simulation_standings'").fetchone():
+        return [dict(row) for row in odds.execute("SELECT * FROM simulation_standings WHERE season = ?", (season,))]
+    return None
 
 
 def keep_latest_run(frame: pd.DataFrame, odds: sqlite3.Connection) -> pd.DataFrame:
@@ -258,6 +291,26 @@ def store_totals(engine: Engine, settings: Settings, runs: pd.DataFrame) -> tupl
             }
             conn.execute(INSERT_TOTALS, row)
             stored_now.append(run["run_id"])
+    return stored_now, warnings
+
+
+def store_standings(engine: Engine, settings: Settings, standings: list[dict]) -> tuple[list[str], list[str]]:
+    """Append the standings matrix of each run production has not stored yet; return those runs and any warnings."""
+    stored_now = []
+    warnings = []
+    with engine.begin() as conn:
+        SIMULATION_STANDINGS.create(conn, checkfirst=True)
+        query = text("SELECT run_id, created_at FROM simulation_standings WHERE season = :season")
+        stored = dict(conn.execute(query, {"season": settings.season}).all())
+        for row in standings:
+            run_id = row["run_id"]
+            if run_id not in stored:
+                conn.execute(INSERT_STANDINGS, row)
+                stored_now.append(run_id)
+            elif stored[run_id] != row["created_at"]:
+                warnings.append(
+                    f"run {run_id}'s standings were replaced locally after they were published; rerun from simulate"
+                )
     return stored_now, warnings
 
 

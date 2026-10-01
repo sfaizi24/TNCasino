@@ -125,6 +125,7 @@ def get_pending_bets():
                     "odds": bet.odds,
                     "potential_win": bet.potential_win,
                     "bet_type": bet.bet_type,
+                    "by_hand": _settles_by_hand(bet),
                 }
             )
 
@@ -153,8 +154,7 @@ def settle_bet():
         if not bet:
             return jsonify({"success": False, "error": "Bet not found"})
 
-        # Only the preview judges a parlay leg by leg, dropping pushed legs and re-pricing the rest.
-        if len(bet.legs) > 1:
+        if not _settles_by_hand(bet):
             return jsonify({"success": False, "error": "Parlays settle from the Settle Week card"})
 
         week = _open_result_week(bet, get_current_week())
@@ -171,6 +171,12 @@ def settle_bet():
         traceback.print_exc()
         db.session.rollback()
         return jsonify({"success": False, "error": str(e)})
+
+
+def _settles_by_hand(bet):
+    """A single, or a futures parlay, which may hold a champion leg decided only after the final. A weekly parlay
+    settles from the preview, which judges it leg by leg, dropping pushed legs and re-pricing the rest."""
+    return len(bet.legs) < 2 or all(leg.week is None for leg in bet.legs)
 
 
 @admin_bp.route("/api/admin/settlement_preview", methods=["GET"])

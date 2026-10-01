@@ -109,24 +109,6 @@ INSERT INTO betting_odds_lowest_scorer
 VALUES
   ('seed_1738_20250918_100000', 3, 2, 'Team Bob', 'bob', 27500, 0.55, '-122', '2025-09-18 10:04:00');
 
-CREATE TABLE betting_odds_first_place (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id TEXT NOT NULL,
-  week INTEGER NOT NULL,
-  team_id INTEGER NOT NULL,
-  team_name TEXT NOT NULL,
-  owner TEXT NOT NULL,
-  probability REAL NOT NULL,
-  american_odds TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(run_id, week, team_id)
-);
-
-INSERT INTO betting_odds_first_place
-  (id, run_id, week, team_id, team_name, owner, probability, american_odds, created_at)
-VALUES
-  (1, 'standings_3_20250918_100500', 3, 1, 'Team Alice', 'alice', 0.6, '-150', '2025-09-18 10:05:00');
-
 CREATE TABLE betting_odds_make_playoffs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id TEXT NOT NULL,

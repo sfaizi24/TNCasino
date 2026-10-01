@@ -15,14 +15,15 @@ flowchart LR
     end
     subgraph PG["Production PostgreSQL"]
         APPT[App tables<br/>users, bets, bet_legs,<br/>weekly_stats, betting_periods,<br/>parlay_refusals]
-        ANT[Analytics tables<br/>25 published tables]
-        TOT[simulation_totals<br/>append-only]
+        ANT[Analytics tables<br/>24 published tables]
+        TOT[simulation_totals,<br/>simulation_standings<br/>append-only]
     end
     L -- "5 tables (4 renamed)" --> ANT
     P -- "3 tables" --> ANT
-    O -- "14 tables" --> ANT
+    O -- "13 tables" --> ANT
     R -- "3 run-record tables" --> ANT
     D -- "each new run's score matrix" --> TOT
+    O -- "each new run's simulated seasons" --> TOT
 ```
 
 ## league.db — Sleeper league data
@@ -66,8 +67,9 @@ Written by the `simulate`, `odds` and `playoffs` steps; the 2025 rows were writt
 | `betting_odds_highest_scorer`, `_lowest_scorer` | (run_id*, week*, team_id*) | odds | `count`, `probability`, `odds` |
 | `team_distribution_curves` | (run_id*, week*, owner*) | odds | JSON arrays `x_values`, `density_values`, `cdf_values`; `mean`, `p10`, `p50`, `p90`, `n_sims` |
 | `team_matchup_margin_curves` | (run_id*, week*, team_owner*, opponent_owner*) | odds | Win/loss/tie probability, JSON `left_*`/`right_*` tail arrays |
-| `betting_odds_first_place`, `_make_playoffs`, `_last_place`, `_champion` | id* (autoincrement), unique on (run_id, week, team_id) | playoffs | `run_id`, `week`, `team_id`, `team_name`, `owner`, `probability`, `american_odds`, `created_at`, `season`; the four tables have the same columns |
+| `betting_odds_make_playoffs`, `_last_place`, `_champion` | id* (autoincrement), unique on (run_id, week, team_id) | playoffs | `run_id`, `week`, `team_id`, `team_name`, `owner`, `probability`, `american_odds`, `created_at`, `season`; `_make_playoffs` adds the NO side, `no_probability` (1 − `probability`) and `no_american_odds`, as `betting_odds_team_ou` stores over and under. Last place and champion leave out a team whose chance is exactly 0 or 1; make playoffs has a row for every team, and its `american_odds` and `no_american_odds` are nullable: NULL on a side whose chance is exactly 0 or 1, which is not offered |
 | `standings_probability_matrix` | id*, unique on (run_id, week, team_id, position) | playoffs | P(team finishes in each position) |
+| `simulation_standings` | run_id* | playoffs | The run's simulated seasons for futures parlays: `season`, `week`, `created_at`, `n_sims`, `playoff_teams`, `roster_ids`, `standings` (the encoded matrix); one row per simulation run, replaced when the step reruns for that run. Columns as in [the publishing map](#publishing-map) |
 
 The `odds` and `playoffs` steps' tables carry the `run_id` of the simulation they were priced from. The `playoffs` tables carried the pipeline run's id until B10b; since then a rerun of the `playoffs` step alone replaces the week's rows under the same simulation run id, so the week's futures keep a run that `simulation_runs` knows. Rerunning `odds` replaces that run's rows, and each new `simulate` run adds a set beside the old ones; `publish` uploads only each week's latest run (newest `created_at`, then highest `run_id`). The 2025 curves had no run id, so the migration gave them their week's odds run. An `odds.db` whose `simulation_runs` predates `n_locked`, `window_closes_at` and `standings_through_week` gains them, at their defaults for the runs already recorded, the next time `simulate` records a run.
 
@@ -91,6 +93,7 @@ The `validate` step runs after `odds` and `playoffs` and before `publish`, and w
 | `simulation_draws` | the week has no simulation run, or its Parquet file is missing or does not hold `n_sims × n_teams` rows |
 | `odds_run` | the odds were priced from an older simulation than the week's latest |
 | `frozen_tables` | a table Flask reads for the week has no rows; a missing standings matrix (the playoffs step has not run) only warns, and only before `playoff_week_start`; an empty futures market is fine |
+| `standings_matrix` | before `playoff_week_start`, the week's futures carry a `run_id` with no `simulation_standings` row, or that row's `standings` does not decode to `n_sims × n_teams` places and champions, or holds a place outside 1 to `n_teams` or a champion outside its teams |
 | `owners` | an owner name in the lineups, odds or curves is not a league user's display name or username |
 | `unique_orderings` | a team O/U owner or a moneyline matchup repeats, which breaks Flask's pairing of rows by position |
 
@@ -145,7 +148,7 @@ erDiagram
         int season
         int week "null for futures"
         string market "key, e.g. 2026-w04-moneyline-1v4"
-        string selection "roster id, over, under or yes"
+        string selection "roster id, over, under, yes or no"
         numeric line "two decimals, team totals only"
         int price
         float probability
@@ -182,7 +185,7 @@ erDiagram
     }
 ```
 
-A single placed by market key has one `bet_legs` row recording the pick as data: the key, the selection, the line, and the price and chance it was placed at. A parlay (`bet_type = parlay`) has one row per leg, two to four, each with its own single price and chance, while the bet holds the joint ones ([06](06-betting-lifecycle.md#parlays)). A leg is `pending` until its bet closes, then takes the bet's `won`, `lost`, `push`, `cashed_out` or `void` and `settled_at`, except that a parlay settled from the preview gives each leg its own `won`, `lost` or `push`; the legs of a removed bet are `void` with no `settled_at`. A `push` returns the stake because the scores tied or landed on the line; a `void` returns it because the admin found the bet should not stand ([06](06-betting-lifecycle.md#settlement)). Bets placed before market keys existed have no legs, and their `price`, `probability` and `run_id` are null. See [06](06-betting-lifecycle.md#markets) for the keys.
+A single placed by market key has one `bet_legs` row recording the pick as data: the key, the selection, the line, and the price and chance it was placed at. A parlay (`bet_type = parlay`) has one row per leg, two to four, each with its own single price and chance, while the bet holds the joint ones ([06](06-betting-lifecycle.md#parlays)); a futures parlay's legs have `week` NULL, and the bet's `week` is the week it was placed. A leg is `pending` until its bet closes, then takes the bet's `won`, `lost`, `push`, `cashed_out` or `void` and `settled_at`, except that a parlay settled from the preview gives each leg its own `won`, `lost` or `push`, a leg still undecided when another has lost taking `lost`; the legs of a removed bet are `void` with no `settled_at`. A `push` returns the stake because the scores tied or landed on the line; a `void` returns it because the admin found the bet should not stand ([06](06-betting-lifecycle.md#settlement)). Bets placed before market keys existed have no legs, and their `price`, `probability` and `run_id` are null. See [06](06-betting-lifecycle.md#markets) for the keys.
 
 `parlay_refusals` logs each parlay quote refused because two legs share a market (`same_market`), the legs win together in every sim or none (`impossible`), or a leg adds nothing (`redundant`). The app writes it and nothing reads it yet; it is for the owner's SQL on how often the rules bite ([06](06-betting-lifecycle.md#parlays)).
 
@@ -192,11 +195,11 @@ The analytics tables have **no foreign keys to the app tables or each other**. T
 
 ## Publishing map
 
-The `publish` step (`pipeline/steps/publish.py`, run as `python -m pipeline run --week N --steps publish`) replaces 25 tables, the `TABLES` list, with the current season's rows and, of each table with a `run_id`, each week's latest run (newest `created_at`, then highest `run_id`). Sleeper's `leagues`, `rosters`, `users` and `matchups` take a `sleeper_` prefix, because `users` is the app's account table.
+The `publish` step (`pipeline/steps/publish.py`, run as `python -m pipeline run --week N --steps publish`) replaces 24 tables, the `TABLES` list, with the current season's rows and, of each table with a `run_id`, each week's latest run (newest `created_at`, then highest `run_id`). Sleeper's `leagues`, `rosters`, `users` and `matchups` take a `sleeper_` prefix, because `users` is the app's account table.
 
 | SQLite source | Postgres table |
 |---|---|
-| `odds.db` `betting_odds_matchup_ml`, `_team_ou`, `_matchup_ou`, `_highest_scorer`, `_lowest_scorer`, `_first_place`, `_make_playoffs`, `_last_place`, `_champion` | same names |
+| `odds.db` `betting_odds_matchup_ml`, `_team_ou`, `_matchup_ou`, `_highest_scorer`, `_lowest_scorer`, `_make_playoffs`, `_last_place`, `_champion` | same names |
 | `odds.db` `standings_probability_matrix`, `team_distribution_curves`, `team_matchup_margin_curves` | same names |
 | `odds.db` `simulation_runs`, `calibration_metrics` | same names |
 | `projections.db` `team_lineups`, `prediction_accuracy`, `team_accuracy` | same names |
@@ -217,6 +220,7 @@ sequenceDiagram
     P->>A: scp backend/data/images/*.png (unless --no-charts)
     Note over P,A: a failed upload stops the step before any table is written
     P->>PG: INSERT each new run into simulation_totals
+    P->>PG: INSERT each new run into simulation_standings
     loop each table in TABLES
         P->>PG: to_sql(<name>_staging, if_exists=replace)
         P->>PG: count rows = source rows?
@@ -227,7 +231,7 @@ sequenceDiagram
     P->>PG: COMMIT
 ```
 
-Safety rails: the step refuses to replace the app's tables, `users`, `bets`, `bet_legs`, `weekly_stats`, `betting_periods` and `parlay_refusals` (`PROTECTED_TABLES`), so `parlay_refusals` is never published over, and refuses `simulation_totals` (`APPEND_ONLY_TABLES`). `--dry-run` reads and counts the rows and writes nothing, neither charts nor tables. Postgres column types come from pandas inference, so the analytics schema in prod is whatever `to_sql` produces (no primary keys or indexes); `simulation_totals` is the one table with a declared schema.
+Safety rails: the step refuses to replace the app's tables, `users`, `bets`, `bet_legs`, `weekly_stats`, `betting_periods` and `parlay_refusals` (`PROTECTED_TABLES`), so `parlay_refusals` is never published over, and refuses `simulation_totals` and `simulation_standings` (`APPEND_ONLY_TABLES`). `--dry-run` reads and counts the rows and writes nothing, neither charts nor tables. Postgres column types come from pandas inference, so the analytics schema in prod is whatever `to_sql` produces (no primary keys or indexes); `simulation_totals` and `simulation_standings` are the two tables with a declared schema.
 
 The matchup totals and the standings matrix are published for markets the app does not offer yet, and it reads neither. `sleeper_leagues` is the season's row of `leagues` with its columns as they are; the app reads `playoff_week_start`, `playoff_teams` and `num_teams` from its `settings` JSON. `pipeline_runs`, `pipeline_steps` and `source_reviews` are the published run records; `pipeline_runs` and `pipeline_steps` keep every run of the season, because the dashboard lists them all.
 
@@ -245,3 +249,17 @@ The matchup totals and the standings matrix are published for markets the app do
 The app reads it through `app/matrices.py`, one decoded matrix per run cached in each worker: cash-out prices a bet on the latest run's matrix, a parlay is quoted and placed on the window's run's, and settlement re-prices a parlay with a pushed leg on the matrix of the run it was placed at.
 
 Before it stages anything, the step creates the table if it is missing, reads which of the season's runs it already holds, and inserts the matrix of every other run among the `simulation_runs` rows it is about to upload, built from that run's Parquet draws, with `INSERT ... ON CONFLICT (run_id) DO NOTHING`. A stored row is never rewritten, and a run the site shows always has its matrix, even when the swap that follows fails. A run whose draws file is missing is skipped with a warning naming it. The table is never staged or swapped, because a swap would keep only the runs of this publish, each week's latest, and drop the matrices of the earlier runs that bets were placed at; `write_tables` refuses it by name (`APPEND_ONLY_TABLES`), as it refuses the app's tables.
+
+**`simulation_standings`** is its futures counterpart, appended the same way. The playoffs step writes one row per simulation run to `odds.db` ([03](03-modeling-and-odds.md#6-playoff-odds)), and publish copies the season's rows production lacks, right after the score matrices and before the swap:
+
+| Column | Type | Contents |
+|---|---|---|
+| `run_id`* | text | the simulation run the futures rows carry |
+| `season`, `week` | integer | |
+| `created_at` | text | when the playoffs step wrote the row |
+| `n_sims` | integer | 20,000 |
+| `playoff_teams` | integer | the league's playoff line when the seasons were simulated |
+| `roster_ids` | text | the matrix's column order, comma-separated |
+| `standings` | bytea (a BLOB in SQLite) | `pipeline.markets.encode_standings(positions, champions)`: uint8, n_sims × (n_teams + 1), each simulated season's finishing place for every roster (1 is first) and then its champion's column, zlib-compressed; 20,000 × 13 bytes is 260 KB before compression |
+
+A rerun of the playoffs step for the same simulation run replaces the local row, but a row already in production is never rewritten. When a run's local row has a different `created_at` from the stored one, publish warns `run <id>'s standings were replaced locally after they were published; rerun from simulate`, so the futures prices and the parlays priced on the stored seasons cannot drift apart unnoticed. The app reads the table through `app/matrices.py` (`standings_matrix(run_id)`, cached four runs per worker like `score_matrix`): a futures parlay is quoted and placed on the latest futures run's seasons, and its cash-out is priced on them.

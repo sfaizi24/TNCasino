@@ -39,7 +39,7 @@ WEEKLY_ODDS_TABLES = [
     "betting_odds_lowest_scorer",
 ]
 # Notebook 09's tables keep their legacy shape, autoincrement id and all, and gain a trailing season.
-STANDINGS_TABLES = ["betting_odds_first_place", "betting_odds_make_playoffs", "standings_probability_matrix"]
+STANDINGS_TABLES = ["betting_odds_make_playoffs", "standings_probability_matrix"]
 
 # league.db columns the notebooks wrote with str(); the league step writes them with json.dumps.
 REPR_COLUMNS = {

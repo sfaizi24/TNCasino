@@ -4,7 +4,7 @@ from sqlalchemy import text
 
 from app.database import db
 from app.markets import Quote, parse_key
-from app.parlays import Leg, ParlayRefusal, joint_price, quote
+from app.parlays import Leg, ParlayRefusal, is_futures, joint_price, quote
 from pipeline import markets as win_rules
 from tests.conftest import RUN_ID
 
@@ -20,8 +20,16 @@ ROSTER_2_HIGHEST = {"market": "2026-w10-highest_scorer", "selection": "2"}
 ROSTER_2_LOWEST = {"market": "2026-w10-lowest_scorer", "selection": "2"}
 ROSTER_1_MINUS_4 = {"market": "2026-w10-spread-1v2", "selection": "1", "line": -4.0}
 ROSTER_2_PLUS_4 = {"market": "2026-w10-spread-1v2", "selection": "2", "line": 4.0}
-FUTURES = {"market": "2026-make_playoffs-1", "selection": "yes"}
 LAST_WEEK = {"market": "2026-w09-moneyline-1v2", "selection": "1"}
+FIRST_PLACE = {"market": "2026-first_place", "selection": "1"}
+
+ALICE_IN = {"market": "2026-make_playoffs-1", "selection": "yes"}
+ALICE_OUT = {"market": "2026-make_playoffs-1", "selection": "no"}
+BOB_IN = {"market": "2026-make_playoffs-2", "selection": "yes"}
+BOB_OUT = {"market": "2026-make_playoffs-2", "selection": "no"}
+ALICE_LAST = {"market": "2026-last_place", "selection": "1"}
+BOB_LAST = {"market": "2026-last_place", "selection": "2"}
+ALICE_CHAMPION = {"market": "2026-champion", "selection": "1"}
 
 CANNOT_PRICE = "Not offered: the simulations cannot price this parlay"
 
@@ -119,7 +127,7 @@ def test_a_team_totals_line_matches_at_two_decimals():
 @pytest.mark.parametrize("size", [0, 1, 5])
 def test_a_parlay_has_two_to_four_legs(size):
     # Five faulty legs: the size is checked before any leg.
-    assert _refusal([FUTURES] * size) == ("A parlay has 2 to 4 legs", "size", ())
+    assert _refusal([FIRST_PLACE] * size) == ("A parlay has 2 to 4 legs", "size", ())
 
 
 @pytest.mark.parametrize(
@@ -127,8 +135,9 @@ def test_a_parlay_has_two_to_four_legs(size):
     [
         ({"market": "2026-w10-moneyline-2v1", "selection": "2"}, "Unknown market"),
         ({"market": "2026-w10-moneyline-1v2", "selection": "7"}, "Unknown selection"),
-        (FUTURES, "Futures cannot be parlayed"),
-        ({"market": "2026-first_place", "selection": "1"}, "Futures cannot be parlayed"),
+        (FIRST_PLACE, "Unknown market"),
+        ({"market": "2026-make_playoffs-3", "selection": "yes"}, "Unknown market"),
+        ({"market": "2026-make_playoffs-1", "selection": "Yes"}, "Unknown selection"),
         (LAST_WEEK, "Not this week's market"),
     ],
 )
@@ -137,16 +146,16 @@ def test_a_faulty_leg_is_refused_by_its_key(faulty, message):
 
 
 def test_every_faulty_leg_is_named_under_the_first_ones_message():
-    refusal = _refusal([FUTURES, ROSTER_1_OVER, LAST_WEEK])
+    refusal = _refusal([FIRST_PLACE, ROSTER_1_OVER, LAST_WEEK])
 
-    assert refusal == ("Futures cannot be parlayed", "leg", ("2026-make_playoffs-1", "2026-w09-moneyline-1v2"))
+    assert refusal == ("Unknown market", "leg", ("2026-first_place", "2026-w09-moneyline-1v2"))
 
 
 def test_a_faulty_leg_is_refused_before_a_shared_market():
-    assert _refusal([ROSTER_1_WINS, ROSTER_2_WINS, FUTURES]) == (
-        "Futures cannot be parlayed",
+    assert _refusal([ROSTER_1_WINS, ROSTER_2_WINS, LAST_WEEK]) == (
+        "Not this week's market",
         "leg",
-        ("2026-make_playoffs-1",),
+        ("2026-w09-moneyline-1v2",),
     )
 
 
@@ -155,7 +164,7 @@ def test_a_faulty_leg_is_refused_before_a_shared_market():
     [
         (["x", "y"], (None, None)),
         ([{}, ROSTER_1_OVER], (None,)),
-        ([ROSTER_1_WINS, None, {"selection": "over"}, FUTURES], (None, None, "2026-make_playoffs-1")),
+        ([ROSTER_1_WINS, None, {"selection": "over"}, LAST_WEEK], (None, None, "2026-w09-moneyline-1v2")),
     ],
 )
 def test_an_entry_that_names_no_market_is_refused_as_an_unknown_one(requests, named):
@@ -293,3 +302,109 @@ def test_joint_price_refuses_a_chance_of_zero_or_one(judged):
 
     assert refused.value.rule == "impossible"
     assert str(refused.value) == CANNOT_PRICE
+
+
+# Futures parlays on the seeded run's standings matrix: Alice A makes the playoffs in 16 of its 20 seasons
+# and Bob B in 12, both of them in 8; whenever Bob misses them Alice makes them, and Alice is champion in 6
+# seasons, one of them without Bob in the playoffs.
+def test_two_futures_are_priced_at_the_seasons_where_both_happen():
+    parlay = quote([ALICE_IN, BOB_IN], 10, RUN_ID)
+
+    assert (parlay.run_id, parlay.probability, parlay.odds) == (RUN_ID, 8 / 20, "+150")
+    assert parlay.legs == (
+        Leg(parse_key("2026-make_playoffs-1"), "yes", None, Quote(RUN_ID, "-400", 0.8, None)),
+        Leg(parse_key("2026-make_playoffs-2"), "yes", None, Quote(RUN_ID, "-150", 0.6, None)),
+    )
+
+
+def test_a_no_leg_is_priced_at_the_seasons_its_roster_misses_the_playoffs():
+    parlay = quote([BOB_OUT, ALICE_CHAMPION], 10, RUN_ID)
+
+    assert (parlay.probability, parlay.odds) == (1 / 20, "+1900")
+    assert parlay.legs[0].quote == Quote(RUN_ID, "+150", 0.4, None)
+
+
+def test_a_yes_adds_nothing_to_a_no_that_always_puts_it_in():
+    assert _refusal([ALICE_IN, BOB_OUT]) == (
+        "A leg adds nothing to this parlay",
+        "redundant",
+        ("2026-make_playoffs-1",),
+    )
+
+
+def test_the_title_implies_the_playoffs():
+    assert _refusal([ALICE_CHAMPION, ALICE_IN]) == (
+        "A leg adds nothing to this parlay",
+        "redundant",
+        ("2026-make_playoffs-1",),
+    )
+
+
+@pytest.mark.parametrize("finish", [ALICE_LAST, ALICE_OUT], ids=["last", "out"])
+def test_a_champion_who_misses_the_playoffs_is_never_simulated(finish):
+    assert _refusal([finish, ALICE_CHAMPION]) == (CANNOT_PRICE, "impossible", ())
+
+
+@pytest.mark.parametrize(
+    ("requests", "shared"),
+    [([ALICE_IN, ALICE_OUT], ("2026-make_playoffs-1",)), ([ALICE_LAST, BOB_LAST], ("2026-last_place",))],
+)
+def test_two_futures_from_one_market_are_refused(requests, shared):
+    assert _refusal(requests) == ("Two legs from one market", "same_market", shared)
+
+
+@pytest.mark.parametrize(
+    ("requests", "named"),
+    [
+        ([ROSTER_1_WINS, ALICE_IN], ("2026-make_playoffs-1",)),
+        ([ROSTER_1_WINS, ROSTER_1_OVER, ALICE_IN], ("2026-make_playoffs-1",)),
+        ([ALICE_IN, ROSTER_1_WINS, BOB_LAST], ("2026-w10-moneyline-1v2",)),
+        ([ALICE_IN, ALICE_OUT, ROSTER_1_WINS], ("2026-w10-moneyline-1v2",)),
+    ],
+    ids=["one each", "one future", "one weekly", "before a shared market"],
+)
+def test_weekly_and_futures_picks_are_not_parlayed_together(requests, named):
+    message = "Weekly and futures picks cannot be parlayed together"
+
+    assert _refusal(requests) == (message, "mixed", named)
+
+
+def test_a_faulty_leg_is_refused_before_a_mixed_slip():
+    assert _refusal([ROSTER_1_WINS, FIRST_PLACE, ALICE_IN]) == ("Unknown market", "leg", ("2026-first_place",))
+
+
+def test_futures_quoted_at_another_run_than_the_pages_have_changed():
+    assert _refusal([ALICE_IN, BOB_IN], run_id="2026w09-20261103T140000") == (
+        "Odds have changed",
+        "odds_changed",
+        ("2026-make_playoffs-1", "2026-make_playoffs-2"),
+    )
+
+
+def test_a_futures_side_without_odds_is_not_offered():
+    db.session.execute(text("UPDATE betting_odds_make_playoffs SET no_american_odds = NULL WHERE team_id = 2"))
+    db.session.commit()
+
+    assert _refusal([BOB_OUT, ALICE_CHAMPION]) == ("Not offered", "no_price", ("2026-make_playoffs-2",))
+
+
+def test_a_futures_run_without_stored_standings_is_not_offered():
+    db.session.execute(text("DELETE FROM simulation_standings"))
+    db.session.commit()
+
+    assert _refusal([ALICE_IN, BOB_IN]) == ("Not offered", "no_price", ())
+
+
+@pytest.mark.parametrize(
+    ("requests", "futures"),
+    [
+        ([ALICE_IN, BOB_LAST, ALICE_CHAMPION], True),
+        ([ALICE_IN, ROSTER_1_WINS], False),
+        ([ROSTER_1_WINS, ROSTER_1_OVER], False),
+        ([ALICE_IN, FIRST_PLACE], False),
+        ([ALICE_IN, "x"], False),
+    ],
+    ids=["futures", "mixed", "weekly", "unknown key", "not an object"],
+)
+def test_a_slip_is_futures_when_every_pick_names_a_futures_market(requests, futures):
+    assert is_futures(requests) is futures

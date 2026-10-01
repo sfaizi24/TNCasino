@@ -9,7 +9,6 @@ const SOURCES = {
     ou: '/api/team_performance',
     hi: '/api/highest_scorer',
     lo: '/api/lowest_scorer',
-    fp: '/api/first_place',
     mp: '/api/make_playoffs',
     lp: '/api/last_place',
     ch: '/api/champion',
@@ -22,7 +21,7 @@ const ACTIVE_GROUPS = [
     { label: 'O/U', types: ['team_total'] },
     { label: 'HIGH', types: ['highest_scorer'] },
     { label: 'LOW', types: ['lowest_scorer'] },
-    { label: 'FUTURES', types: ['first_place', 'make_playoffs', 'last_place', 'champion'], future: true },
+    { label: 'FUTURES', types: ['make_playoffs', 'last_place', 'champion'], future: true },
     { label: 'PARLAY', types: ['parlay'] },
 ];
 
@@ -37,7 +36,7 @@ const state = {
     lineupCache: {},
     spreadLines: {},
     editingLine: null,
-    rows: { ml: [], sp: [], ou: [], hi: [], lo: [], fp: [], mp: [], lp: [], ch: [] },
+    rows: { ml: [], sp: [], ou: [], hi: [], lo: [], mp: [], lp: [], ch: [] },
     slip: emptySlip(),
     openParlays: new Set(),
 };
@@ -140,11 +139,16 @@ function sidesOf(kind, row) {
             { selection: 'under', label: 'Under', odds: row.under_odds, chance: row.under_prob },
         ];
     }
-    const selection = kind === 'mp' ? 'yes' : String(row.team_id);
-    return [{ selection, odds: row.odds, chance: row.win_prob / 100 }];
+    if (kind === 'mp') {
+        return [
+            { selection: 'yes', label: 'Yes', odds: row.odds, chance: row.win_prob / 100 },
+            { selection: 'no', label: 'No', odds: row.no_odds, chance: row.no_win_prob / 100 },
+        ];
+    }
+    return [{ selection: String(row.team_id), odds: row.odds, chance: row.win_prob / 100 }];
 }
 
-// Every scorer, first-place, last-place or champion card shares one market, so a bet marks the card that offers its selection.
+// Every scorer, last-place or champion card shares one market, so a bet marks the card that offers its selection.
 function buildCard(kind, row, idx) {
     const key = `${kind}-${idx}`;
     const sides = sidesOf(kind, row);
@@ -179,16 +183,20 @@ function ownersOf(kind, row) {
 }
 
 function isFuture(kind) {
-    return ['fp', 'mp', 'lp', 'ch'].includes(kind);
+    return ['mp', 'lp', 'ch'].includes(kind);
 }
 
-// The pick's short name in the slip: "Bob B +105", "Alice A -5.5", "Alice A Over 110.50", "Bob B highest scorer".
+// The pick's short name in the slip: "Bob B +105", "Alice A -5.5", "Alice A Over 110.50", "Bob B highest scorer",
+// "Alice A to miss playoffs".
 function legLabel(kind, row, side) {
     if (kind === 'ml') return `${side.label} ${fmtOdds(side.odds)}`;
     if (kind === 'sp') return `${side.label} ${fmtLine(side.line)}`;
     if (kind === 'ou') return `${row.owner} ${side.label} ${row.line.toFixed(2)}`;
     if (kind === 'hi') return `${row.owner} highest scorer`;
-    return `${row.owner} lowest scorer`;
+    if (kind === 'lo') return `${row.owner} lowest scorer`;
+    if (kind === 'mp') return `${row.owner} to ${side.selection === 'yes' ? 'make' : 'miss'} playoffs`;
+    if (kind === 'lp') return `${row.owner} last place`;
+    return `${row.owner} champion`;
 }
 
 // A spread side carries its own line and a total's is the card's; a moneyline has none.
@@ -231,10 +239,14 @@ function renderPlacedStrip(bets) {
     `;
 }
 
-// Futures run past the week, so only the weekly markets can join a parlay.
+// A slip holds the week's picks or futures, never both, so a card of the other kind cannot join it.
 function renderParlayButton(key) {
     const { kind, row } = cardForKey(key);
-    if (isFuture(kind)) return '';
+    const slipKind = state.slip.legs[0]?.kind;
+    if (slipKind && isFuture(slipKind) !== isFuture(kind)) {
+        const only = isFuture(slipKind) ? 'Futures picks only' : 'Weekly picks only';
+        return `<button class="tnc-mc-parlay" data-action="parlay" disabled>${only}</button>`;
+    }
     if (inSlip(row.market, state.picks[key])) {
         return '<button class="tnc-mc-parlay" data-action="parlay" disabled>In parlay</button>';
     }
@@ -431,13 +443,23 @@ function renderScorerPicks(card) {
     `;
 }
 
+function renderPlayoffPicks(card) {
+    const buttons = card.sides.map(side => renderPickButton(card, side, `
+        <span class="tnc-mc-odd-label">${side.label}</span>
+        <span class="tnc-mc-odd-num tnc-tab-num">${fmtOdds(side.odds)}</span>
+        <span class="tnc-mc-odd-prob tnc-tab-num">${fmtPct(side.chance)}</span>
+    `));
+    return `
+        <div class="tnc-mc-name tnc-ou-name-solo">${card.row.owner}</div>
+        <div class="tnc-ou-buttons">${buttons.join('')}</div>
+    `;
+}
+
 function renderFuturePicks(card) {
     const [side] = card.sides;
-    const yes = card.kind === 'mp' ? '<span class="tnc-mc-odd-label">Yes</span>' : '';
     return `
         <div class="tnc-mc-name tnc-ou-name-solo">${card.row.owner}</div>
         ${renderPickButton(card, side, `
-            ${yes}
             <span class="tnc-mc-odd-num tnc-tab-num">${fmtOdds(side.odds)}</span>
             <span class="tnc-mc-odd-prob tnc-tab-num">${fmtPct(side.chance)}</span>
         `, 'tnc-scorer-pick')}
@@ -449,6 +471,7 @@ function renderPicks(card) {
     if (card.kind === 'sp') return renderSpreadPicks(card);
     if (card.kind === 'ou') return renderTotalPicks(card);
     if (card.kind === 'hi' || card.kind === 'lo') return renderScorerPicks(card);
+    if (card.kind === 'mp') return renderPlayoffPicks(card);
     return renderFuturePicks(card);
 }
 
@@ -481,13 +504,12 @@ function sideForBet(bet) {
     return null;
 }
 
-// A chip names the pick and leaves the market to its group, except in Futures, whose group holds four and so adds a word for each.
+// A chip names the pick and leaves the market to its group, except in Futures, whose group holds three and so adds a word for each.
 function pickLabel({ kind, row, side }, line) {
     if (kind === 'ml') return side.label;
     if (kind === 'sp') return `${side.label} ${fmtLine(line)}`;
     if (kind === 'ou') return `${row.owner} ${side.label[0]} ${line.toFixed(2)}`;
-    if (kind === 'fp') return `${row.owner} · 1st`;
-    if (kind === 'mp') return `${row.owner} · Playoffs`;
+    if (kind === 'mp') return `${row.owner} · Playoffs ${side.label}`;
     if (kind === 'lp') return `${row.owner} · Last`;
     if (kind === 'ch') return `${row.owner} · Champion`;
     return row.owner;
@@ -503,7 +525,7 @@ function chipLabel(bet) {
 // A parlay has no group to name each leg's market, so the picks that are only an owner's name add a word.
 const LEG_WORDS = { ml: 'ML', hi: '· High', lo: '· Low' };
 
-function legLabel(leg, description) {
+function parlayLegLabel(leg, description) {
     const match = sideForBet(leg);
     if (!match) return description.replace(` ${leg.odds}`, '');
     const word = LEG_WORDS[match.kind];
@@ -517,7 +539,7 @@ function renderParlayLegs(bet) {
         <div class="tnc-active-legs">
             ${bet.legs.map((leg, i) => `
                 <span class="tnc-active-leg">
-                    <span class="tnc-active-leg-name">${legLabel(leg, descriptions[i] || '')}</span>
+                    <span class="tnc-active-leg-name">${parlayLegLabel(leg, descriptions[i] || '')}</span>
                     <span class="tnc-active-chip-odds tnc-tab-num">${fmtOdds(leg.odds)}</span>
                 </span>
             `).join('')}
@@ -635,7 +657,7 @@ function renderSlipHead() {
     return `
         <div class="tnc-slip-head">
             <button class="tnc-slip-toggle" data-action="slip-toggle" aria-expanded="${!collapsed}">
-                <span class="tnc-slip-title">Parlay</span>
+                <span class="tnc-slip-title">${isFuture(legs[0].kind) ? 'Futures parlay' : 'Parlay'}</span>
                 <span class="tnc-slip-count">${legs.length} ${legs.length === 1 ? 'leg' : 'legs'}</span>
                 ${odds}
                 ${chevronSvg()}
