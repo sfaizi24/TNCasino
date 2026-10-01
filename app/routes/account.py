@@ -1,19 +1,56 @@
 import logging
-from itertools import groupby
+from collections import defaultdict
+from typing import NamedTuple
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 
+from .. import markets
 from ..database import db
 from ..extensions import csrf
 
 account_bp = Blueprint("account", __name__)
 
 
+class BetGroup(NamedTuple):
+    key: str
+    label: str
+    bets: list
+    pnl: float
+
+
+def _is_future(bet):
+    is_weekly, _ = markets.SHAPES.get(bet.bet_type, (True, ()))
+    return not is_weekly
+
+
+def _group(key, label, bets):
+    return BetGroup(key, label, bets, sum(bet.result for bet in bets))
+
+
+def bet_history(bets):
+    """A user's bets by week, newest first, then the season's futures. Removed bets were refunds and are left out."""
+    by_week = defaultdict(list)
+    futures = []
+    for bet in bets:
+        if bet.status == "removed":
+            continue
+        if _is_future(bet):
+            futures.append(bet)
+        else:
+            by_week[bet.week].append(bet)
+
+    weeks = sorted(by_week, key=lambda week: week or 0, reverse=True)
+    groups = [_group(f"week-{week}", f"Week {week or '—'}", by_week[week]) for week in weeks]
+    if futures:
+        groups.append(_group("futures", "Futures", futures))
+    return groups
+
+
 @account_bp.route("/account")
 @login_required
 def account():
-    from ..models import Bet, WeeklyStats
+    from ..models import Bet
 
     bets = (
         db.session.query(Bet)
@@ -21,20 +58,14 @@ def account():
         .order_by(Bet.week.desc(), Bet.created_at.desc())
         .all()
     )
-    bets_by_week = [(week, list(group)) for week, group in groupby(bets, key=lambda b: b.week)]
-
-    weekly_pnl = (
-        db.session.query(WeeklyStats)
-        .filter(WeeklyStats.user_id == current_user.id)
-        .order_by(WeeklyStats.week.desc())
-        .all()
-    )
 
     return render_template(
         "account.html",
         user=current_user,
-        bets_by_week=bets_by_week,
-        weekly_pnl=weekly_pnl,
+        history=bet_history(bets),
+        in_play=sum(bet.amount for bet in bets if bet.status == "pending"),
+        wins=sum(bet.status == "won" for bet in bets),
+        losses=sum(bet.status == "lost" for bet in bets),
     )
 
 
@@ -59,7 +90,7 @@ def update_profile():
 
         db.session.commit()
 
-        flash("Profile updated successfully!", "success")
+        flash("Saved.", "success")
 
     except Exception as e:
         db.session.rollback()
