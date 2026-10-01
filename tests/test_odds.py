@@ -488,33 +488,6 @@ def test_league_overview_empty_when_no_matchups(client, analytics_tables, bettin
     assert resp.get_json() == {"week": 10, "teams": []}
 
 
-def test_position_strength_buckets_flex_separately(client, seeded_analytics, betting_period, db_session):
-    db_session.session.execute(
-        text("""
-        INSERT INTO team_lineups (roster_id, owner, week, slot, player_name, position, mu, var)
-        VALUES (1, 'Alice A', 10, 'FLEX', 'Joe Mixon', 'RB', 13.0, 7.0)
-    """)
-    )
-    db_session.session.commit()
-
-    resp = client.get("/api/position_strength")
-    alice = next(t for t in resp.get_json()["teams"] if t["owner"] == "Alice A")
-
-    assert alice["by_position"]["FLEX"]["mu"] == 13.0
-    assert alice["by_position"]["RB"]["mu"] == 15.0
-    flex_names = [p["name"] for p in alice["by_position"]["FLEX"]["players"]]
-    assert "Joe Mixon" in flex_names
-    assert "Derrick Henry" not in flex_names
-
-
-def test_position_strength_returns_all_seven_groups(client, analytics_tables, betting_period):
-    resp = client.get("/api/position_strength")
-    data = resp.get_json()
-
-    assert data["positions"] == ["QB", "RB", "WR", "TE", "FLEX", "K", "DEF"]
-    assert data["teams"] == []
-
-
 def test_team_distribution_arbitrary_pair_has_null_moneylines(
     logged_in_client, seeded_analytics, betting_period, db_session
 ):

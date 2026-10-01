@@ -1,15 +1,5 @@
 const currentWeek = parseInt(document.querySelector('[data-week]').getAttribute('data-week')) || 10;
 
-const POSITION_GROUPS = ['QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF'];
-const POS_COLORS = {
-    QB:   '#1493FF',
-    RB:   '#22C55E',
-    WR:   '#FCD34D',
-    TE:   '#C084FC',
-    FLEX: '#FB923C',
-    K:    '#94A3B8',
-    DEF:  '#F87171',
-};
 const PLAYOFF_CUTOFF = 8;
 const fmt1 = (v) => (v == null ? '—' : v.toFixed(1));
 
@@ -213,7 +203,6 @@ let matchupChart = null;
 let marginChart = null;
 let singleTeamChart = null;
 let standingsChart = null;
-let positionStrengthChart = null;
 
 function clearMatchupArea() {
     if (matchupChart) { matchupChart.destroy(); matchupChart = null; }
@@ -747,62 +736,6 @@ function renderStandingsChart(data) {
     });
 }
 
-function renderPositionStrengthChart(data) {
-    if (!data.teams.length) return;
-    const ctx = document.getElementById('position-strength-chart').getContext('2d');
-    const positions = data.positions || POSITION_GROUPS;
-    const labels = data.teams.map(t => t.label);
-    const datasets = positions.map(pos => ({
-        label: pos,
-        data: data.teams.map(t => t.by_position[pos]?.mu ?? 0),
-        backgroundColor: POS_COLORS[pos],
-        borderColor: POS_COLORS[pos],
-        borderWidth: 0,
-        stack: 'stack',
-        playersByTeam: data.teams.map(t => t.by_position[pos]?.players ?? []),
-    }));
-
-    if (positionStrengthChart) positionStrengthChart.destroy();
-    positionStrengthChart = new Chart(ctx, {
-        type: 'bar',
-        data: { labels, datasets },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            layout: { padding: { left: 0, right: 0 } },
-            scales: {
-                x: {
-                    stacked: true,
-                    ticks: { color: '#FFFFFF', font: { weight: '600', size: 11 }, autoSkip: false, maxRotation: 60, minRotation: 60 },
-                    grid: { display: false },
-                },
-                y: { stacked: true, beginAtZero: true, display: false },
-            },
-            plugins: {
-                legend: {
-                    labels: {
-                        color: '#FFFFFF',
-                        boxWidth: 10,
-                        boxHeight: 10,
-                        padding: 6,
-                        font: { size: 11 },
-                    },
-                },
-                tooltip: {
-                    callbacks: {
-                        label: (item) => {
-                            const players = item.dataset.playersByTeam[item.dataIndex] || [];
-                            const head = `${item.dataset.label}: ${fmt1(item.parsed.y)} pts`;
-                            const list = players.map(p => `  ${p.name} (${fmt1(p.mu)})`);
-                            return [head, ...list];
-                        },
-                    },
-                },
-            },
-        },
-    });
-}
-
 const fmtChance = (pct) => (pct == null ? '—' : pct < 1 && pct > 0 ? '<1%' : `${Math.round(pct)}%`);
 
 function placeBars(places, cutoff, peak, className) {
@@ -929,7 +862,6 @@ async function loadLeagueView() {
     try {
         const responses = await Promise.all([
             fetchWithTimeout('/api/league_overview', {}, 10000),
-            fetchWithTimeout('/api/position_strength', {}, 10000),
             fetchWithTimeout('/api/playoff_picture', {}, 10000),
             fetchWithTimeout('/api/season_race', {}, 10000),
         ]);
@@ -937,12 +869,11 @@ async function loadLeagueView() {
             showError('Could not load league analytics. Please refresh the page.');
             return false;
         }
-        const [overview, posStrength, picture, race] = await Promise.all(responses.map(response => response.json()));
+        const [overview, picture, race] = await Promise.all(responses.map(response => response.json()));
         seasonRace = race;
         renderPlayoffPicture(picture);
         renderSeasonRace('playoffs');
         renderStandingsChart(overview);
-        renderPositionStrengthChart(posStrength);
         return true;
     } catch (error) {
         console.error('Error loading league view:', error);

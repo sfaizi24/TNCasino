@@ -1,6 +1,5 @@
 import json
 import logging
-from collections import defaultdict
 from functools import lru_cache
 
 import numpy as np
@@ -22,7 +21,6 @@ from .helpers import (
 odds_bp = Blueprint("odds", __name__)
 
 # League-wide views slice FLEX out of RB/WR/TE so it stacks/charts as its own group.
-POSITION_GROUPS = ("QB", "RB", "WR", "TE", "FLEX", "K", "DEF")
 
 # Every spread line offered, as team1's line in half points, the same for every matchup.
 SPREAD_LINES = [step / 2 for step in range(-2 * markets.SPREAD_LIMIT, 2 * markets.SPREAD_LIMIT + 1)]
@@ -744,60 +742,3 @@ def league_overview():
 
     playoff_teams = settlement.league_settings(league_id).playoff_teams
     return jsonify({"week": week, "playoff_cutoff": playoff_teams, "teams": teams})
-
-
-@odds_bp.route("/api/position_strength")
-def position_strength():
-    """Per-team projected points stacked by position group, with FLEX broken out."""
-    week = get_current_week()
-    league_id = get_league_id_for_week(week)
-    if not league_id:
-        return jsonify({"week": week, "positions": list(POSITION_GROUPS), "teams": []})
-
-    standings = settlement.standings_before(week, league_id)
-    rank_by_owner = {standing.owner: rank for rank, standing in enumerate(standings, start=1)}
-
-    lineup_rows = query_analytics(
-        """
-        SELECT owner, slot, player_name, position, mu
-        FROM team_lineups
-        WHERE week = :week
-          AND slot IN ('QB','RB1','RB2','WR1','WR2','TE','FLEX','K','DEF')
-        """,
-        {"week": week},
-    )
-
-    def empty_team():
-        return {g: {"mu": 0.0, "players": []} for g in POSITION_GROUPS}
-
-    by_team = defaultdict(empty_team)
-    for r in lineup_rows:
-        group = "FLEX" if r["slot"] == "FLEX" else r["position"]
-        if group not in POSITION_GROUPS:
-            continue
-        bucket = by_team[r["owner"]][group]
-        bucket["mu"] += r["mu"] or 0.0
-        bucket["players"].append({"name": r["player_name"], "mu": round(r["mu"] or 0.0, 1)})
-
-    teams = []
-    for owner, positions in by_team.items():
-        total = sum(p["mu"] for p in positions.values())
-        teams.append(
-            {
-                "owner": owner,
-                "label": display_name_for(owner),
-                "rank": rank_by_owner.get(owner, 99),
-                "total_mu": round(total, 1),
-                "by_position": {
-                    group: {
-                        "mu": round(positions[group]["mu"], 1),
-                        "players": positions[group]["players"],
-                    }
-                    for group in POSITION_GROUPS
-                },
-            }
-        )
-
-    teams.sort(key=lambda t: t["rank"])
-
-    return jsonify({"week": week, "positions": list(POSITION_GROUPS), "teams": teams})

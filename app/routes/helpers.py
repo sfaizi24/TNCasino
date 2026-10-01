@@ -24,6 +24,7 @@ OWNER_DISPLAY_NAMES = {
     "Jibraan": "Jibraan",
     "Bilal879": "Bilal",
     "Ammady": "Ammad",
+    "fajandfoujee": "Faraj",
 }
 
 _REVERSE_OWNER_LOOKUP = {friendly: raw for raw, friendly in OWNER_DISPLAY_NAMES.items()}
