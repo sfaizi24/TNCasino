@@ -1,5 +1,5 @@
 const isAuth = window.isAuthenticated;
-const QUICK_STAKES = [10, 25, 50, 100];
+const QUICK_STAKES = [25, 50, 100, 200];
 const QUOTE_DELAY_MS = 250;
 
 // The endpoint listing each kind of card. Each tab lists one kind, and its data-tab names it.
