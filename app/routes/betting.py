@@ -61,10 +61,8 @@ def leaderboard():
     in_season = WeeklyStats.season == season
     season_bets = Bet.season == season
 
-    available_weeks = (
-        db.session.query(distinct(WeeklyStats.week)).filter(in_season).order_by(desc(WeeklyStats.week)).all()
-    )
-    available_weeks = [w[0] for w in available_weeks]
+    weeks_with_stats = db.session.query(distinct(WeeklyStats.week)).filter(in_season).all()
+    available_weeks = sorted({week for (week,) in weeks_with_stats} | {current_week}, reverse=True)
 
     season_pnl = func.sum(WeeklyStats.settled_pnl)
     season_standings = (

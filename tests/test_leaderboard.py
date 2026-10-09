@@ -203,6 +203,17 @@ def test_last_season_is_left_off_the_leaderboard(client, db_session, captured_te
     assert context["most_money_won"].description != "Carol last season"
 
 
+def test_the_week_select_lists_the_current_week_before_anyone_has_bet_in_it(client, db_session, captured_templates):
+    _seed_leaderboard_data(db_session)
+    db_session.session.add(BettingPeriod(season=2026, week=11, lock_time=datetime.now(UTC), is_settled=False))
+    db_session.session.commit()
+
+    client.get("/leaderboard")
+
+    context = captured_templates[0][1]
+    assert (context["available_weeks"], context["selected_week"]) == ([11, 10], 11)
+
+
 def test_weekly_top_bottom(client, db_session, captured_templates):
     _seed_leaderboard_data(db_session)
     client.get("/leaderboard?week=10")
