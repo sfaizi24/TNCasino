@@ -97,7 +97,6 @@ def scrape_source(
     source: ProjectionSource,
     sleeper_players: list[dict],
     sleeper_rows: list[Projection],
-    future_week: bool = False,
 ) -> tuple[list[Projection], SourceReport, float]:
     """Fetch and verify one source. A fetch that raises fails this source, not the step."""
     season = ctx.settings.season
@@ -120,7 +119,6 @@ def scrape_source(
         sleeper_rows,
         previous_rows,
         source.positions,
-        future_week=future_week,
         has_week_stamp=source.has_week_stamp,
     )
     return rows, report, elapsed_s

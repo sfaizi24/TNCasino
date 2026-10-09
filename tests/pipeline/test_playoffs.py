@@ -153,19 +153,12 @@ def sources(monkeypatch, strengths) -> dict[str, FakeSource]:
     return fakes
 
 
-@pytest.fixture
-def verified() -> list[tuple[int, bool]]:
-    """(week, future_week) for every source the checks were asked to verify."""
-    return []
-
-
 @pytest.fixture(autouse=True)
-def failing(monkeypatch, verified) -> set[tuple[str, int]]:
+def failing(monkeypatch) -> set[tuple[str, int]]:
     """(website, week) pairs whose rows fail their checks; every other scrape passes."""
     failing = set()
 
-    def verify_source(rows, week, *references, future_week=False, has_week_stamp=True):
-        verified.append((week, future_week))
+    def verify_source(rows, week, *references, has_week_stamp=True):
         website = rows[0].source
         status = "fail" if (website, week) in failing else "ok"
         return SourceReport(website, status, [Check("value_agreement", status, "QB points disagree")], len(rows))
@@ -561,12 +554,6 @@ def test_a_source_failing_its_checks_is_dropped_for_the_week(settings, failing):
         ["espn.com", "fantasysharks.com", "sleeper.com"],
         ["fantasysharks.com", "sleeper.com"],
     ]
-
-
-def test_later_weeks_are_verified_as_future_weeks(settings, verified):
-    run_playoffs(settings)
-
-    assert sorted(set(verified)) == [(12, True), (13, True), (14, True)]
 
 
 def test_sleeper_failing_its_checks_stops_the_step_before_anything_is_priced(settings, failing):

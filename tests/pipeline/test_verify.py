@@ -86,6 +86,11 @@ def reverse_points(rows: list[Projection], position: str) -> list[Projection]:
     return [row for row in rows if row.position != position] + reversed_rows
 
 
+def shift_points(rows: list[Projection], position: str, offset: float) -> list[Projection]:
+    """Add `offset` to every player at `position`: same order, another scale."""
+    return [replace(row, points=row.points + offset) if row.position == position else row for row in rows]
+
+
 def alternate_points(rows: list[Projection], position: str, offset: float) -> list[Projection]:
     """Add `offset` to every other player at `position` and take it from the rest: same order, lower r."""
     edited = []
@@ -110,13 +115,6 @@ def test_clean_source_passes_every_check(clean_rows, sleeper_players, sleeper_ro
         assert check.status == "ok", check
         assert not check.detail.startswith("n/a"), check
         assert check.detail.isascii()
-
-
-def test_clean_source_passes_every_check_for_a_future_week(clean_rows, sleeper_players, sleeper_rows):
-    report = verify_source(clean_rows, 4, sleeper_players, sleeper_rows, [], POSITIONS, future_week=True)
-
-    assert report.status == "ok"
-    assert [check.name for check in report.checks] == CHECK_NAMES
 
 
 def test_relabelled_players_fail_position_agreement(clean_rows, sleeper_players):
@@ -241,40 +239,33 @@ def test_week_stamp_is_na_for_a_source_that_names_no_week(clean_rows):
     )
 
 
-def test_value_disagreement_fails_at_quarterback(clean_rows, sleeper_rows):
-    check = value_agreement(reverse_points(clean_rows, "QB"), sleeper_rows)
+def test_points_on_another_scale_fail_at_quarterback(clean_rows, sleeper_rows):
+    check = value_agreement(shift_points(clean_rows, "QB", 5.0), sleeper_rows)
 
     assert check.status == "fail"
-    assert check.detail.startswith("QB r=-")
-    assert "n=24 (fail), RB r=1.00" in check.detail
+    assert check.detail.startswith("QB r=1.00 MAD=6.81 n=24 (fail), RB r=1.00")
 
 
-def test_close_quarterbacks_with_a_low_r_fail_this_week_but_warn_for_a_future_week(clean_rows, sleeper_rows):
-    rows = alternate_points(clean_rows, "QB", 2.5)
+def test_close_quarterbacks_with_a_low_r_only_warn(clean_rows, sleeper_rows):
+    check = value_agreement(alternate_points(clean_rows, "QB", 2.5), sleeper_rows)
 
-    this_week = value_agreement(rows, sleeper_rows)
-    future_week = value_agreement(rows, sleeper_rows, future_week=True)
-
-    assert this_week.status == "fail"
-    assert this_week.detail.startswith("QB r=0.69 MAD=2.55 n=24 (fail), RB r=1.00")
-    assert future_week.status == "warn"
-    assert future_week.detail.startswith("QB r=0.69 MAD=2.55 n=24 (warn), RB r=1.00")
-    assert future_week.detail.count("(warn)") == 1
+    assert check.status == "warn"
+    assert check.detail.startswith("QB r=0.69 MAD=2.55 n=24 (warn), RB r=1.00")
+    assert check.detail.count("(warn)") == 1
 
 
-def test_quarterbacks_far_apart_fail_a_future_week(clean_rows, sleeper_rows):
-    check = value_agreement(alternate_points(clean_rows, "QB", 5.0), sleeper_rows, future_week=True)
+def test_quarterbacks_far_apart_fail(clean_rows, sleeper_rows):
+    check = value_agreement(alternate_points(clean_rows, "QB", 5.0), sleeper_rows)
 
     assert check.status == "fail"
-    assert check.detail.startswith("QB r=")
     assert "MAD=5.05 n=24 (fail), RB r=1.00" in check.detail
 
 
-def test_running_backs_with_a_low_r_fail_a_future_week(clean_rows, sleeper_rows):
-    check = value_agreement(reverse_points(clean_rows, "RB"), sleeper_rows, future_week=True)
+def test_running_backs_with_a_low_r_only_warn_while_their_points_stay_close(clean_rows, sleeper_rows):
+    check = value_agreement(alternate_points(clean_rows, "RB", 3.5), sleeper_rows)
 
-    assert check.status == "fail"
-    assert "n=44 (fail)" in check.detail
+    assert check.status == "warn"
+    assert "RB r=0.80 MAD=3.50 n=44 (warn)" in check.detail
 
 
 def test_value_disagreement_only_warns_at_kicker(clean_rows, sleeper_players, sleeper_rows):

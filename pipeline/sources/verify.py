@@ -24,6 +24,8 @@ DUPLICATE_POSITIONS_FAIL = 2
 # Sleeper lists over 100 tight ends and FantasySharks over 60 quarterbacks in an ordinary week, so the
 # upper bounds sit above the design doc's QB 50, RB 130, WR 170, TE 90.
 COUNT_RANGES = {"QB": (20, 80), "RB": (40, 150), "WR": (50, 200), "TE": (20, 130), "K": (15, 40), "DEF": (20, 36)}
+# A low r is the sources disagreeing on players, which the model wants, so it only warns; a median difference
+# over 4 points is a different scale (wrong scoring, wrong column) and fails.
 MIN_CORRELATION = 0.85
 MAX_MEDIAN_DIFFERENCE = 4.0
 MIN_PAIRS = 5  # fewer matched players than this and a correlation means nothing
@@ -56,7 +58,6 @@ def verify_source(
     sleeper_rows: list[Projection],
     previous_rows: list[Projection],
     positions: frozenset[str],
-    future_week: bool = False,
     has_week_stamp: bool = True,
 ) -> SourceReport:
     """`sleeper_players` are nfl_players rows; `sleeper_rows` Sleeper's projections for the week, empty if unknown."""
@@ -64,7 +65,7 @@ def verify_source(
         position_agreement(rows, sleeper_players),
         duplicate_positions(rows),
         position_counts(rows, positions),
-        value_agreement(rows, sleeper_rows, future_week),
+        value_agreement(rows, sleeper_rows),
         team_codes(rows),
         week_stamp(rows, week, has_week_stamp),
         freshness(rows, previous_rows),
@@ -156,7 +157,7 @@ def position_counts(rows: list[Projection], positions: frozenset[str]) -> Check:
     return Check("position_counts", "ok", ", ".join(f"{position} {counts[position]}" for position in counted))
 
 
-def value_agreement(rows: list[Projection], sleeper_rows: list[Projection], future_week: bool = False) -> Check:
+def value_agreement(rows: list[Projection], sleeper_rows: list[Projection]) -> Check:
     """Per position, Pearson r and median absolute difference against Sleeper on the players both project."""
     if not sleeper_rows:
         return Check("value_agreement", "ok", "n/a: no Sleeper projections to compare with")
@@ -175,7 +176,7 @@ def value_agreement(rows: list[Projection], sleeper_rows: list[Projection], futu
         points, baseline = np.array(pairs[position]).T
         r = correlation(points, baseline)
         mad = float(np.median(np.abs(points - baseline)))
-        status = agreement_status(position, r, mad, future_week)
+        status = agreement_status(position, r, mad)
         statuses.append(status)
         part = f"{position} r={r:.2f} MAD={mad:.2f} n={len(points)}"
         parts.append(part if status == "ok" else f"{part} ({status})")
@@ -185,15 +186,12 @@ def value_agreement(rows: list[Projection], sleeper_rows: list[Projection], futu
     return Check("value_agreement", worst(statuses), ", ".join(parts))
 
 
-def agreement_status(position: str, r: float, mad: float, future_week: bool) -> str:
-    """Quarterback projections for a later week sit so close together that a low r alone is only a warning."""
+def agreement_status(position: str, r: float, mad: float) -> str:
     if r >= MIN_CORRELATION and mad <= MAX_MEDIAN_DIFFERENCE:
         return "ok"
-    if position in WARN_ONLY_POSITIONS:
-        return "warn"
-    if future_week and position == "QB" and mad <= MAX_MEDIAN_DIFFERENCE:
-        return "warn"
-    return "fail"
+    if mad > MAX_MEDIAN_DIFFERENCE and position not in WARN_ONLY_POSITIONS:
+        return "fail"
+    return "warn"
 
 
 def correlation(points: np.ndarray, baseline: np.ndarray) -> float:

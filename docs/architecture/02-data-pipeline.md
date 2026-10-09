@@ -80,7 +80,7 @@ Each source in `pipeline/sources/` is a `ProjectionSource` with a `fetch(season,
 | `position_agreement` | more than 2% of the rows matched to a Sleeper player carry another position (warns above 0.5%) |
 | `duplicate_positions` | more than 2 players appear under two positions (warns above 0) |
 | `position_counts` | a position's row count is outside its range (QB 20–80, RB 40–150, WR 50–200, TE 20–130, K 15–40, DEF 20–36) |
-| `value_agreement` | at QB, RB, WR or TE, the correlation with Sleeper is below 0.85 or the median gap above 4 points (K and DEF only warn; for a future week a low QB correlation only warns) |
+| `value_agreement` | at QB, RB, WR or TE, the median gap to Sleeper is above 4 points, a different scale (wrong scoring or wrong column). A correlation below 0.85 only warns: sources disagreeing about players is what widens σ, so it is never a reason to drop one. K and DEF only warn. |
 | `team_codes` | more than 5% of rows have a team code that normalisation does not recognise (warns above 0) |
 | `week_stamp` | the payload names another week than the one requested (`n/a` for sources that name none) |
 | `freshness` | more than 90% of the players have the same points as the source's previous week |

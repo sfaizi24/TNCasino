@@ -56,7 +56,7 @@ Each source's rows go through eight checks before they are stored. A source's st
 - `position_agreement`: rows whose position differs from Sleeper's for the same player (shifted columns, a running back at QB). Over 2% fails, over 0.5% warns.
 - `duplicate_positions`: one player listed under two positions. More than two players fails.
 - `position_counts`: rows per position outside QB 20–80, RB 40–150, WR 50–200, TE 20–130, K 15–40, DEF 20–36. Catches a truncated or padded list.
-- `value_agreement`: per position, correlation `r` and median absolute difference `MAD` against Sleeper. QB, RB, WR, TE fail below r 0.85 or above MAD 4.0; K and DEF only warn. Catches the wrong scoring or the wrong column.
+- `value_agreement`: per position, correlation `r` and median absolute difference `MAD` against Sleeper. QB, RB, WR, TE fail above MAD 4.0; a low r (below 0.85) only warns, because sources disagreeing about players is what the model's σ is built from. K and DEF only warn. Catches the wrong scoring or the wrong column, not a different opinion.
 - `team_codes`: rows with an unrecognised team. Over 5% fails, any warns.
 - `week_stamp`: the page says it is for another week. `n/a` for sources that name no week.
 - `freshness`: over 90% of players have the same points as the source's previous week, a stale copy.

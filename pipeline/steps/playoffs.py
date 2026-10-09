@@ -319,7 +319,7 @@ def project_week(
         failures = {}
         sleeper_rows = []
         for source in sources:
-            rows, report, _ = scrape.scrape_source(week_ctx, source, sleeper_players, sleeper_rows, future_week=True)
+            rows, report, _ = scrape.scrape_source(week_ctx, source, sleeper_players, sleeper_rows)
             delete_source_projections(conn, settings.season, week, source.website)
             if report.status == "fail":
                 failed = [check for check in report.checks if check.status == "fail"]

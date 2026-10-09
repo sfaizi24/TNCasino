@@ -111,12 +111,9 @@ def stored_counts(settings: Settings, table: str) -> dict[int, tuple[int, int]]:
     return {week: (count, n_matched) for week, count, n_matched in rows}
 
 
-def reverse_points(rows: list[Projection], position: str) -> list[Projection]:
-    """Give the best player at `position` the worst player's points, the second best the second worst, and so on."""
-    ranked = sorted([row for row in rows if row.position == position], key=lambda row: row.points)
-    points = [row.points for row in reversed(ranked)]
-    reversed_rows = [replace(row, points=new_points) for row, new_points in zip(ranked, points, strict=True)]
-    return [row for row in rows if row.position != position] + reversed_rows
+def shift_points(rows: list[Projection], position: str, offset: float) -> list[Projection]:
+    """Add `offset` to every player at `position`: same order, another scale."""
+    return [replace(row, points=row.points + offset) if row.position == position else row for row in rows]
 
 
 def printed(lines: list[str], cells: str) -> bool:
@@ -125,7 +122,7 @@ def printed(lines: list[str], cells: str) -> bool:
 
 
 def test_value_agreement_failure_is_advisory_and_the_week_is_stored(settings, fftoday, fixture_rows, capsys):
-    fftoday.rows = reverse_points(fixture_rows, "QB")
+    fftoday.rows = shift_points(fixture_rows, "QB", 5.0)
 
     assert run_backfill(settings, [10]) == 0
 
@@ -133,7 +130,7 @@ def test_value_agreement_failure_is_advisory_and_the_week_is_stored(settings, ff
     assert stored_counts(settings, "projections") == {10: (188, 0)}
     assert stored_counts(settings, "projections_with_sleeper") == {10: (188, 188)}
     assert "  [backfill] week 10: stored 188 rows, 188 matched to Sleeper players" in output
-    assert "  [backfill] week 10: value_agreement fail: QB r=-" in output
+    assert "  [backfill] week 10: value_agreement fail: QB r=1.00 MAD=5.10" in output
     assert printed(output.splitlines(), "10 stored 188 188 fail")
 
 
