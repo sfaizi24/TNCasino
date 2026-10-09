@@ -96,6 +96,10 @@ def create_app(config=None):
 
     app.jinja_env.filters["friendly_names"] = friendly_description
 
+    from .commands import admin_cli
+
+    app.cli.add_command(admin_cli)
+
     @app.before_request
     def make_session_permanent():
         session.permanent = True

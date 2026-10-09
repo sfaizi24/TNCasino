@@ -139,7 +139,7 @@ Publish before Thursday's kickoff. The window closes at the first kickoff after 
 ### Dashboard and admin
 
 - Open `/admin/pipeline?week=N`. Every step `ok`, or `warn` with only the warnings above. The Sources panel shows each source's checks and your verdicts. The Runs panel lists the week's runs, the publish run included.
-- Open `/admin` and set the week's betting period with its lock time at **Sunday's first kickoff**, entered in UTC. Never Thursday's: the lock is the hard close and the kill switch, and once it passes the week stays locked.
+- Open `/admin` and set the week's betting period with its lock time at **Sunday's first kickoff**, entered in UTC. Never Thursday's: the lock is the hard close and the kill switch, and once it passes the week stays locked. From a shell on the droplet the same is `cd /opt/tncasino && venv/bin/flask --app app admin set-period --week N --lock 2026-10-11T13:30`, and `admin periods` lists every week's lock.
 
 The week is open when the betting period exists and is not locked, and the latest published run's `window_closes_at` is still in the future. At Thursday's kickoff betting pauses on its own; the next publish reopens it until its own window closes.
 
@@ -175,7 +175,14 @@ The same locks apply: Thursday's game is final, so its starters are pinned at th
 
 ## After the week
 
-Nothing runs in the pipeline. Settlement is the settlement preview on `/admin`. Next Wednesday's run grades this week in its accuracy step.
+Nothing runs in the pipeline. Settlement needs the week's final scores published, which the next week's publish carries. Then settle on `/admin`, or on the droplet (`cd /opt/tncasino && venv/bin/flask --app app admin ...`):
+
+- `settle --week N` prints the published scores and every pending bet's outcome and reason, and changes nothing.
+- `settle --week N --apply` settles every decided bet, each in its own transaction; undecided bets stay pending.
+- `settle-bet ID --won` or `--lost` settles a single or a futures parlay by hand, and `void ID` refunds a bet in full.
+- `close-week --week N` marks the week settled once nothing in it is pending.
+
+Next Wednesday's run grades this week in its accuracy step.
 
 ## When things go wrong
 

@@ -225,6 +225,8 @@ A futures parlay's legs decide at different times: its make-playoffs and last-pl
 
 Both cards show the current week, and the page has no week switch; `settlement_preview` and `pending_bets` take `?week=N` for any other week, and `settle_outcomes` takes the week in its body. Settle the regular season's last week with that week current: its preview is the one that judges the standings futures.
 
+**From a shell.** The same actions run as Flask commands (`app/commands.py`), through the same functions as the routes (`app/admin_actions.py`), so the page and the shell cannot settle a bet two different ways. `flask --app app admin settle --week N` prints the scores and every pending bet's outcome with its reason, exactly the preview's; `--apply` settles each decided bet in its own transaction and reports any another admin settled first. `settle-bet` wins or loses a bet by hand and refuses a weekly parlay as the route does; `void`, `set-period`, `close-week` and `periods` complete the set. On the droplet they run against production: `cd /opt/tncasino && venv/bin/flask --app app admin ...`.
+
 ## Accounting
 
 Three places hold money state. `app/ledger.py` is the only code that changes them, with one function per event (`open_week`, `place`, `remove`, `settle`, `push`, `void`, `cash_out`):

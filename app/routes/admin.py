@@ -7,7 +7,7 @@ from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user
 from sqlalchemy import inspect, or_
 
-from .. import ledger, settlement
+from .. import admin_actions, ledger, settlement
 from ..database import db
 from ..models import Bet, BetLeg
 from .helpers import admin_required, friendly_description, get_current_week, query_analytics
@@ -71,8 +71,6 @@ def get_betting_periods():
 @admin_bp.route("/api/admin/set_betting_period", methods=["POST"])
 @admin_required
 def set_betting_period():
-    from ..models import BettingPeriod
-
     data = request.get_json()
     week = data.get("week")
     lock_time_str = data.get("lock_time")
@@ -81,19 +79,7 @@ def set_betting_period():
         return jsonify({"success": False, "error": "Week and lock time required"})
 
     try:
-        lock_time = datetime.strptime(lock_time_str, "%Y-%m-%dT%H:%M").replace(tzinfo=UTC)
-
-        period = db.session.query(BettingPeriod).filter_by(week=week).first()
-
-        if period:
-            period.lock_time = lock_time
-            period.is_locked = False
-        else:
-            period = BettingPeriod(week=week, lock_time=lock_time, is_locked=False, is_settled=False)
-            db.session.add(period)
-
-        db.session.commit()
-
+        admin_actions.set_period(week, admin_actions.parse_lock_time(lock_time_str))
         return jsonify({"success": True})
     except Exception as e:
         print(f"Error setting betting period: {e}")
@@ -125,7 +111,7 @@ def get_pending_bets():
                     "odds": bet.odds,
                     "potential_win": bet.potential_win,
                     "bet_type": bet.bet_type,
-                    "by_hand": _settles_by_hand(bet),
+                    "by_hand": admin_actions.settles_by_hand(bet),
                 }
             )
 
@@ -154,15 +140,11 @@ def settle_bet():
         if not bet:
             return jsonify({"success": False, "error": "Bet not found"})
 
-        if not _settles_by_hand(bet):
+        if not admin_actions.settles_by_hand(bet):
             return jsonify({"success": False, "error": "Parlays settle from the Settle Week card"})
 
-        week = _open_result_week(bet, get_current_week())
-        if not ledger.settle(bet, won, week=week):
-            db.session.rollback()
+        if not admin_actions.settle_by_hand(bet, won, get_current_week()):
             return jsonify({"success": False, "error": "Bet already settled"})
-
-        db.session.commit()
         return jsonify({"success": True})
     except Exception as e:
         print(f"Error settling bet: {e}")
@@ -171,12 +153,6 @@ def settle_bet():
         traceback.print_exc()
         db.session.rollback()
         return jsonify({"success": False, "error": str(e)})
-
-
-def _settles_by_hand(bet):
-    """A single, or a futures parlay, which may hold a champion leg decided only after the final. A weekly parlay
-    settles from the preview, which judges it leg by leg, dropping pushed legs and re-pricing the rest."""
-    return len(bet.legs) < 2 or all(leg.week is None for leg in bet.legs)
 
 
 @admin_bp.route("/api/admin/settlement_preview", methods=["GET"])
@@ -245,7 +221,11 @@ def settle_outcomes():
         scores = settlement.team_scores(week)
         current = {result.bet.id: result for result in settlement.outcomes_for_week(week, scores)}
         for shown in data.get("bets", []):
-            reason = _settle_as_shown(current.get(shown["id"]), shown, week)
+            result = current.get(shown["id"])
+            if result is None:
+                reason = admin_actions.missing_bet_reason(shown["id"])
+            else:
+                reason = admin_actions.settle_as_shown(result, shown["outcome"], week)
             if reason is None:
                 settled.append(shown["id"])
             else:
@@ -260,43 +240,6 @@ def settle_outcomes():
 
     logging.info(f"Settled week {week} bets {settled}, skipped {skipped}")
     return jsonify({"success": True, "settled": settled, "skipped": skipped})
-
-
-def _settle_as_shown(result, shown, week):
-    """Settle one bet in its own transaction if its outcome is still the one shown; return why not, or None."""
-    if result is None:
-        bet = db.session.get(Bet, shown["id"])
-        return "already settled" if bet is not None and bet.status != "pending" else "not found"
-    if result.outcome == settlement.UNDECIDED:
-        return "undecided"
-    if result.outcome != shown["outcome"]:
-        return f"scores changed: now {result.outcome}"
-
-    result_week = _open_result_week(result.bet, week)
-    if result.outcome == settlement.PUSH:
-        closed = ledger.push(result.bet, leg_statuses=result.leg_statuses, week=result_week)
-    else:
-        closed = ledger.settle(
-            result.bet,
-            won=result.outcome == settlement.WON,
-            potential_win=result.potential_win,
-            leg_statuses=result.leg_statuses,
-            week=result_week,
-        )
-    if not closed:
-        db.session.rollback()
-        return "already settled"
-    db.session.commit()
-    return None
-
-
-def _open_result_week(bet, settling_week):
-    """The week a bet's result posts to: a futures bet's is the week it settles in, opened first; any other its own."""
-    is_futures = bool(bet.legs) and all(leg.week is None for leg in bet.legs)
-    if not is_futures:
-        return bet.week
-    ledger.open_week(bet.user_id, settling_week)
-    return settling_week
 
 
 @admin_bp.route("/api/admin/void_bet", methods=["POST"])
@@ -326,8 +269,6 @@ def void_bet():
 @admin_bp.route("/api/admin/settle_week", methods=["POST"])
 @admin_required
 def settle_week():
-    from ..models import BettingPeriod
-
     data = request.get_json()
     week = data.get("week")
 
@@ -335,15 +276,8 @@ def settle_week():
         return jsonify({"success": False, "error": "Week required"})
 
     try:
-        period = db.session.query(BettingPeriod).filter_by(week=week).first()
-
-        if not period:
+        if not admin_actions.close_week(week):
             return jsonify({"success": False, "error": "Betting period not found"})
-
-        period.is_settled = True
-
-        db.session.commit()
-
         return jsonify({"success": True})
     except Exception as e:
         print(f"Error settling week: {e}")
@@ -367,7 +301,7 @@ def unlock_period():
     lock_time = datetime.now(UTC) + timedelta(days=7)
     if data.get("lock_time") is not None:
         try:
-            lock_time = datetime.strptime(data["lock_time"], "%Y-%m-%dT%H:%M").replace(tzinfo=UTC)
+            lock_time = admin_actions.parse_lock_time(data["lock_time"])
         except ValueError:
             return jsonify({"success": False, "error": "Invalid lock time"})
 

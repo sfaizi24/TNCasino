@@ -6,7 +6,11 @@ A server-rendered Flask app with vanilla-JS pages that call JSON endpoints. It o
 
 ```
 app/__init__.py      create_app(): config from env, extensions, blueprints, create_all + migrations
+app/admin_actions.py The admin's actions on periods and bets, shared by the admin routes and the
+                     commands: set_period(), close_week(), settle_by_hand(), settle_as_shown()
 app/auth.py          Google OAuth (Flask-Dance), Flask-Login user loader, /auth/logout
+app/commands.py      `flask --app app admin ...`: periods, set-period, settle [--apply],
+                     settle-bet, void, close-week
 app/cashout.py       What a pending bet is worth now: offer_for(), offers_for()
 app/ledger.py        The only code that moves money: open_week, place, remove, settle, push, void,
                      cash_out
