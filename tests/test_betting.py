@@ -405,12 +405,13 @@ def test_a_legacy_bet_without_legs_is_still_removable(logged_in_client, user, be
         user_id=user.id,
         bet_type="highest_scorer",
         description="Alice A: Highest Scorer +100",
+        season=2026,
         week=10,
         amount=100.0,
         odds="+100",
         potential_win=100.0,
     )
-    ledger.open_week(user.id, 10)
+    ledger.open_week(user.id, 2026, 10)
     ledger.place(legacy)
     db.session.commit()
 
@@ -471,6 +472,7 @@ def test_the_account_page_lists_new_legacy_won_and_lost_bets_but_not_removed_one
                 user_id=user.id,
                 bet_type="first_place",
                 description="Ammady: #1 Seed +250",
+                season=2026,
                 week=9,
                 amount=40.0,
                 odds="+250",
@@ -482,6 +484,7 @@ def test_the_account_page_lists_new_legacy_won_and_lost_bets_but_not_removed_one
                 user_id=user.id,
                 bet_type="team_total",
                 description="Ammady O/U 101.5: Under",
+                season=2026,
                 week=9,
                 amount=30.0,
                 odds="EVEN",
@@ -556,7 +559,7 @@ def test_cashing_out_pays_the_offer_and_posts_only_the_profit_to_the_current_wee
 ):
     bet_id = place_the_design_example_bet(logged_in_client)
     publish_a_rerun(RERUN_ID, rerun_scores())
-    db.session.add(BettingPeriod(week=11, lock_time=datetime.now(UTC) + timedelta(days=14)))
+    db.session.add(BettingPeriod(season=2026, week=11, lock_time=datetime.now(UTC) + timedelta(days=14)))
     db.session.commit()
 
     reply = cash_out(logged_in_client, bet_id)
@@ -705,6 +708,7 @@ def test_the_account_page_shows_a_cash_out_with_its_signed_result(
             user_id=user.id,
             bet_type="make_playoffs",
             description="Alice A: Make Playoffs +152",
+            season=2026,
             week=9,
             amount=100.0,
             odds="+152",

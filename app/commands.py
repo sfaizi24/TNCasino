@@ -9,26 +9,30 @@ from flask.cli import AppGroup
 from . import admin_actions, ledger, settlement
 from .database import db
 from .models import Bet, BettingPeriod
-from .routes.helpers import friendly_description, get_current_week
+from .routes.helpers import friendly_description, get_current_season, get_current_week
 
 admin_cli = AppGroup("admin", help="Betting periods and settlement, as on the admin page.")
 
 
 @admin_cli.command("periods")
 def list_periods():
-    """Every betting period, newest first."""
-    for period in db.session.query(BettingPeriod).order_by(BettingPeriod.week.desc()):
+    """The current season's betting periods, newest first."""
+    periods = db.session.query(BettingPeriod).filter_by(season=get_current_season())
+    for period in periods.order_by(BettingPeriod.week.desc()):
         state = "settled" if period.is_settled else "locked" if period.is_locked else "open"
-        click.echo(f"week {period.week:>2}  lock {period.lock_time:%Y-%m-%d %H:%M} UTC  {state}")
+        click.echo(f"{period.season} week {period.week:>2}  lock {period.lock_time:%Y-%m-%d %H:%M} UTC  {state}")
 
 
 @admin_cli.command("set-period")
 @click.option("--week", type=int, required=True)
 @click.option("--lock", "lock_time", required=True, help="UTC, as 2026-10-11T13:30: the week's first Sunday kickoff.")
 def set_period(week, lock_time):
-    """Create a week's betting period, or move its lock and reopen it."""
-    period = admin_actions.set_period(week, admin_actions.parse_lock_time(lock_time))
-    click.echo(f"week {period.week}: locks {period.lock_time:%Y-%m-%d %H:%M} UTC")
+    """Create a week's betting period in the published league's season, or move its lock and reopen it."""
+    try:
+        period = admin_actions.set_period(week, admin_actions.parse_lock_time(lock_time))
+    except admin_actions.NoPublishedLeague as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(f"{period.season} week {period.week}: locks {period.lock_time:%Y-%m-%d %H:%M} UTC")
 
 
 @admin_cli.command("settle")

@@ -18,7 +18,7 @@ def _seed(app):
             [
                 User(id="racer", username="racer", account_balance=1000.0, total_pnl=0.0),
                 User(id="admin", username="admin", account_balance=1000.0, total_pnl=0.0, is_admin=True),
-                BettingPeriod(week=10, lock_time=datetime.now(UTC) + timedelta(days=7)),
+                BettingPeriod(season=2026, week=10, lock_time=datetime.now(UTC) + timedelta(days=7)),
             ]
         )
         db.session.commit()

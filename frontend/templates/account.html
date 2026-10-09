@@ -19,7 +19,7 @@
 <div class="tnc-acct-bal">
     <div class="tnc-acct-bal-label">Available Balance</div>
     <div class="tnc-acct-bal-amount">{{ money(user.account_balance) }}</div>
-    <div class="tnc-acct-bal-pnl {{ tone(user.total_pnl) }}">{{ signed(user.total_pnl) }} all-time</div>
+    <div class="tnc-acct-bal-pnl {{ tone(season_pnl) }}">{{ signed(season_pnl) }} this season</div>
     <div class="tnc-acct-bal-sub tnc-tab-num">{{ money(in_play) }} in play &middot; {{ wins }}&ndash;{{ losses }}</div>
 </div>
 

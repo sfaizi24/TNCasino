@@ -6,6 +6,7 @@ from app.routes.helpers import check_betting_period_lock, get_current_week
 
 def test_get_current_week_returns_active_period(db_session):
     period = BettingPeriod(
+        season=2026,
         week=12,
         lock_time=datetime.now(UTC) + timedelta(days=7),
         is_locked=False,
@@ -23,6 +24,7 @@ def test_get_current_week_defaults_when_no_periods(db_session):
 
 def test_check_lock_returns_none_for_unlocked_future_period(db_session):
     period = BettingPeriod(
+        season=2026,
         week=10,
         lock_time=datetime.now(UTC) + timedelta(days=7),
         is_locked=False,
@@ -36,6 +38,7 @@ def test_check_lock_returns_none_for_unlocked_future_period(db_session):
 
 def test_check_lock_auto_locks_past_due_period(db_session):
     period = BettingPeriod(
+        season=2026,
         week=10,
         lock_time=datetime.now(UTC) - timedelta(hours=1),
         is_locked=False,
@@ -55,6 +58,7 @@ def test_check_lock_auto_locks_past_due_period(db_session):
 def test_check_lock_returns_lock_time_for_already_locked(db_session):
     lock_time = datetime.now(UTC) + timedelta(days=1)
     period = BettingPeriod(
+        season=2026,
         week=10,
         lock_time=lock_time,
         is_locked=True,

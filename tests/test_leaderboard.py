@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from app.models import Bet, BetLeg, BettingPeriod, User, WeeklyStats
 from tests.conftest import RUN_ID
 
@@ -16,8 +18,9 @@ def _seed_leaderboard_data(db_session):
     db_session.session.add_all(users)
 
     period = BettingPeriod(
+        season=2026,
         week=10,
-        lock_time=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+        lock_time=datetime.now(UTC),
         is_locked=True,
         is_settled=False,
     )
@@ -34,6 +37,7 @@ def _seed_leaderboard_data(db_session):
             potential_win=300.0,
             status="won",
             result=300.0,
+            season=2026,
             week=10,
         ),
         Bet(
@@ -45,6 +49,7 @@ def _seed_leaderboard_data(db_session):
             potential_win=300.0,
             status="won",
             result=300.0,
+            season=2026,
             week=10,
         ),
         Bet(
@@ -56,6 +61,7 @@ def _seed_leaderboard_data(db_session):
             potential_win=45.45,
             status="won",
             result=45.45,
+            season=2026,
             week=10,
         ),
         # Lost bets
@@ -68,6 +74,7 @@ def _seed_leaderboard_data(db_session):
             potential_win=400.0,
             status="lost",
             result=-400.0,
+            season=2026,
             week=10,
         ),
         Bet(
@@ -79,6 +86,7 @@ def _seed_leaderboard_data(db_session):
             potential_win=100.0,
             status="lost",
             result=-100.0,
+            season=2026,
             week=10,
         ),
         # Pending bet (should not appear in settled stats)
@@ -91,6 +99,7 @@ def _seed_leaderboard_data(db_session):
             potential_win=100.0,
             status="pending",
             result=0.0,
+            season=2026,
             week=10,
         ),
     ]
@@ -99,6 +108,7 @@ def _seed_leaderboard_data(db_session):
     stats = [
         WeeklyStats(
             user_id="lb-1",
+            season=2026,
             week=10,
             starting_balance=1000.0,
             ending_balance=1295.45,
@@ -109,6 +119,7 @@ def _seed_leaderboard_data(db_session):
         ),
         WeeklyStats(
             user_id="lb-2",
+            season=2026,
             week=10,
             starting_balance=1000.0,
             ending_balance=1200.0,
@@ -119,6 +130,7 @@ def _seed_leaderboard_data(db_session):
         ),
         WeeklyStats(
             user_id="lb-3",
+            season=2026,
             week=10,
             starting_balance=1000.0,
             ending_balance=600.0,
@@ -132,29 +144,63 @@ def _seed_leaderboard_data(db_session):
     db_session.session.commit()
 
 
-def test_alltime_top_ranking(client, db_session, captured_templates):
+def test_season_top_ranking_sums_the_season_s_settled_pnl(client, db_session, captured_templates):
     _seed_leaderboard_data(db_session)
     client.get("/leaderboard")
 
-    context = captured_templates[0][1]
-    top = context["alltime_top"]
+    top = captured_templates[0][1]["season_top"]
 
-    assert len(top) == 3
-    assert top[0].total_pnl == 500.0  # Alice
-    assert top[1].total_pnl == 200.0  # Bob
-    assert top[2].total_pnl == -300.0  # Carol
+    assert [(leader.id, leader.season_pnl) for leader in top] == [("lb-1", 345.45), ("lb-2", 200.0), ("lb-3", -400.0)]
 
 
-def test_alltime_bottom_ranking(client, db_session, captured_templates):
+def test_season_bottom_ranking(client, db_session, captured_templates):
     _seed_leaderboard_data(db_session)
     client.get("/leaderboard")
 
-    context = captured_templates[0][1]
-    bottom = context["alltime_bottom"]
+    bottom = captured_templates[0][1]["season_bottom"]
 
-    assert len(bottom) == 2
-    assert bottom[0].total_pnl == -300.0  # Carol (lowest)
-    assert bottom[1].total_pnl == 200.0  # Bob
+    assert [(leader.id, leader.season_pnl) for leader in bottom] == [("lb-3", -400.0), ("lb-2", 200.0)]
+
+
+def test_last_season_is_left_off_the_leaderboard(client, db_session, captured_templates):
+    _seed_leaderboard_data(db_session)
+    db_session.session.add_all(
+        [
+            BettingPeriod(season=2025, week=10, lock_time=datetime.now(UTC), is_locked=True, is_settled=True),
+            WeeklyStats(
+                user_id="lb-3",
+                season=2025,
+                week=10,
+                starting_balance=1000.0,
+                ending_balance=3000.0,
+                pnl=2000.0,
+                settled_pnl=2000.0,
+                bets_placed=1,
+                bets_won=1,
+            ),
+            Bet(
+                user_id="lb-3",
+                bet_type="moneyline",
+                description="Carol last season",
+                amount=100.0,
+                odds="+2000",
+                potential_win=2000.0,
+                status="won",
+                result=2000.0,
+                season=2025,
+                week=10,
+            ),
+        ]
+    )
+    db_session.session.commit()
+
+    client.get("/leaderboard")
+
+    context = captured_templates[0][1]
+    assert context["season_top"][0].id == "lb-1"
+    assert context["season_bottom"][0].season_pnl == -400.0
+    assert [stats.settled_pnl for stats in context["weekly_bottom"]][0] == -400.0
+    assert context["most_money_won"].description != "Carol last season"
 
 
 def test_weekly_top_bottom(client, db_session, captured_templates):
@@ -235,6 +281,7 @@ def test_popular_bet_stats(client, db_session, captured_templates):
             potential_win=150.0,
             status="lost",
             result=-75.0,
+            season=2026,
             week=10,
         ),
         Bet(
@@ -246,6 +293,7 @@ def test_popular_bet_stats(client, db_session, captured_templates):
             potential_win=100.0,
             status="pending",
             result=0.0,
+            season=2026,
             week=10,
         ),
         Bet(
@@ -256,6 +304,7 @@ def test_popular_bet_stats(client, db_session, captured_templates):
             odds="+200",
             potential_win=50.0,
             status="removed",
+            season=2026,
             week=10,
         ),
     ]
@@ -280,6 +329,7 @@ def test_empty_leaderboard(client, db_session, captured_templates):
     from datetime import UTC, datetime
 
     period = BettingPeriod(
+        season=2026,
         week=10,
         lock_time=datetime.now(UTC),
         is_settled=False,
@@ -302,6 +352,7 @@ def test_new_bets_rank_beside_legacy_ones_and_removed_bets_are_left_out(client, 
         potential_win=250.0,
         status="won",
         result=250.0,
+        season=2026,
         week=10,
         run_id=RUN_ID,
         price=500,
@@ -326,6 +377,7 @@ def test_new_bets_rank_beside_legacy_ones_and_removed_bets_are_left_out(client, 
         odds="+230",
         potential_win=115.0,
         status="removed",
+        season=2026,
         week=10,
         run_id=RUN_ID,
         price=230,
@@ -365,6 +417,7 @@ def _lowest_scorer_bet(user_id, description, status):
         potential_win=115.0,
         status=status,
         result=0.0,
+        season=2026,
         week=10,
     )
 

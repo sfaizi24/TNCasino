@@ -31,7 +31,8 @@ The window comes from the runs: Wednesday's run closes at Thursday's kickoff, th
 
 - `lock_time` is entered in the admin form as a naive datetime and **stored as UTC**. Set it at the week's last window close, Sunday's first kickoff (week 4: `2026-10-04T13:30` UTC), never Thursday's: a Thursday lock keeps the week shut after the Friday rerun.
 - The lock is lazy: `check_betting_period_lock(period)`, given the period `betting_window` loaded, flips `is_locked` when it sees `now ≥ lock_time`. `betting_window` is its one caller, so the lock still flips on the first `place_bet`, `remove_bet`, `cash_out`, `my_bets` or `betting_window` request after `lock_time`; the `/betting` route itself doesn't check it.
-- **Current week** = highest-numbered unsettled period. Settling week *N* moves the site to the next unsettled period; if there is none, it falls back to week 10. Creating the week *N+1* period before settling *N* moves the site forward immediately.
+- **Seasons.** Every period, bet and `weekly_stats` row carries its season, and a week is unique within one, so 2026's week 10 is a row of its own beside 2025's. `set_period` takes the season of the published league (`sleeper_leagues`) and refuses before a league is published, so a new season starts at its first publish. The **current season** is the latest period's, and the account page, the leaderboard, the admin page and the betting window read only its rows; earlier seasons stay in the database for analysis. The migration gave each existing row the season it was created in, a row made before July counting toward the season before.
+- **Current week** = highest-numbered unsettled period of the latest season. Settling week *N* moves the site to the next unsettled period; if there is none, it falls back to week 10. Creating the week *N+1* period before settling *N* moves the site forward immediately.
 - `settle_week` **only sets `is_settled`**. It doesn't touch bets; pending bets stay pending. The admin page shows only the current week's bets, so settle them ([Settlement](#settlement)) before creating the next week's period or marking this one settled.
 
 ## Bet
@@ -265,7 +266,7 @@ The result week of a settle or a push is the bet's own week for a weekly bet, a 
 
 A push leaves `total_pnl`, `settled_pnl`, `bets_placed` and `bets_won` as they were: the bet was placed and settled for nothing. A void takes the bet out of `bets_placed`, as a remove does, because it should never have counted. A cash-out leaves `bets_placed` and `bets_won` as they were, and when the bet's week is the cash-out week one row takes both changes. Settle, push, void and cash out set `settled_at` on the bet and its legs.
 
-`weekly_stats.pnl` includes the cost of still-open bets (balance-based), while `settled_pnl` only counts resolved bets. The leaderboard uses `users.total_pnl` for all-time and `weekly_stats.settled_pnl` for weekly rankings, and the account page's Weekly P&L shows `settled_pnl` too, so a cash-out's returned stake never reads as profit anywhere.
+`weekly_stats.pnl` includes the cost of still-open bets (balance-based), while `settled_pnl` only counts resolved bets. The leaderboard ranks the season by the sum of its `weekly_stats.settled_pnl` and the week by that week's, and the account page's Weekly P&L shows `settled_pnl` too, so a cash-out's returned stake never reads as profit anywhere.
 
 There is no ledger table: balances change in place, so history can only be reconstructed from `bets`.
 

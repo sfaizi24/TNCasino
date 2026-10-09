@@ -3,7 +3,7 @@ from functools import wraps
 
 from flask import flash, redirect, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import text
+from sqlalchemy import func, text
 
 from ..database import db
 
@@ -58,7 +58,12 @@ def friendly_description(description):
 def get_current_week():
     from ..models import BettingPeriod
 
-    period = db.session.query(BettingPeriod).filter_by(is_settled=False).order_by(BettingPeriod.week.desc()).first()
+    period = (
+        db.session.query(BettingPeriod)
+        .filter_by(is_settled=False)
+        .order_by(BettingPeriod.season.desc(), BettingPeriod.week.desc())
+        .first()
+    )
 
     if period:
         return period.week
@@ -67,6 +72,13 @@ def get_current_week():
         "[WARNING] No active (unsettled) betting period found in database. Defaulting to week 10. Please create a new betting period via /admin."
     )
     return 10
+
+
+def get_current_season():
+    """The latest betting period's season: the one the site shows, from its first period until the next season's."""
+    from ..models import BettingPeriod
+
+    return db.session.query(func.max(BettingPeriod.season)).scalar()
 
 
 def check_betting_period_lock(period):

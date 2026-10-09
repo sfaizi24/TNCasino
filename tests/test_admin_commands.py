@@ -22,9 +22,10 @@ def _statuses(session):
     return [bet.status for bet in session.query(Bet).order_by(Bet.id)]
 
 
-def test_set_period_creates_a_week_then_moves_its_lock_and_reopens_it(run, db_session):
+def test_set_period_creates_a_week_then_moves_its_lock_and_reopens_it(run, seeded_analytics, db_session):
     assert (
-        run("set-period", "--week", "5", "--lock", "2026-10-11T13:30").output == "week 5: locks 2026-10-11 13:30 UTC\n"
+        run("set-period", "--week", "5", "--lock", "2026-10-11T13:30").output
+        == "2026 week 5: locks 2026-10-11 13:30 UTC\n"
     )
     period = db_session.session.query(BettingPeriod).filter_by(week=5).one()
     period.is_locked = True
@@ -34,7 +35,25 @@ def test_set_period_creates_a_week_then_moves_its_lock_and_reopens_it(run, db_se
 
     db_session.session.expire_all()
     assert (period.lock_time.replace(tzinfo=None), period.is_locked) == (datetime(2026, 10, 12, 0, 15), False)
-    assert run("periods").output == "week  5  lock 2026-10-12 00:15 UTC  open\n"
+    assert run("periods").output == "2026 week  5  lock 2026-10-12 00:15 UTC  open\n"
+
+
+def test_set_period_opens_this_season_s_week_beside_last_season_s(run, betting_period, seeded_analytics, db_session):
+    betting_period.season = 2025
+    db_session.session.commit()
+
+    run("set-period", "--week", "10", "--lock", "2026-11-15T18:00")
+
+    periods = db_session.session.query(BettingPeriod).order_by(BettingPeriod.season).all()
+    assert [(period.season, period.week) for period in periods] == [(2025, 10), (2026, 10)]
+    assert run("periods").output == "2026 week 10  lock 2026-11-15 18:00 UTC  open\n"
+
+
+def test_set_period_refuses_before_a_league_is_published(run, analytics_tables, db_session):
+    result = run("set-period", "--week", "5", "--lock", "2026-10-11T13:30")
+
+    assert "No league is published; publish the league step first" in result.output
+    assert db_session.session.query(BettingPeriod).count() == 0
 
 
 def test_set_period_refuses_a_lock_time_it_cannot_read(run):

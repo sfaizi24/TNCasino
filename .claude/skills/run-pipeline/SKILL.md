@@ -139,7 +139,7 @@ Publish before Thursday's kickoff. The window closes at the first kickoff after 
 ### Dashboard and admin
 
 - Open `/admin/pipeline?week=N`. Every step `ok`, or `warn` with only the warnings above. The Sources panel shows each source's checks and your verdicts. The Runs panel lists the week's runs, the publish run included.
-- Open `/admin` and set the week's betting period with its lock time at **Sunday's first kickoff**, entered in UTC. Never Thursday's: the lock is the hard close and the kill switch, and once it passes the week stays locked. From a shell on the droplet the same is `cd /opt/tncasino && venv/bin/flask --app app admin set-period --week N --lock 2026-10-11T13:30`, and `admin periods` lists every week's lock.
+- Open `/admin` and set the week's betting period with its lock time at **Sunday's first kickoff**, entered in UTC. Never Thursday's: the lock is the hard close and the kill switch, and once it passes the week stays locked. From a shell on the droplet the same is `cd /opt/tncasino && venv/bin/flask --app app admin set-period --week N --lock 2026-10-11T13:30`, and `admin periods` lists the current season's weeks with their locks. A new season's first `set-period` needs that season's league published first, since the period takes the published league's season.
 
 The week is open when the betting period exists and is not locked, and the latest published run's `window_closes_at` is still in the future. At Thursday's kickoff betting pauses on its own; the next publish reopens it until its own window closes.
 

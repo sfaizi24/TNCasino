@@ -10,6 +10,7 @@ def single(user, market, selection, amount, probability=0.5, status="pending"):
         odds="+100",
         potential_win=amount,
         status=status,
+        season=2026,
         week=10,
         legs=[
             BetLeg(
@@ -60,6 +61,7 @@ def test_money_keeps_futures_and_parlays_apart_from_the_week(
         amount=15.0,
         odds="+300",
         potential_win=45.0,
+        season=2026,
         week=10,
         legs=[
             BetLeg(season=2026, week=10, market="2026-w10-moneyline-1v2", selection="2", price=150, probability=0.4),
@@ -83,12 +85,32 @@ def test_money_reverses_the_bettors_settled_results_for_the_house(
 ):
     db_session.session.add_all(
         [
-            WeeklyStats(user_id=user.id, week=10, starting_balance=1000, ending_balance=1030, pnl=30, settled_pnl=30),
             WeeklyStats(
-                user_id=admin_user.id, week=10, starting_balance=1000, ending_balance=950, pnl=-50, settled_pnl=-50
+                user_id=user.id,
+                season=2026,
+                week=10,
+                starting_balance=1000,
+                ending_balance=1030,
+                pnl=30,
+                settled_pnl=30,
             ),
             WeeklyStats(
-                user_id=admin_user.id, week=9, starting_balance=1000, ending_balance=900, pnl=-100, settled_pnl=-100
+                user_id=admin_user.id,
+                season=2026,
+                week=10,
+                starting_balance=1000,
+                ending_balance=950,
+                pnl=-50,
+                settled_pnl=-50,
+            ),
+            WeeklyStats(
+                user_id=admin_user.id,
+                season=2026,
+                week=9,
+                starting_balance=1000,
+                ending_balance=900,
+                pnl=-100,
+                settled_pnl=-100,
             ),
         ]
     )

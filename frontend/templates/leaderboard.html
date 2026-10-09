@@ -80,21 +80,21 @@
 </div>
 
 <div class="tnc-card tnc-lb-block">
-    <h2 class="tnc-card-h">All-Time Leaders</h2>
-    {% if alltime_top %}
+    <h2 class="tnc-card-h">Season Leaders</h2>
+    {% if season_top %}
     <div class="tnc-lb-list">
-        {% for leader in alltime_top %}
+        {% for leader in season_top %}
             {{ rank_row(display_name(leader[1], leader[2], leader[0]), leader[3], rank=loop.index) }}
         {% endfor %}
-        {% if alltime_bottom %}
+        {% if season_bottom %}
         <div class="tnc-lb-sep"><span class="tnc-lb-sep-label">Bottom Performers</span></div>
-        {% for leader in alltime_bottom %}
+        {% for leader in season_bottom %}
             {{ rank_row(display_name(leader[1], leader[2], leader[0]), leader[3], rank=loop.index, kind='bottom') }}
         {% endfor %}
         {% endif %}
     </div>
     {% else %}
-    <div class="tnc-lb-empty">No users with bets yet. Start betting to appear on the leaderboard!</div>
+    <div class="tnc-lb-empty">No bets yet this season. Start betting to appear on the leaderboard!</div>
     {% endif %}
 </div>
 

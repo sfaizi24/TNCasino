@@ -134,6 +134,7 @@ def captured_templates(app):
 @pytest.fixture
 def betting_period(db_session):
     period = BettingPeriod(
+        season=2026,
         week=10,
         lock_time=datetime.now(UTC) + timedelta(days=7),
         is_locked=False,

@@ -8,6 +8,7 @@ from flask_login import current_user, login_required
 from .. import markets
 from ..database import db
 from ..extensions import csrf
+from .helpers import get_current_season
 
 account_bp = Blueprint("account", __name__)
 
@@ -54,7 +55,7 @@ def account():
 
     bets = (
         db.session.query(Bet)
-        .filter(Bet.user_id == current_user.id)
+        .filter(Bet.user_id == current_user.id, Bet.season == get_current_season())
         .order_by(Bet.week.desc(), Bet.created_at.desc())
         .all()
     )
@@ -63,6 +64,7 @@ def account():
         "account.html",
         user=current_user,
         history=bet_history(bets),
+        season_pnl=sum(bet.result for bet in bets),
         in_play=sum(bet.amount for bet in bets if bet.status == "pending"),
         wins=sum(bet.status == "won" for bet in bets),
         losses=sum(bet.status == "lost" for bet in bets),

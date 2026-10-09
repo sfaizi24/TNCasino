@@ -42,6 +42,7 @@ def _bet(user, market, selection, line=None, price=100, amount=100.0, run_id=OLD
         user_id=user.id,
         bet_type=parse_key(market).name,
         description=f"{market}: {selection}",
+        season=2026,
         week=week,
         amount=amount,
         odds=f"{price:+d}",

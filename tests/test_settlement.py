@@ -41,10 +41,12 @@ def _place_legacy_bet(db_session, user, betting_period):
         odds="+200",
         potential_win=200.0,
         status="pending",
+        season=2026,
         week=betting_period.week,
     )
     stat = WeeklyStats(
         user_id=user.id,
+        season=2026,
         week=betting_period.week,
         starting_balance=1000.0,
         ending_balance=900.0,
@@ -315,6 +317,7 @@ def _place_parlay(user):
         user_id=user.id,
         bet_type="parlay",
         description="Alice A vs Bob B: Bob B +130 + Alice A O/U 110.50: Under",
+        season=2026,
         week=10,
         amount=100.0,
         odds="+300",
@@ -324,7 +327,7 @@ def _place_parlay(user):
         potential_win=300.0,
         legs=legs,
     )
-    ledger.open_week(user.id, 10)
+    ledger.open_week(user.id, 2026, 10)
     assert ledger.place(parlay)
     db.session.commit()
     return parlay.id
@@ -420,6 +423,7 @@ def test_a_bettor_without_a_name_shows_as_the_start_of_their_id(
             user_id="a1b2c3d4-e5f6",
             bet_type="highest_scorer",
             description="Player A: Highest Scorer +200",
+            season=2026,
             week=10,
             amount=100.0,
             odds="+200",
@@ -655,6 +659,7 @@ def _place_futures_parlay(user, *picks):
         user_id=user.id,
         bet_type="parlay",
         description="Futures parlay",
+        season=2026,
         week=8,
         amount=100.0,
         odds="+300",
@@ -664,7 +669,7 @@ def _place_futures_parlay(user, *picks):
         potential_win=300.0,
         legs=legs,
     )
-    ledger.open_week(user.id, 8)
+    ledger.open_week(user.id, 2026, 8)
     assert ledger.place(parlay)
     db.session.commit()
     return parlay.id

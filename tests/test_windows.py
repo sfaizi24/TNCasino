@@ -118,6 +118,14 @@ def test_another_season_of_the_same_week_is_ignored(betting_period, seeded_analy
     assert betting_window(10).run_id == RUN_ID
 
 
+def test_last_season_s_period_of_the_same_week_is_not_this_season_s(betting_period, seeded_analytics):
+    betting_period.season = 2025
+    db.session.add(BettingPeriod(season=2026, week=4, lock_time=CLOSES, is_locked=False, is_settled=False))
+    db.session.commit()
+
+    assert betting_window(10).state == "closed"
+
+
 def test_the_endpoint_reports_the_current_week_signed_out(client, betting_period, seeded_analytics):
     reply = client.get("/api/betting_window").get_json()
 

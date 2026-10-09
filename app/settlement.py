@@ -25,7 +25,7 @@ from .database import db
 from .markets import MarketError, parse_key, potential_win, price_from_odds
 from .matrices import MissingMatrix, leg_outcome, score_matrix
 from .models import Bet, BetLeg
-from .routes.helpers import get_league_id_for_week, get_team_mapping, query_analytics
+from .routes.helpers import get_current_season, get_league_id_for_week, get_team_mapping, query_analytics
 
 WON = "won"
 LOST = "lost"
@@ -199,13 +199,15 @@ def _incomplete_season(league_id, last_week, num_teams):
 
 
 def outcomes_for_week(week, scores):
-    """The week's pending bets and, in the regular season's last week, every pending bet with a futures leg too."""
+    """The current season's pending bets of the week and, in the regular season's last week, every one with a
+    futures leg too."""
     standings = final_standings(week)
     listed = Bet.week == week
     if standings is not None:
         listed = or_(listed, Bet.legs.any(BetLeg.week.is_(None)))
 
-    bets = db.session.query(Bet).filter(Bet.status == "pending", listed).order_by(Bet.id).all()
+    pending = db.session.query(Bet).filter(Bet.status == "pending", Bet.season == get_current_season(), listed)
+    bets = pending.order_by(Bet.id).all()
     return [outcome_for(bet, scores, standings) for bet in bets]
 
 

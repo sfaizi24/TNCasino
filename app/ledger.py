@@ -14,9 +14,11 @@ from .database import db
 from .models import Bet, BetLeg, User, WeeklyStats
 
 
-def open_week(user_id, week):
+def open_week(user_id, season, week):
     """Create the user's stats row for the week in its own transaction, before any money moves."""
-    existing = select(WeeklyStats.id).where(WeeklyStats.user_id == user_id, WeeklyStats.week == week)
+    existing = select(WeeklyStats.id).where(
+        WeeklyStats.user_id == user_id, WeeklyStats.season == season, WeeklyStats.week == week
+    )
     if db.session.scalar(existing) is not None:
         return
 
@@ -24,7 +26,12 @@ def open_week(user_id, week):
     try:
         db.session.execute(
             insert(WeeklyStats).values(
-                user_id=user_id, week=week, starting_balance=balance, ending_balance=balance, pnl=0.0
+                user_id=user_id,
+                season=season,
+                week=week,
+                starting_balance=balance,
+                ending_balance=balance,
+                pnl=0.0,
             )
         )
         db.session.commit()
@@ -44,7 +51,7 @@ def place(bet):
 
     db.session.add(bet)
     _update_weekly_stats(
-        bet.user_id,
+        bet,
         bet.week,
         bets_placed=WeeklyStats.bets_placed + 1,
         active_bets_amount=WeeklyStats.active_bets_amount + bet.amount,
@@ -60,7 +67,7 @@ def remove(bet):
     _execute(update(BetLeg).where(BetLeg.bet_id == bet.id).values(status="void"))
     _execute(update(User).where(User.id == bet.user_id).values(account_balance=User.account_balance + bet.amount))
     _update_weekly_stats(
-        bet.user_id,
+        bet,
         bet.week,
         bets_placed=WeeklyStats.bets_placed - 1,
         active_bets_amount=WeeklyStats.active_bets_amount - bet.amount,
@@ -143,9 +150,9 @@ def _close(bet, status, result, payout, leg_statuses=None, potential_win=None, w
 
 
 def _post_result(bet, week, result, **counters):
-    """The stake leaves the bet's own week; the result and the counters post to `week`."""
-    _update_weekly_stats(bet.user_id, bet.week, active_bets_amount=WeeklyStats.active_bets_amount - bet.amount)
-    _update_weekly_stats(bet.user_id, week, settled_pnl=WeeklyStats.settled_pnl + result, **counters)
+    """The stake leaves the bet's own week; the result and the counters post to `week` of the bet's season."""
+    _update_weekly_stats(bet, bet.week, active_bets_amount=WeeklyStats.active_bets_amount - bet.amount)
+    _update_weekly_stats(bet, week, settled_pnl=WeeklyStats.settled_pnl + result, **counters)
 
 
 def _close_legs(bet, status, settled_at, leg_statuses=None):
@@ -169,11 +176,12 @@ def _pay(user_id, payout, result):
     )
 
 
-def _update_weekly_stats(user_id, week, **counters):
-    balance = _balance(user_id)
+def _update_weekly_stats(bet, week, **counters):
+    """Post to the bettor's stats row for `week` in the bet's season."""
+    balance = _balance(bet.user_id)
     _execute(
         update(WeeklyStats)
-        .where(WeeklyStats.user_id == user_id, WeeklyStats.week == week)
+        .where(WeeklyStats.user_id == bet.user_id, WeeklyStats.season == bet.season, WeeklyStats.week == week)
         .values(**counters, ending_balance=balance, pnl=balance - WeeklyStats.starting_balance)
     )
 

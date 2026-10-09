@@ -14,6 +14,7 @@ def _bet(status, result=0.0, week=4, bet_type="moneyline", amount=50.0, descript
         potential_win=amount,
         status=status,
         result=result,
+        season=2026,
         week=week,
     )
 
@@ -48,7 +49,7 @@ def test_a_week_of_only_removed_bets_has_no_group():
     assert bet_history([_bet("removed")]) == []
 
 
-def test_account_page_shows_balance_in_play_and_record(logged_in_client, user, db_session):
+def test_account_page_shows_balance_in_play_and_record(logged_in_client, user, betting_period, db_session):
     user.account_balance = 1234.5
     db_session.session.add_all(
         [
@@ -67,3 +68,15 @@ def test_account_page_shows_balance_in_play_and_record(logged_in_client, user, d
     assert "1&ndash;1" in page
     assert "To win $150.00" in page
     assert "Mehdi: Highest Scorer" not in page
+
+
+def test_account_page_leaves_out_last_season(logged_in_client, user, betting_period, db_session):
+    last_season = _bet("won", 900.0, description="Old season winner")
+    last_season.season = 2025
+    db_session.session.add_all([last_season, _bet("lost", -50.0)])
+    db_session.session.commit()
+
+    page = logged_in_client.get("/account").get_data(as_text=True)
+
+    assert "Old season winner" not in page
+    assert "0&ndash;1" in page

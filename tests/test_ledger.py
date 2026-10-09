@@ -30,6 +30,7 @@ def _bet(user, amount, legs=None):
         user_id=user.id,
         bet_type="highest_scorer",
         description="Player A: Highest Scorer +100",
+        season=2026,
         week=10,
         amount=amount,
         odds="+100",
@@ -42,7 +43,7 @@ def _bet(user, amount, legs=None):
 def _placed_bet(user, amount=100.0, legs=None):
     """Place a bet and hand it back detached, the way a request that read it while pending holds it."""
     bet = _bet(user, amount, legs)
-    ledger.open_week(user.id, bet.week)
+    ledger.open_week(user.id, 2026, bet.week)
     assert ledger.place(bet)
     db.session.commit()
     db.session.refresh(bet)
@@ -240,7 +241,7 @@ def test_push_and_void_refund_the_stake_and_only_a_push_still_counts_as_placed(u
 )
 def test_a_result_posted_to_a_later_week_leaves_only_the_stake_in_the_bets_week(user, event, profit, bets_won):
     bet = _placed_bet(user)
-    ledger.open_week(user.id, 11)
+    ledger.open_week(user.id, 2026, 11)
 
     assert event(bet) is True
     db.session.commit()
@@ -313,7 +314,7 @@ def test_cash_out_in_the_bets_week_books_the_profit_there(user, offer, profit):
 @pytest.mark.parametrize(("offer", "profit"), [(137.5, 37.5), (62.5, -37.5)])
 def test_cash_out_in_a_later_week_books_the_profit_in_that_week(user, offer, profit):
     bet = _placed_bet(user)
-    ledger.open_week(user.id, 11)
+    ledger.open_week(user.id, 2026, 11)
 
     assert ledger.cash_out(bet, offer, LATER_RUN_ID, week=11) is True
     db.session.commit()
@@ -346,7 +347,7 @@ def test_cash_out_in_a_later_week_books_the_profit_in_that_week(user, offer, pro
 
 def test_a_cash_out_for_the_stake_books_no_profit_in_either_week(user):
     bet = _placed_bet(user, 100.0)
-    ledger.open_week(user.id, 11)
+    ledger.open_week(user.id, 2026, 11)
 
     assert ledger.cash_out(bet, 100.0, LATER_RUN_ID, week=11) is True
     db.session.commit()
@@ -359,7 +360,7 @@ def test_a_cash_out_for_the_stake_books_no_profit_in_either_week(user):
 
 def test_a_second_cash_out_in_a_later_week_changes_nothing(user):
     bet = _placed_bet(user)
-    ledger.open_week(user.id, 11)
+    ledger.open_week(user.id, 2026, 11)
     assert ledger.cash_out(bet, 137.5, LATER_RUN_ID, week=11) is True
     db.session.commit()
     cashed_out = (_money(user, week=10), _money(user, week=11))

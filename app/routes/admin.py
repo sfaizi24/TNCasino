@@ -10,7 +10,7 @@ from sqlalchemy import inspect, or_
 from .. import admin_actions, ledger, settlement
 from ..database import db
 from ..models import Bet, BetLeg
-from .helpers import admin_required, friendly_description, get_current_week, query_analytics
+from .helpers import admin_required, friendly_description, get_current_season, get_current_week, query_analytics
 from .pipeline_summary import summary_sections
 
 admin_bp = Blueprint("admin", __name__)
@@ -45,7 +45,12 @@ def get_betting_periods():
     from ..models import BettingPeriod
 
     try:
-        periods = db.session.query(BettingPeriod).order_by(BettingPeriod.week.desc()).all()
+        periods = (
+            db.session.query(BettingPeriod)
+            .filter_by(season=get_current_season())
+            .order_by(BettingPeriod.week.desc())
+            .all()
+        )
 
         periods_data = []
         for period in periods:
@@ -98,7 +103,12 @@ def get_pending_bets():
     try:
         # A futures bet stays listed after its week, for its Win and Loss buttons once its market is decided.
         listed = or_(Bet.week == week, Bet.legs.any(BetLeg.week.is_(None)))
-        bets = db.session.query(Bet).filter(Bet.status == "pending", listed).order_by(Bet.id).all()
+        bets = (
+            db.session.query(Bet)
+            .filter(Bet.status == "pending", Bet.season == get_current_season(), listed)
+            .order_by(Bet.id)
+            .all()
+        )
 
         bets_data = []
         for bet in bets:
@@ -306,7 +316,7 @@ def unlock_period():
             return jsonify({"success": False, "error": "Invalid lock time"})
 
     try:
-        period = db.session.query(BettingPeriod).filter_by(week=week).first()
+        period = db.session.query(BettingPeriod).filter_by(season=get_current_season(), week=week).first()
         if period is None:
             return jsonify({"success": False, "error": "Betting period not found"})
         period.is_locked = False

@@ -9,7 +9,7 @@ from .. import cashout, ledger, markets, parlays
 from ..database import db
 from ..models import Bet, BetLeg, ParlayRefusal, User, WeeklyStats
 from ..windows import betting_window
-from .helpers import friendly_description, get_current_week, get_team_mapping
+from .helpers import friendly_description, get_current_season, get_current_week, get_team_mapping
 
 betting_bp = Blueprint("betting", __name__)
 
@@ -55,34 +55,32 @@ def _iso(timestamp):
 
 @betting_bp.route("/leaderboard")
 def leaderboard():
+    season = get_current_season()
     current_week = get_current_week()
     selected_week = request.args.get("week", current_week, type=int)
+    in_season = WeeklyStats.season == season
+    season_bets = Bet.season == season
 
-    available_weeks = db.session.query(distinct(WeeklyStats.week)).order_by(desc(WeeklyStats.week)).all()
+    available_weeks = (
+        db.session.query(distinct(WeeklyStats.week)).filter(in_season).order_by(desc(WeeklyStats.week)).all()
+    )
     available_weeks = [w[0] for w in available_weeks]
 
-    users_with_bets = db.session.query(Bet.user_id).group_by(Bet.user_id).subquery()
-
-    alltime_top = (
-        db.session.query(User.id, User.first_name, User.last_name, User.total_pnl)
-        .join(users_with_bets, User.id == users_with_bets.c.user_id)
-        .order_by(desc(User.total_pnl))
-        .limit(3)
-        .all()
+    season_pnl = func.sum(WeeklyStats.settled_pnl)
+    season_standings = (
+        db.session.query(User.id, User.first_name, User.last_name, season_pnl.label("season_pnl"))
+        .join(WeeklyStats, User.id == WeeklyStats.user_id)
+        .filter(in_season)
+        .group_by(User.id, User.first_name, User.last_name)
+        .having(func.sum(WeeklyStats.bets_placed) > 0)
     )
-
-    alltime_bottom = (
-        db.session.query(User.id, User.first_name, User.last_name, User.total_pnl)
-        .join(users_with_bets, User.id == users_with_bets.c.user_id)
-        .order_by(User.total_pnl.asc())
-        .limit(2)
-        .all()
-    )
+    season_top = season_standings.order_by(desc(season_pnl)).limit(3).all()
+    season_bottom = season_standings.order_by(season_pnl.asc()).limit(2).all()
 
     weekly_top = (
         db.session.query(User.id, User.first_name, User.last_name, WeeklyStats.settled_pnl)
         .join(WeeklyStats, User.id == WeeklyStats.user_id)
-        .filter(WeeklyStats.week == selected_week, WeeklyStats.bets_placed > 0)
+        .filter(in_season, WeeklyStats.week == selected_week, WeeklyStats.bets_placed > 0)
         .order_by(desc(WeeklyStats.settled_pnl))
         .limit(3)
         .all()
@@ -91,7 +89,7 @@ def leaderboard():
     weekly_bottom = (
         db.session.query(User.id, User.first_name, User.last_name, WeeklyStats.settled_pnl)
         .join(WeeklyStats, User.id == WeeklyStats.user_id)
-        .filter(WeeklyStats.week == selected_week, WeeklyStats.bets_placed > 0)
+        .filter(in_season, WeeklyStats.week == selected_week, WeeklyStats.bets_placed > 0)
         .order_by(WeeklyStats.settled_pnl.asc())
         .limit(2)
         .all()
@@ -108,7 +106,7 @@ def leaderboard():
             Bet.week,
         )
         .join(User, Bet.user_id == User.id)
-        .filter(Bet.status == "won")
+        .filter(season_bets, Bet.status == "won")
         .group_by(Bet.user_id, Bet.description, Bet.odds, Bet.week, User.first_name, User.last_name)
         .order_by(desc(cast(func.replace(func.replace(Bet.odds, "+", ""), "EVEN", "0"), Integer)))
         .first()
@@ -125,7 +123,7 @@ def leaderboard():
             Bet.week,
         )
         .join(User, Bet.user_id == User.id)
-        .filter(Bet.status == "won")
+        .filter(season_bets, Bet.status == "won")
         .group_by(Bet.user_id, Bet.description, Bet.odds, Bet.week, User.first_name, User.last_name)
         .order_by(desc(func.sum(Bet.result)))
         .first()
@@ -142,7 +140,7 @@ def leaderboard():
             Bet.week,
         )
         .join(User, Bet.user_id == User.id)
-        .filter(Bet.status == "lost")
+        .filter(season_bets, Bet.status == "lost")
         .group_by(Bet.user_id, Bet.description, Bet.odds, Bet.week, Bet.result, User.first_name, User.last_name)
         .order_by(cast(func.replace(func.replace(Bet.odds, "+", ""), "EVEN", "0"), Integer).asc())
         .first()
@@ -159,7 +157,7 @@ def leaderboard():
             Bet.week,
         )
         .join(User, Bet.user_id == User.id)
-        .filter(Bet.status == "lost")
+        .filter(season_bets, Bet.status == "lost")
         .group_by(Bet.user_id, Bet.description, Bet.odds, Bet.week, Bet.result, User.first_name, User.last_name)
         .order_by(desc(func.sum(Bet.amount)))
         .first()
@@ -177,7 +175,7 @@ def leaderboard():
                 func.max(Bet.week).label("week"),
                 func.sum(case((Bet.status == "push", 1), else_=0)).label("pushes"),
             )
-            .filter(Bet.bet_type == bet_type, Bet.status.notin_(("removed", "void")))
+            .filter(season_bets, Bet.bet_type == bet_type, Bet.status.notin_(("removed", "void")))
             .group_by(Bet.description)
             .order_by(desc("count"))
             .first()
@@ -197,8 +195,8 @@ def leaderboard():
         available_weeks=available_weeks,
         weekly_top=weekly_top,
         weekly_bottom=weekly_bottom,
-        alltime_top=alltime_top,
-        alltime_bottom=alltime_bottom,
+        season_top=season_top,
+        season_bottom=season_bottom,
         best_odds_bet=best_odds_bet,
         most_money_won=most_money_won,
         worst_odds_bet=worst_odds_bet,
@@ -343,6 +341,7 @@ def _new_bet(market, selection, quote, amount, week):
         user_id=current_user.id,
         bet_type=market.name,
         description=_describe(market, selection, quote, week),
+        season=get_current_season(),
         week=week,
         amount=amount,
         odds=quote.odds,
@@ -359,6 +358,7 @@ def _new_parlay(parlay, amount, week):
         user_id=current_user.id,
         bet_type="parlay",
         description=" + ".join(_describe(leg.market, leg.selection, leg.quote, week) for leg in parlay.legs),
+        season=get_current_season(),
         week=week,
         amount=amount,
         odds=parlay.odds,
@@ -402,7 +402,7 @@ def _describe(market, selection, quote, week):
 
 
 def _record_bet(bet):
-    ledger.open_week(bet.user_id, bet.week)
+    ledger.open_week(bet.user_id, bet.season, bet.week)
     if not ledger.place(bet):
         db.session.rollback()
         logging.info(f"Refused bet for user {bet.user_id}: balance below the {bet.amount} stake")
@@ -539,7 +539,7 @@ def cash_out_bet(bet_id):
             return _refuse("Offer has changed", offer=offer.amount)
 
         week = get_current_week()
-        ledger.open_week(current_user.id, week)
+        ledger.open_week(current_user.id, bet.season, week)
         if not ledger.cash_out(bet, offer.amount, offer.run_id, week):
             # Settled, removed or cashed out by another request since the read above.
             db.session.rollback()

@@ -46,6 +46,7 @@ class Bet(db.Model):
     potential_win = db.Column(db.Float, nullable=False)
     status = db.Column(db.String, default="pending")
     result = db.Column(db.Float, default=0.0)
+    season = db.Column(db.Integer, nullable=False)
     week = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     settled_at = db.Column(db.DateTime(timezone=True), nullable=True)
@@ -97,6 +98,7 @@ class WeeklyStats(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     user_id = db.Column(db.String, db.ForeignKey("users.id"), nullable=False)
+    season = db.Column(db.Integer, nullable=False)
     week = db.Column(db.Integer, nullable=False)
     starting_balance = db.Column(db.Float, nullable=False)
     ending_balance = db.Column(db.Float, nullable=False)
@@ -109,16 +111,19 @@ class WeeklyStats(db.Model):
 
     user = db.relationship(User, backref="weekly_stats")
 
-    __table_args__ = (UniqueConstraint("user_id", "week", name="uq_user_week"),)
+    __table_args__ = (UniqueConstraint("user_id", "season", "week", name="uq_user_season_week"),)
 
 
 class BettingPeriod(db.Model):
     __tablename__ = "betting_periods"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    week = db.Column(db.Integer, unique=True, nullable=False)
+    season = db.Column(db.Integer, nullable=False)
+    week = db.Column(db.Integer, nullable=False)
     lock_time = db.Column(db.DateTime(timezone=True), nullable=False)
     is_locked = db.Column(db.Boolean, default=False)
     is_settled = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    __table_args__ = (UniqueConstraint("season", "week", name="uq_season_week"),)

@@ -1,21 +1,36 @@
 import logging
 
+from sqlalchemy import inspect, text
+
 from .database import db
 
 # The bet types that took their market's name; rows stored under the old names are renamed in place.
 RENAMED_BET_TYPES = {"team_ou": "team_total", "first_seed": "first_place", "ammad_playoff": "make_playoffs"}
 
+# A row's season is the one it was created in; a row made before July belongs to the season before.
+SEASON_OF_CREATION = {
+    "postgresql": "CAST(EXTRACT(YEAR FROM created_at) AS INTEGER)"
+    " - CASE WHEN EXTRACT(MONTH FROM created_at) < 7 THEN 1 ELSE 0 END",
+    "sqlite": "CAST(strftime('%Y', created_at) AS INTEGER)"
+    " - CASE WHEN CAST(strftime('%m', created_at) AS INTEGER) < 7 THEN 1 ELSE 0 END",
+}
+
+# The unique keys that take the season, so each season has its own week 10.
+SEASON_KEYS = {
+    "weekly_stats": ("uq_user_season_week", ["user_id", "season", "week"]),
+    "betting_periods": ("uq_season_week", ["season", "week"]),
+}
+
+
+def column_exists(inspector, table_name, column_name):
+    if table_name not in inspector.get_table_names():
+        return False
+    columns = [col["name"] for col in inspector.get_columns(table_name)]
+    return column_name in columns
+
 
 def run_schema_migrations():
     try:
-        from sqlalchemy import inspect, text
-
-        def column_exists(inspector, table_name, column_name):
-            if table_name not in inspector.get_table_names():
-                return False
-            columns = [col["name"] for col in inspector.get_columns(table_name)]
-            return column_name in columns
-
         dialect = db.engine.dialect.name
         logging.info(f"Running schema migrations for dialect: {dialect}")
 
@@ -136,6 +151,8 @@ def run_schema_migrations():
                     {"new_type": new_type, "old_type": old_type},
                 )
 
+            _add_seasons(conn, dialect)
+
             if "flask_dance_oauth" in inspector.get_table_names():
                 conn.execute(text("DROP TABLE flask_dance_oauth"))
                 logging.info("Dropped legacy flask_dance_oauth table")
@@ -147,3 +164,29 @@ def run_schema_migrations():
         import traceback
 
         traceback.print_exc()
+
+
+def _add_seasons(conn, dialect):
+    """Give bets, weekly stats and betting periods a season, backfilled from when each row was created.
+
+    SQLite cannot drop a constraint, so its keys widen only in a database made by create_all.
+    """
+    inspector = inspect(conn)
+    for table in ("bets", "weekly_stats", "betting_periods"):
+        if column_exists(inspector, table, "season"):
+            continue
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN season INTEGER"))
+        conn.execute(text(f"UPDATE {table} SET season = {SEASON_OF_CREATION[dialect]}"))
+        if dialect == "postgresql":
+            conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN season SET NOT NULL"))
+            if table in SEASON_KEYS:
+                _add_season_to_key(conn, inspector, table, *SEASON_KEYS[table])
+        logging.info(f"Added {table}.season")
+
+
+def _add_season_to_key(conn, inspector, table, name, columns):
+    week_key = [column for column in columns if column != "season"]
+    for constraint in inspector.get_unique_constraints(table):
+        if constraint["column_names"] == week_key:
+            conn.execute(text(f'ALTER TABLE {table} DROP CONSTRAINT "{constraint["name"]}"'))
+    conn.execute(text(f"ALTER TABLE {table} ADD CONSTRAINT {name} UNIQUE ({', '.join(columns)})"))

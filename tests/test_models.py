@@ -17,6 +17,26 @@ LEGACY_BETS_TABLE = """
         created_at DATETIME, settled_at DATETIME
     )
 """
+# The two tables as they stood before each season had its own weeks.
+SEASONLESS_TABLES = [
+    """
+    CREATE TABLE weekly_stats (
+        id INTEGER PRIMARY KEY, user_id VARCHAR NOT NULL, week INTEGER NOT NULL,
+        starting_balance FLOAT NOT NULL, ending_balance FLOAT NOT NULL, pnl FLOAT NOT NULL,
+        active_bets_amount FLOAT, settled_pnl FLOAT, bets_placed INTEGER, bets_won INTEGER,
+        created_at DATETIME, UNIQUE (user_id, week)
+    )
+    """,
+    """
+    CREATE TABLE betting_periods (
+        id INTEGER PRIMARY KEY, week INTEGER NOT NULL UNIQUE, lock_time DATETIME NOT NULL,
+        is_locked BOOLEAN, is_settled BOOLEAN, created_at DATETIME, updated_at DATETIME
+    )
+    """,
+]
+# Last season's week 10, an off-season test week and this season's week 4, by the day each was made.
+CREATED = {10: "2025-11-12 14:00:00", 14: "2026-06-02 09:00:00", 4: "2026-10-01 18:00:00"}
+
 # One bet under each old type name, and one whose type keeps its name.
 LEGACY_BETS = [
     ("first_seed", "Ammady: #1 Seed +250"),
@@ -45,6 +65,7 @@ def test_bet_defaults(db_session, user):
         amount=50.0,
         odds="+100",
         potential_win=50.0,
+        season=2026,
     )
     db_session.session.add(bet)
     db_session.session.commit()
@@ -59,7 +80,7 @@ def test_bet_defaults(db_session, user):
 def test_betting_period_defaults(db_session):
     from datetime import datetime
 
-    period = BettingPeriod(week=1, lock_time=datetime.now(UTC))
+    period = BettingPeriod(season=2026, week=1, lock_time=datetime.now(UTC))
     db_session.session.add(period)
     db_session.session.commit()
 
@@ -70,6 +91,7 @@ def test_betting_period_defaults(db_session):
 def test_weekly_stats_unique_constraint(db_session, user):
     stat1 = WeeklyStats(
         user_id=user.id,
+        season=2026,
         week=10,
         starting_balance=1000.0,
         ending_balance=900.0,
@@ -80,6 +102,7 @@ def test_weekly_stats_unique_constraint(db_session, user):
 
     stat2 = WeeklyStats(
         user_id=user.id,
+        season=2026,
         week=10,
         starting_balance=1000.0,
         ending_balance=800.0,
@@ -99,6 +122,7 @@ def test_user_bets_relationship(db_session, user):
         amount=50.0,
         odds="+100",
         potential_win=50.0,
+        season=2026,
     )
     db_session.session.add(bet)
     db_session.session.commit()
@@ -154,3 +178,33 @@ def test_migrations_add_the_quote_and_cash_out_columns_and_rename_legacy_bet_typ
         ("make_playoffs", "Samer: Ammad Playoff -150"),
         ("moneyline", "Samer vs Ammad: Samer -143"),
     ]
+
+
+def test_migrations_give_every_row_the_season_it_was_made_in(file_backed_app):
+    with file_backed_app.app_context():
+        with db.engine.begin() as conn:
+            conn.execute(text("DROP TABLE weekly_stats"))
+            conn.execute(text("DROP TABLE betting_periods"))
+            for table in SEASONLESS_TABLES:
+                conn.execute(text(table))
+            for week, created_at in CREATED.items():
+                conn.execute(
+                    text(
+                        "INSERT INTO weekly_stats (user_id, week, starting_balance, ending_balance, pnl, created_at) "
+                        "VALUES ('u1', :week, 1000.0, 1000.0, 0.0, :created_at)"
+                    ),
+                    {"week": week, "created_at": created_at},
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO betting_periods (week, lock_time, created_at) VALUES (:week, :created_at, :created_at)"
+                    ),
+                    {"week": week, "created_at": created_at},
+                )
+
+        run_schema_migrations()
+        run_schema_migrations()
+
+        for table in ("weekly_stats", "betting_periods"):
+            rows = db.session.execute(text(f"SELECT week, season FROM {table} ORDER BY id")).all()
+            assert [tuple(row) for row in rows] == [(10, 2025), (14, 2025), (4, 2026)]

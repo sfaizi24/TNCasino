@@ -24,7 +24,7 @@ def test_admin_api_rejects_anonymous(client):
 
 
 def test_pending_bets_default_to_the_current_week(admin_client, admin_user, db_session):
-    db_session.session.add(BettingPeriod(week=12, lock_time=datetime.now(UTC)))
+    db_session.session.add(BettingPeriod(season=2026, week=12, lock_time=datetime.now(UTC)))
     for week in (10, 12):
         db_session.session.add(
             Bet(
@@ -34,6 +34,7 @@ def test_pending_bets_default_to_the_current_week(admin_client, admin_user, db_s
                 amount=10.0,
                 odds="+100",
                 potential_win=10.0,
+                season=2026,
                 week=week,
             )
         )
@@ -52,13 +53,14 @@ def _bet_on(user, bet_type, market, week, leg_week):
         amount=10.0,
         odds="+100",
         potential_win=10.0,
+        season=2026,
         week=week,
         legs=[BetLeg(season=2026, week=leg_week, market=market, selection="1", price=100, probability=0.5)],
     )
 
 
 def test_pending_bets_keep_every_pending_futures_bet_whatever_its_week(admin_client, admin_user, db_session):
-    db_session.session.add(BettingPeriod(week=12, lock_time=datetime.now(UTC)))
+    db_session.session.add(BettingPeriod(season=2026, week=12, lock_time=datetime.now(UTC)))
     db_session.session.add_all(
         [
             _bet_on(admin_user, "moneyline", "2026-w10-moneyline-1v2", 10, 10),
@@ -82,6 +84,7 @@ def _parlay_on(user, week, markets):
         amount=10.0,
         odds="+300",
         potential_win=30.0,
+        season=2026,
         week=week,
         legs=[
             BetLeg(season=2026, week=leg_week, market=market, selection="yes", price=-150, probability=0.6)
@@ -102,6 +105,7 @@ def test_pending_bets_say_which_bets_settle_by_hand(admin_client, admin_user, be
         amount=10.0,
         odds="+100",
         potential_win=10.0,
+        season=2026,
         week=10,
     )
     db_session.session.add_all(
@@ -127,7 +131,7 @@ def test_pending_bets_say_which_bets_settle_by_hand(admin_client, admin_user, be
 
 
 def _place_in_week_8(bet):
-    ledger.open_week(bet.user_id, 8)
+    ledger.open_week(bet.user_id, 2026, 8)
     ledger.place(bet)
     db.session.commit()
     return bet
@@ -172,7 +176,7 @@ def test_a_weekly_parlay_is_still_not_settled_by_hand(admin_client, admin_user, 
     assert [parlay.status] + [leg.status for leg in parlay.legs] == ["pending", "pending", "pending"]
 
 
-def test_set_betting_period(admin_client, admin_user, db_session):
+def test_set_betting_period(admin_client, admin_user, seeded_analytics, db_session):
     resp = admin_client.post(
         "/api/admin/set_betting_period",
         json={

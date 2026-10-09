@@ -135,6 +135,7 @@ erDiagram
         float potential_win
         string status "pending | won | lost | push | removed | void | cashed_out"
         float result
+        int season
         int week
         timestamptz created_at
         timestamptz settled_at
@@ -158,7 +159,8 @@ erDiagram
     weekly_stats {
         int id PK
         string user_id FK
-        int week "unique with user_id"
+        int season
+        int week "unique with user_id and season"
         float starting_balance
         float ending_balance
         float pnl
@@ -169,7 +171,8 @@ erDiagram
     }
     betting_periods {
         int id PK
-        int week UK
+        int season
+        int week "unique with season"
         timestamptz lock_time
         bool is_locked
         bool is_settled

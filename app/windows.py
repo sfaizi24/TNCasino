@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 from .database import db
 from .models import BettingPeriod, utc_now
-from .routes.helpers import check_betting_period_lock, query_analytics
+from .routes.helpers import check_betting_period_lock, get_current_season, query_analytics
 
 LATEST_RUN_SQL = """
     SELECT run_id, created_at, window_closes_at
@@ -32,8 +32,8 @@ class Window:
 
 
 def betting_window(week, now=None):
-    """The week's window: closed without a live period, under the admin's lock, or without a run's window."""
-    period = db.session.query(BettingPeriod).filter_by(week=week).first()
+    """The current season's week: closed without a live period, under the admin's lock, or without a run's window."""
+    period = db.session.query(BettingPeriod).filter_by(season=get_current_season(), week=week).first()
     if period is None or period.is_settled:
         return Window(week, "closed")
 
