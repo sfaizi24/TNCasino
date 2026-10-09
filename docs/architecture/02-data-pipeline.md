@@ -66,7 +66,7 @@ Each source in `pipeline/sources/` is a `ProjectionSource` with a `fetch(season,
 | `firstdown.studio` | The rankings snapshot behind each rankings page | no | PPR read from the snapshot (the table shows half PPR). No DEF. |
 | `fanduel.com` | Headless Chromium through Playwright, capturing the research pages' GraphQL responses | no | The only source that does not go through `base.get`. Needs `playwright install chromium`. |
 | `fftoday.com` | Server-rendered table, one or two pages per position | no | QB, RB, WR, TE. Points rescored from the stat line with league scoring. Posts on Wednesday. |
-| `rotoballer.com` | The news sitemap, then the week's projections article | no | Read under RotoBaller's permission letter (non-commercial, attribution on the about page). QB, RB, WR, TE, rescored from the stat line. Only aggregates are shown. |
+| `rotoballer.com` | The news sitemap, then the week's projections article | no | Read under RotoBaller's permission letter (non-commercial, attribution on the about page). QB, RB, WR, TE: the article's half-PPR points plus half a point a catch, since its stat columns change from week to week. Only aggregates are shown. |
 | `fleaflicker.com` | Fleaflicker's documented API on the owner's own league (`FLEAFLICKER_LEAGUE_ID`) | no | Read under Fleaflicker's permission letter. Points are in the league's own scoring, so the league's rules are compared with a pinned copy every run and a difference drops the source. Unset league id: the fetch fails and the run goes on. Only aggregates are shown. |
 
 "Future weeks" marks the sources the playoffs step scrapes for the weeks after the current one.

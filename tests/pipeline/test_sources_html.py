@@ -368,7 +368,7 @@ def test_rotoballer_reads_every_player_and_skips_kickers_and_defenses(page_fixtu
 
 
 @pytest.mark.parametrize("page_fixture", ["rotoballer_html", "rotoballer_updated_html"])
-def test_rotoballer_rescore_is_the_half_ppr_page_plus_half_a_point_a_catch(page_fixture, request):
+def test_rotoballer_points_are_the_half_ppr_page_plus_half_a_point_a_catch(page_fixture, request):
     html = request.getfixturevalue(page_fixture)
     table = BeautifulSoup(html, "lxml").find("table")
     header, *page_rows = table.find_all("tr")
@@ -380,11 +380,11 @@ def test_rotoballer_rescore_is_the_half_ppr_page_plus_half_a_point_a_catch(page_
         cells = [cell.get_text(strip=True) for cell in page_row.find_all("td")]
         receptions = float(cells[headers.index("Rec")] or 0)
         page_points = float(cells[headers.index("Fan Points")])
-        assert round(abs(parsed.points - 0.5 * receptions - page_points), 2) <= 0.6, cells[0]
+        assert parsed.points == round(page_points + 0.5 * receptions, 2), cells[0]
 
 
 def test_rotoballer_player_row(rotoballer_html):
-    # 0.04 * 256.0 passing yards + 4 * 1.4 TD - 2 * 1.2 INT + 0.1 * 15.0 rushing yards + 6 * 0.6 rushing TD; the page shows 18.5
+    # the page's 18.5 half-PPR points; a quarterback has no catches to add
     assert find(rotoballer.parse(rotoballer_html, SEASON, WEEK), "Josh", "Allen") == Projection(
         source="rotoballer.com",
         season=2026,
@@ -393,7 +393,7 @@ def test_rotoballer_player_row(rotoballer_html):
         last_name="Allen",
         position="QB",
         team="BUF",
-        points=18.54,
+        points=18.5,
         external_id="90209",
     )
 
@@ -402,7 +402,7 @@ def test_rotoballer_reads_the_update_without_its_comp_column(rotoballer_html, ro
     wednesday = find(rotoballer.parse(rotoballer_html, SEASON, WEEK), "Lamar", "Jackson")
     sunday = find(rotoballer.parse(rotoballer_updated_html, SEASON, WEEK), "Lamar", "Jackson")
     assert sunday == wednesday
-    assert sunday.points == round(0.04 * 239.1 + 4 * 2.5 - 2 * 0.9 + 0.1 * 20.5 + 6 * 0.0, 2)
+    assert sunday.points == 19.8
 
 
 def test_rotoballer_stamps_the_page_week(rotoballer_html):
@@ -422,10 +422,17 @@ def test_rotoballer_rejects_a_page_without_a_week(rotoballer_html):
         rotoballer.parse(html, SEASON, WEEK)
 
 
-def test_rotoballer_rejects_a_missing_stat_column(rotoballer_html):
-    html = rotoballer_html.replace("<td><strong>Rec. TDs</strong></td>", "")
-    with pytest.raises(ValueError, match=re.escape('the RotoBaller page for week 3 has no "Rec. TDs" column')):
+def test_rotoballer_rejects_a_page_without_catches(rotoballer_html):
+    assert rotoballer_html.count("<td><strong>Rec</strong></td>") == 1
+    html = rotoballer_html.replace("<td><strong>Rec</strong></td>", "")
+    with pytest.raises(ValueError, match=re.escape('the RotoBaller page for week 3 has no "Rec" column')):
         rotoballer.parse(html, SEASON, WEEK)
+
+
+def test_rotoballer_reads_a_page_whose_stat_columns_changed(rotoballer_html):
+    without_interceptions = rotoballer_html.replace("<td><strong>INTs</strong></td>", "<td><strong>Rush</strong></td>")
+    assert without_interceptions != rotoballer_html
+    assert rotoballer.parse(without_interceptions, SEASON, WEEK) == rotoballer.parse(rotoballer_html, SEASON, WEEK)
 
 
 def test_rotoballer_finds_the_latest_article_for_the_week(rotoballer_sitemap):
@@ -481,9 +488,12 @@ def test_rotoballer_keeps_players_without_a_link_and_without_an_id(rotoballer_ht
 
 
 def test_rotoballer_skips_players_projected_for_nothing(rotoballer_html):
+    gibbs_points = '<a class="rbPlayer nfl" data-id="90167" href="/nfl/player/90167/Jahmyr+Gibbs">Jahmyr Gibbs</a></td>\n<td>DET</td>\n<td>RB</td>\n<td>15.0</td>'
+    assert rotoballer_html.count(gibbs_points) == 1
     gibbs_stats = "<td>11.8</td>\n<td>36.4</td>\n<td>0.4</td>\n<td>5.5</td>\n<td>38.3</td>\n<td>0.4</td>"
     assert rotoballer_html.count(gibbs_stats) == 1
-    html = rotoballer_html.replace(gibbs_stats, "\n".join(["<td></td>"] * 6))
+    html = rotoballer_html.replace(gibbs_points, gibbs_points.replace("<td>15.0</td>", "<td>0.0</td>"))
+    html = html.replace(gibbs_stats, "\n".join(["<td></td>"] * 6))
     rows = rotoballer.parse(html, SEASON, WEEK)
     assert len(rows) == 299
     assert ("Jahmyr", "Gibbs") not in {(row.first_name, row.last_name) for row in rows}

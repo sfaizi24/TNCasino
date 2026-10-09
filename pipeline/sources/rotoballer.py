@@ -1,6 +1,7 @@
 """RotoBaller's weekly projections, read from the table in the week's article, which is found through the news sitemap.
 
-Points are rescored from the stat line with league scoring, because the article's points are half PPR.
+The article's points are half PPR, so league points are those plus half a point a catch. The stat columns come
+and go from week to week (week 5 dropped interceptions), so only the points and catches are read.
 Read under the owner's permission letter of 2026-09-28: nothing is fetched but the sitemap and the week's article.
 """
 
@@ -24,17 +25,7 @@ SITEMAP_NAMESPACES = {
 
 PLAYER_POSITIONS = frozenset({"QB", "RB", "WR", "TE"})  # the table also lists kickers and defenses, without their stats
 
-# (column header, league points per unit). Cells are read by header name, so a dropped column is noticed.
-STAT_COLUMNS = [
-    ("Pass Yards", 0.04),
-    ("PASS TDs", 4),
-    ("INTs", -2),
-    ("Ru. Yards", 0.1),
-    ("Ru. TDs", 6),
-    ("Rec", 1),
-    ("Rec. Yards", 0.1),
-    ("Rec. TDs", 6),
-]
+POINTS_PER_CATCH = 0.5  # the league is full PPR, the article half
 
 
 class RotoBallerSource(ProjectionSource):
@@ -63,15 +54,14 @@ def article_url(sitemap_xml: str, season: int, week: int) -> str:
 
 
 def parse(html: str, season: int, week: int) -> list[Projection]:
-    """Rows carry the week the article's title shows. Empty stat cells are zeros."""
+    """Rows carry the week the article's title shows. An empty catches cell is zero."""
     soup = BeautifulSoup(html, "lxml")
     table = soup.find("table")
     if table is None:
         raise ValueError(f"the RotoBaller page for week {week} has no projections table")
     header, *rows = table.find_all("tr")
     headers = [cell.get_text(" ", strip=True) for cell in header.find_all("td")]
-    column = {name: column_index(headers, name, week) for name in ["Player Name", "Team", "Pos", "Fan Points"]}
-    stat_columns = [(column_index(headers, name, week), weight) for name, weight in STAT_COLUMNS]
+    column = {name: column_index(headers, name, week) for name in ["Player Name", "Team", "Pos", "Fan Points", "Rec"]}
     page_week = shown_week(soup)
 
     projections = []
@@ -80,10 +70,8 @@ def parse(html: str, season: int, week: int) -> list[Projection]:
         position = cells[column["Pos"]].get_text(strip=True)
         if position not in PLAYER_POSITIONS:
             continue
-        points = 0.0
-        for index, weight in stat_columns:
-            points += weight * cell_value(cells[index])
-        points = round(points, 2)
+        half_ppr_points = cell_value(cells[column["Fan Points"]])
+        points = round(half_ppr_points + POINTS_PER_CATCH * cell_value(cells[column["Rec"]]), 2)
         if points <= 0:
             continue
 
